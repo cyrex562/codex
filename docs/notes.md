@@ -10,3 +10,7 @@
 - preferences menu
 - full text search
 - file indexing
+
+- create tui deployment tool that will re-deploy the server to the designated host on command
+- re-write python plugin system -- hook events (frontend and backend), display html, js/ts, use config file in own dir.
+- 

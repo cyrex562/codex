@@ -236,6 +236,15 @@ function debounce(func: Function, wait: number) {
     };
 }
 
+function safeAlert(message: string) {
+    if (typeof globalThis.alert === 'function') {
+        globalThis.alert(message);
+        return;
+    }
+
+    console.warn(message);
+}
+
 // App State
 export class AppState {
     currentVaultId: string | null = null;
@@ -712,7 +721,7 @@ export class UIManager {
             this.renderVaultManager();
         } catch (error) {
             console.error('Failed to load vaults:', error);
-            alert('Failed to load vaults: ' + error);
+            safeAlert('Failed to load vaults: ' + error);
         }
     }
 
@@ -797,7 +806,7 @@ export class UIManager {
 
         const vault = this.state.vaults.find(v => v.id === vaultId);
         if (vault && vault.path_exists === false) {
-            alert('This vault path no longer exists. Please remove it or choose another vault.');
+            safeAlert('This vault path no longer exists. Please remove it or choose another vault.');
             const select = document.getElementById('vault-select') as HTMLSelectElement | null;
             if (select) {
                 select.value = this.state.currentVaultId || '';
@@ -830,7 +839,7 @@ export class UIManager {
             this.renderFileTree(tree);
         } catch (error) {
             console.error('Failed to load file tree:', error);
-            alert('Failed to load file tree: ' + error);
+            safeAlert('Failed to load file tree: ' + error);
         }
     }
 
@@ -2948,7 +2957,7 @@ export class UIManager {
                 }
                 await this.loadVaults();
             } catch (error) {
-                alert('Failed to delete vault: ' + error);
+                safeAlert('Failed to delete vault: ' + error);
             }
         });
 
@@ -2965,7 +2974,7 @@ export class UIManager {
                 this.hideModal('add-vault-modal');
                 addVaultForm.reset();
             } catch (error) {
-                alert('Failed to create vault: ' + error);
+                safeAlert('Failed to create vault: ' + error);
             }
         });
 

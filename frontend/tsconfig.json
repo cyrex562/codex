@@ -1,26 +1,39 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ESNext",
     "module": "ESNext",
     "lib": [
-      "ES2020",
-      "DOM"
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
     ],
-    "outDir": "./public/dist",
-    "rootDir": "./src",
+    "moduleResolution": "bundler",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
-    "allowJs": true,
-    "checkJs": false
+    "jsx": "preserve",
+    "jsxImportSource": "vue",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "src/*"
+      ]
+    },
+    "types": [
+      "vite/client"
+    ]
   },
   "include": [
-    "src/**/*"
+    "src/**/*",
+    "src/**/*.vue",
+    "env.d.ts"
   ],
   "exclude": [
     "node_modules",
-    "**/*.test.ts"
+    "dist"
   ]
 }
