@@ -7,6 +7,9 @@ use crate::services::{FileService, ImageService, WikiLinkResolver};
 use actix_multipart::Multipart;
 use actix_web::http::header::{ETAG, IF_NONE_MATCH};
 use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse};
+use chrono::Utc;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use futures::{StreamExt, TryStreamExt};
 use std::io::{Cursor, Write};
 use std::path::Path;
@@ -975,10 +978,68 @@ fn render_file_tree_to_html(nodes: &[crate::models::FileNode]) -> String {
     html
 }
 
+/// How to handle an upload that collides with an existing file.
+///
+/// * `fail` (default) – return a 409 error.
+/// * `overwrite` – silently replace the existing file.
+/// * `rename_with_timestamp` – keep both; append `_YYYYMMDD_HHmmss[_N]` before the extension.
+#[derive(serde::Deserialize, Default, PartialEq, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum ConflictStrategy {
+    #[default]
+    Fail,
+    Overwrite,
+    RenameWithTimestamp,
+}
+
 #[derive(serde::Deserialize)]
 struct FinishUploadRequest {
     filename: String,
     path: String,
+    #[serde(default)]
+    conflict: ConflictStrategy,
+}
+
+#[derive(serde::Deserialize)]
+struct ImportArchiveQuery {
+    /// Target folder inside the vault (empty = vault root).
+    #[serde(default)]
+    path: String,
+    /// Archive type: "zip", "tar", or "tar.gz" / "tgz".
+    #[serde(default)]
+    archive_type: String,
+}
+
+/// Derive a conflict-renamed path by appending a timestamp (and optional serial) before the
+/// extension: `stem_YYYYMMDD_HHmmss.ext` or `stem_YYYYMMDD_HHmmss_N.ext`.
+fn conflict_rename(base: &Path) -> std::path::PathBuf {
+    let stamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+    let ext = base.extension().and_then(|s| s.to_str());
+    let parent = base.parent().unwrap_or_else(|| Path::new(""));
+
+    let candidate = if let Some(ext) = ext {
+        parent.join(format!("{}_{}.{}", stem, stamp, ext))
+    } else {
+        parent.join(format!("{}_{}", stem, stamp))
+    };
+
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    // Extremely unlikely but add a serial suffix to break collisions.
+    for n in 1u32.. {
+        let with_serial = if let Some(ext) = ext {
+            parent.join(format!("{}_{}_{}.{}", stem, stamp, n, ext))
+        } else {
+            parent.join(format!("{}_{}_{}", stem, stamp, n))
+        };
+        if !with_serial.exists() {
+            return with_serial;
+        }
+    }
+    unreachable!()
 }
 
 #[post("/api/vaults/{vault_id}/upload-sessions")]
@@ -1044,11 +1105,45 @@ async fn finish_upload_session(
 ) -> AppResult<HttpResponse> {
     let (vault_id, session_id) = path.into_inner();
     let vault = state.db.get_vault(&vault_id).await?;
+
+    // Resolve where the file would land before finalizing so we can apply conflict logic.
+    let safe_target_dir = if req.path.is_empty() {
+        std::path::PathBuf::from(&vault.path)
+    } else {
+        FileService::resolve_path(&vault.path, &req.path)?
+    };
+    let intended_final = safe_target_dir.join(&req.filename);
+
+    // Apply conflict strategy when the destination already exists.
+    let (effective_path, effective_filename) = if intended_final.exists() {
+        match req.conflict {
+            ConflictStrategy::Fail => {
+                return Err(AppError::Conflict(format!(
+                    "File already exists: {}/{}",
+                    req.path, req.filename
+                )));
+            }
+            ConflictStrategy::Overwrite => (req.path.clone(), req.filename.clone()),
+            ConflictStrategy::RenameWithTimestamp => {
+                let renamed = conflict_rename(&intended_final);
+                let new_filename = renamed
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&req.filename)
+                    .to_string();
+                // Keep same directory; only the filename changes.
+                (req.path.clone(), new_filename)
+            }
+        }
+    } else {
+        (req.path.clone(), req.filename.clone())
+    };
+
     let final_path_str = state.storage.finalize_upload_session(
         &vault.path,
         &session_id,
-        &req.path,
-        &req.filename,
+        &effective_path,
+        &effective_filename,
     )?;
 
     // Update index if markdown
@@ -1062,8 +1157,242 @@ async fn finish_upload_session(
 
     Ok(HttpResponse::Created().json(serde_json::json!({
         "path": final_path_str,
-        "filename": req.filename
+        "filename": effective_filename,
     })))
+}
+
+/// POST /api/vaults/{vault_id}/import-archive
+///
+/// Accepts the raw binary body of a ZIP or TAR(.GZ) archive and extracts its
+/// contents into the vault at the optionally-specified `path`.
+/// Query params:
+///   - `path` – target subdirectory inside the vault (default: vault root)
+///   - `archive_type` – "zip", "tar", "tar.gz", or "tgz"
+///   - `conflict` – "fail" | "overwrite" | "rename_with_timestamp" (default: rename_with_timestamp)
+#[post("/api/vaults/{vault_id}/import-archive")]
+async fn import_archive(
+    state: web::Data<AppState>,
+    vault_id: web::Path<String>,
+    query: web::Query<ImportArchiveQuery>,
+    body: web::Bytes,
+) -> AppResult<HttpResponse> {
+    let vault_id = vault_id.into_inner();
+    let vault = state.db.get_vault(&vault_id).await?;
+
+    let target_dir = if query.path.is_empty() {
+        std::path::PathBuf::from(&vault.path)
+    } else {
+        FileService::resolve_path(&vault.path, &query.path)?
+    };
+
+    if !target_dir.exists() {
+        std::fs::create_dir_all(&target_dir)?;
+    }
+
+    // Detect archive type from the query parameter (or sniff the magic bytes).
+    let archive_type = query.archive_type.to_ascii_lowercase();
+    let is_zip =
+        archive_type == "zip" || (archive_type.is_empty() && body.starts_with(b"PK\x03\x04"));
+    let is_tar_gz = !is_zip
+        && (archive_type == "tar.gz"
+            || archive_type == "tgz"
+            || (archive_type.is_empty() && body.starts_with(b"\x1f\x8b")));
+    let is_tar = !is_zip
+        && !is_tar_gz
+        && (archive_type == "tar"
+            || (archive_type.is_empty() && body.len() >= 265 && &body[257..262] == b"ustar"));
+
+    if !is_zip && !is_tar_gz && !is_tar {
+        return Err(AppError::InvalidInput(
+            "Could not determine archive type. Set ?archive_type=zip|tar|tar.gz".to_string(),
+        ));
+    }
+
+    let mut extracted: Vec<String> = Vec::new();
+
+    if is_zip {
+        let cursor = Cursor::new(body.as_ref());
+        let mut archive = zip::ZipArchive::new(cursor)
+            .map_err(|e| AppError::InvalidInput(format!("Invalid zip: {}", e)))?;
+        for i in 0..archive.len() {
+            let mut zf = archive
+                .by_index(i)
+                .map_err(|e| AppError::InternalError(format!("Zip read error: {}", e)))?;
+            // Skip directories; we create them as needed.
+            if zf.is_dir() {
+                continue;
+            }
+            let raw_name = zf.name().to_string();
+            // Sanitize: reject absolute paths or path traversal.
+            if raw_name.starts_with('/') || raw_name.contains("..") {
+                continue;
+            }
+            let dest = target_dir.join(&raw_name);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let final_dest = if dest.exists() {
+                conflict_rename(&dest)
+            } else {
+                dest
+            };
+            let mut out = std::fs::File::create(&final_dest)?;
+            std::io::copy(&mut zf, &mut out)?;
+            let relative = final_dest
+                .strip_prefix(&vault.path)
+                .unwrap_or(&final_dest)
+                .to_string_lossy()
+                .to_string();
+            extracted.push(relative);
+        }
+    } else {
+        // tar or tar.gz – decompress first if gzip-compressed.
+        let cursor = Cursor::new(body.as_ref());
+        let mut tar = if is_tar_gz {
+            tar::Archive::new(
+                Box::new(flate2::read::GzDecoder::new(cursor)) as Box<dyn std::io::Read>
+            )
+        } else {
+            tar::Archive::new(Box::new(cursor) as Box<dyn std::io::Read>)
+        };
+        for entry in tar
+            .entries()
+            .map_err(|e| AppError::InvalidInput(format!("Invalid tar: {}", e)))?
+        {
+            let mut entry =
+                entry.map_err(|e| AppError::InternalError(format!("Tar read error: {}", e)))?;
+            let entry_path = entry
+                .path()
+                .map_err(|e| AppError::InternalError(format!("Tar path error: {}", e)))?
+                .into_owned();
+            if entry.header().entry_type().is_dir() {
+                continue;
+            }
+            let raw_name = entry_path.to_string_lossy().to_string();
+            if raw_name.starts_with('/') || raw_name.contains("..") {
+                continue;
+            }
+            let dest = target_dir.join(&raw_name);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let final_dest = if dest.exists() {
+                conflict_rename(&dest)
+            } else {
+                dest
+            };
+            entry
+                .unpack(&final_dest)
+                .map_err(|e| AppError::InternalError(format!("Tar unpack error: {}", e)))?;
+            let relative = final_dest
+                .strip_prefix(&vault.path)
+                .unwrap_or(&final_dest)
+                .to_string_lossy()
+                .to_string();
+            extracted.push(relative);
+        }
+    }
+
+    // Refresh search index for any markdown files extracted.
+    for path in &extracted {
+        if path.ends_with(".md") {
+            if let Ok(content) = FileService::read_file(&vault.path, path) {
+                let _ = state
+                    .search_index
+                    .update_file(&vault_id, path, content.content);
+            }
+        }
+    }
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "extracted": extracted,
+        "count": extracted.len(),
+    })))
+}
+
+/// POST /api/vaults/{vault_id}/download-tar
+///
+/// Same semantics as `download-zip` but produces a `.tar.gz` archive.
+#[post("/api/vaults/{vault_id}/download-tar")]
+async fn download_tar(
+    state: web::Data<AppState>,
+    vault_id: web::Path<String>,
+    req: web::Json<serde_json::Value>,
+) -> AppResult<HttpResponse> {
+    let vault_id = vault_id.into_inner();
+    let vault = state.db.get_vault(&vault_id).await?;
+
+    let paths = req["paths"]
+        .as_array()
+        .ok_or(AppError::InvalidInput("Missing 'paths' array".to_string()))?;
+
+    if paths.is_empty() {
+        return Err(AppError::InvalidInput("No paths provided".to_string()));
+    }
+
+    // Build tar.gz in memory.
+    let buf = Vec::new();
+    let gz = GzEncoder::new(buf, Compression::default());
+    let mut tar_builder = tar::Builder::new(gz);
+
+    for path_value in paths {
+        let file_path = path_value
+            .as_str()
+            .ok_or(AppError::InvalidInput("Invalid path in array".to_string()))?;
+
+        let full_path = FileService::resolve_path(&vault.path, file_path)?;
+
+        if !full_path.exists() {
+            continue;
+        }
+
+        if full_path.is_file() {
+            tar_builder
+                .append_path_with_name(&full_path, file_path)
+                .map_err(|e| AppError::InternalError(format!("Tar append error: {}", e)))?;
+        } else if full_path.is_dir() {
+            for entry in WalkDir::new(&full_path).into_iter().filter_map(|e| e.ok()) {
+                let entry_path = entry.path();
+                if entry_path.is_file() {
+                    let relative = entry_path
+                        .strip_prefix(&vault.path)
+                        .map_err(|_| AppError::InternalError("Path error".to_string()))?;
+                    let tar_path = relative
+                        .to_str()
+                        .ok_or(AppError::InternalError("Invalid UTF-8 in path".to_string()))?;
+                    tar_builder
+                        .append_path_with_name(entry_path, tar_path)
+                        .map_err(|e| AppError::InternalError(format!("Tar append error: {}", e)))?;
+                }
+            }
+        }
+    }
+
+    let gz = tar_builder
+        .into_inner()
+        .map_err(|e| AppError::InternalError(format!("Tar finish error: {}", e)))?;
+    let tar_gz_data = gz
+        .finish()
+        .map_err(|e| AppError::InternalError(format!("Gzip finish error: {}", e)))?;
+
+    let tar_filename = if paths.len() == 1 {
+        let single_path = paths[0].as_str().unwrap_or("download");
+        let name = Path::new(single_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("download");
+        format!("{}.tar.gz", name)
+    } else {
+        format!("{}_files.tar.gz", paths.len())
+    };
+
+    Ok(HttpResponse::Ok()
+        .content_type("application/gzip")
+        .insert_header((
+            "Content-Disposition",
+            format!("attachment; filename=\"{}\"", tar_filename),
+        ))
+        .body(tar_gz_data))
 }
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
@@ -1085,8 +1414,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .service(upload_chunk)
         .service(get_upload_status)
         .service(finish_upload_session)
+        .service(import_archive)
         .service(download_file)
         .service(download_zip)
+        .service(download_tar)
         .service(get_random_file)
         .service(get_daily_note)
         .service(resolve_wiki_link)

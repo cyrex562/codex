@@ -3,11 +3,13 @@ use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::middleware::AuthenticatedUser;
 use crate::models::{
-    CreateVaultRequest, FileChangeEvent, ShareVaultWithGroupRequest, ShareVaultWithUserRequest,
+    CreateVaultRequest, FileChangeEvent, MlUndoReceipt, ShareVaultWithGroupRequest,
+    ShareVaultWithUserRequest,
 };
 use crate::services::SearchIndex;
 use crate::watcher::FileWatcher;
 use actix_web::{delete, get, post, web, HttpMessage, HttpRequest, HttpResponse};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
@@ -20,6 +22,7 @@ pub struct AppState {
     pub watcher: Arc<Mutex<FileWatcher>>,
     pub event_broadcaster: broadcast::Sender<FileChangeEvent>,
     pub change_log_retention_days: u64,
+    pub ml_undo_store: Arc<Mutex<HashMap<String, MlUndoReceipt>>>,
 }
 
 fn require_authenticated_user(req: &HttpRequest) -> AppResult<AuthenticatedUser> {

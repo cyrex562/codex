@@ -97,7 +97,7 @@ const prefsStore = usePreferencesStore();
 const tabsStore = useTabsStore();
 const authStore = useAuthStore();
 const router = useRouter();
-const { connected } = useWebSocket();
+const { connected, disconnect } = useWebSocket(false);
 
 const dirtyCount = computed(() => tabsStore.dirtyTabs.length);
 const wsConnected = computed(() => connected.value);
@@ -117,6 +117,7 @@ function goToAdminUsers() {
 }
 
 async function signOut() {
+  disconnect();
   await authStore.logout();
   await router.replace('/login');
 }

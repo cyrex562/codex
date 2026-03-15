@@ -1,17 +1,21 @@
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 
+pub mod bookmarks;
 pub mod graph;
 pub mod plugin;
 
 pub use obsidian_types::{
-    AddGroupMemberRequest, AdminUser, AuthenticatedUserProfile, ChangePasswordRequest,
+    AddGroupMemberRequest, AdminUser, ApplyChange, ApplyOrganizationSuggestionRequest,
+    ApplyOrganizationSuggestionResponse, AuthenticatedUserProfile, ChangePasswordRequest,
     CreateFileRequest, CreateGroupRequest, CreateUploadSessionRequest, CreateUserRequest,
     CreateUserResponse, CreateVaultRequest, EditorMode, FileChangeEvent, FileChangeType,
-    FileContent, FileNode, GroupInfo, GroupMember, PagedSearchResult, SearchMatch, SearchResult,
-    ShareVaultWithGroupRequest, ShareVaultWithUserRequest, UpdateFileRequest,
-    UploadSessionResponse, UserPreferences, Vault, VaultRole, VaultShareEntry, VaultShareList,
-    WsMessage,
+    FileContent, FileNode, GenerateOrganizationSuggestionsRequest, GenerateOutlineRequest,
+    GroupInfo, GroupMember, MlUndoReceipt, NoteOutlineResponse, OrganizationSuggestion,
+    OrganizationSuggestionKind, OrganizationSuggestionsResponse, OutlineSection, PagedSearchResult,
+    ReverseAction, SearchMatch, SearchResult, ShareVaultWithGroupRequest,
+    ShareVaultWithUserRequest, UndoMlActionResponse, UpdateFileRequest, UploadSessionResponse,
+    UserPreferences, Vault, VaultRole, VaultShareEntry, VaultShareList, WsMessage,
 };
 
 #[derive(Debug, Clone, FromRow)]

@@ -14,6 +14,7 @@ use obsidian_host::models::FileChangeEvent;
 use obsidian_host::routes::AppState;
 use obsidian_host::services::{build_storage_backend, SearchIndex};
 use obsidian_host::watcher::FileWatcher;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 use tracing::{error, info, warn};
@@ -288,6 +289,7 @@ async fn main() -> std::io::Result<()> {
         watcher,
         event_broadcaster: event_tx,
         change_log_retention_days: config.sync.change_log_retention_days,
+        ml_undo_store: Arc::new(Mutex::new(HashMap::new())),
     });
     let app_config = web::Data::new(config.clone());
 
@@ -325,11 +327,14 @@ async fn main() -> std::io::Result<()> {
             .configure(obsidian_host::routes::vaults::configure)
             .configure(obsidian_host::routes::files::configure)
             .configure(obsidian_host::routes::search::configure)
+            .configure(obsidian_host::routes::ml::configure)
             .configure(obsidian_host::routes::ws::configure)
             .configure(obsidian_host::routes::markdown::configure)
             .configure(obsidian_host::routes::preferences::configure)
             .configure(obsidian_host::routes::plugins::configure)
             .configure(configure_static)
+            .configure(obsidian_host::routes::bookmarks::configure)
+            .configure(obsidian_host::routes::tags::configure)
     })
     .bind((server_host.as_str(), server_port))?
     .run()

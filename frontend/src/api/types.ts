@@ -83,6 +83,7 @@ export interface UserPreferences {
     editor_mode: EditorMode;
     font_size: number;
     window_layout?: string;
+    icon_map?: Record<string, string>;
 }
 
 // Upload session types
@@ -96,6 +97,122 @@ export interface UploadSessionResponse {
     session_id: string;
     uploaded_bytes: number;
     total_size?: number;
+}
+
+export interface ImportCandidate {
+    file: File;
+    relativePath: string;
+}
+
+export interface ImportProgress {
+    totalFiles: number;
+    completedFiles: number;
+    totalBytes: number;
+    uploadedBytes: number;
+    currentFile?: string;
+}
+
+export interface ImportResultItem {
+    path: string;
+    filename: string;
+    size: number;
+}
+
+export interface ImportResult {
+    uploaded: ImportResultItem[];
+    directoryCount: number;
+    totalBytes: number;
+}
+
+export interface Bookmark {
+    id: string;
+    vault_id: string;
+    path: string;
+    title: string;
+    created_at: string;
+}
+
+export interface TagEntry {
+    tag: string;
+    count: number;
+    files: string[];
+}
+
+export interface BacklinkEntry {
+    path: string;
+    title: string;
+}
+
+export interface GenerateOutlineRequest {
+    file_path: string;
+    content?: string;
+    max_sections?: number;
+}
+
+export interface OutlineSection {
+    level: number;
+    title: string;
+    line_number: number;
+}
+
+export interface NoteOutlineResponse {
+    file_path: string;
+    summary: string;
+    sections: OutlineSection[];
+    generated_at: string;
+}
+
+export interface GenerateOrganizationSuggestionsRequest {
+    file_path: string;
+    content?: string;
+    max_suggestions?: number;
+}
+
+export type OrganizationSuggestionKind = 'tag' | 'category' | 'move_to_folder';
+
+export interface OrganizationSuggestion {
+    id: string;
+    kind: OrganizationSuggestionKind;
+    confidence: number;
+    rationale: string;
+    tag?: string;
+    category?: string;
+    target_folder?: string;
+}
+
+export interface OrganizationSuggestionsResponse {
+    file_path: string;
+    suggestions: OrganizationSuggestion[];
+    existing_tags: string[];
+    generated_at: string;
+}
+
+export interface ApplyOrganizationSuggestionRequest {
+    file_path: string;
+    suggestion: OrganizationSuggestion;
+    dry_run?: boolean;
+}
+
+export interface ApplyChange {
+    kind: string;
+    description: string;
+}
+
+export interface ApplyOrganizationSuggestionResponse {
+    file_path: string;
+    applied: boolean;
+    dry_run: boolean;
+    updated_file_path?: string;
+    changes: ApplyChange[];
+    applied_at: string;
+    receipt_id?: string;
+}
+
+export interface UndoMlActionResponse {
+    receipt_id: string;
+    undone: boolean;
+    description: string;
+    file_path: string;
 }
 
 // Auth types (Phase E — used now so stores can be wired consistently)

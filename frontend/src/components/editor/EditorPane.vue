@@ -10,38 +10,40 @@
     <template v-else>
       <!-- Frontmatter panel above editor -->
       <FrontmatterPanel
-        v-if="isMd && activeTab.frontmatter && Object.keys(activeTab.frontmatter).length > 0"
-        :frontmatter="activeTab.frontmatter"
+        v-if="isMd"
+        :frontmatter="activeTab.frontmatter ?? {}"
         :tab-id="activeTab.id"
+        @update:frontmatter="onFrontmatterUpdate"
+      />
+
+      <!-- Editor toolbar (formatting + mode toggle) -->
+      <EditorToolbar
+        v-if="isMd"
+        :mode="normalizedEditorMode"
+        @command="onToolbarCommand"
+        @mode-change="onModeChange"
       />
 
       <!-- Markdown: mode-aware editor -->
       <div v-if="isMd" class="d-flex" style="flex: 1; min-height: 0; overflow: hidden;">
-        <!-- Raw editor always visible in raw / side_by_side / formatted_raw -->
+        <!-- Editor visible in plain/formatted modes -->
         <MarkdownEditor
-          v-if="editorMode !== 'fully_rendered'"
+          v-if="normalizedEditorMode !== 'fully_rendered'"
+          ref="markdownEditorRef"
           :tab-id="activeTab.id"
           :content="activeTab.content ?? ''"
+          :file-path="activeTab.filePath"
+          :mode="normalizedEditorMode"
           class="editor-column"
-          :class="{ 'half-width': editorMode === 'side_by_side' }"
           @update="onEditorUpdate"
         />
-        <!-- Right side: preview for side_by_side / fully_rendered -->
+        <!-- Preview only in preview mode -->
         <MarkdownPreview
-          v-if="editorMode === 'side_by_side' || editorMode === 'fully_rendered'"
+          v-if="normalizedEditorMode === 'fully_rendered'"
           :content="activeTab.content ?? ''"
           :vault-id="vaultsStore.activeVaultId ?? ''"
           :current-file="activeTab.filePath"
           class="editor-column"
-          :class="{ 'half-width': editorMode === 'side_by_side' }"
-        />
-        <!-- Tiptap rich text for formatted_raw -->
-        <TiptapEditor
-          v-if="editorMode === 'formatted_raw'"
-          :tab-id="activeTab.id"
-          :content="activeTab.content ?? ''"
-          class="editor-column full-width"
-          @update="onEditorUpdate"
         />
       </div>
 
@@ -58,23 +60,34 @@
       <div v-else class="d-flex align-center justify-center" style="flex: 1;">
         <span class="text-caption text-secondary">Binary file — cannot be edited here.</span>
       </div>
+
+      <!-- Word count status bar (markdown only) -->
+      <div
+        v-if="isMd"
+        class="word-count-bar d-flex align-center px-2"
+        style="border-top: 1px solid rgb(var(--v-theme-border)); background: rgb(var(--v-theme-surface));"
+      >
+        <span class="text-caption text-secondary">{{ wordCount }} words · {{ charCount }} characters</span>
+      </div>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, watch, defineAsyncComponent } from 'vue';
+import { computed, ref, watch, defineAsyncComponent } from 'vue';
 import { useTabsStore } from '@/stores/tabs';
 import { useVaultsStore } from '@/stores/vaults';
 import { useEditorStore } from '@/stores/editor';
+import { usePreferencesStore } from '@/stores/preferences';
 import { useFilesStore } from '@/stores/files';
 import { ApiError } from '@/api/client';
 import { useUiStore } from '@/stores/ui';
+import type { EditorMode } from '@/api/types';
 
 import FrontmatterPanel from './FrontmatterPanel.vue';
 import MarkdownEditor from './MarkdownEditor.vue';
+import EditorToolbar from './EditorToolbar.vue';
 const MarkdownPreview = defineAsyncComponent(() => import('./MarkdownPreview.vue'));
-const TiptapEditor = defineAsyncComponent(() => import('./TiptapEditor.vue'));
 const ImageViewer = defineAsyncComponent(() => import('@/components/viewers/ImageViewer.vue'));
 const PdfViewer = defineAsyncComponent(() => import('@/components/viewers/PdfViewer.vue'));
 const AudioVideoViewer = defineAsyncComponent(() => import('@/components/viewers/AudioVideoViewer.vue'));
@@ -82,8 +95,11 @@ const AudioVideoViewer = defineAsyncComponent(() => import('@/components/viewers
 const props = defineProps<{ paneId: string }>();
 
 const tabsStore = useTabsStore();
+const markdownEditorRef = ref<InstanceType<typeof MarkdownEditor> | null>(null);
+
 const vaultsStore = useVaultsStore();
 const editorStore = useEditorStore();
+const prefsStore = usePreferencesStore();
 const filesStore = useFilesStore();
 const uiStore = useUiStore();
 
@@ -93,13 +109,23 @@ const activeTab = computed(() => {
   return tabsStore.tabs.get(pane.activeTabId) ?? null;
 });
 
-const editorMode = computed(() => editorStore.mode);
+const normalizedEditorMode = computed<EditorMode>(() => {
+  // Legacy compatibility: old split mode now maps to formatted text mode.
+  return editorStore.mode === 'side_by_side' ? 'formatted_raw' : editorStore.mode;
+});
 
 const ext = computed(() => activeTab.value?.filePath?.split('.').pop()?.toLowerCase() ?? '');
 const isMd = computed(() => ext.value === 'md');
 const isImage = computed(() => ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext.value));
 const isPdf = computed(() => ext.value === 'pdf');
 const isAv = computed(() => ['mp4', 'webm', 'ogv', 'mov', 'mp3', 'ogg', 'wav', 'flac', 'm4a'].includes(ext.value));
+
+const wordCount = computed(() => {
+  const text = activeTab.value?.content ?? '';
+  return text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
+});
+
+const charCount = computed(() => (activeTab.value?.content ?? '').length);
 
 watch(activeTab, async (tab) => {
   if (!tab || tab.content !== '' || !tab.filePath) return;
@@ -118,15 +144,27 @@ function onEditorUpdate(newContent: string) {
   const tab = activeTab.value;
   if (!tab) return;
   tabsStore.updateTabContent(tab.id, newContent);
+  scheduleTabSave(tab.id, newContent, tab.frontmatter ?? {});
+}
+
+function onFrontmatterUpdate(frontmatter: Record<string, unknown>) {
+  const tab = activeTab.value;
+  if (!tab) return;
+  tabsStore.updateTabFrontmatter(tab.id, frontmatter);
+  scheduleTabSave(tab.id, tab.content ?? '', frontmatter);
+}
+
+function scheduleTabSave(tabId: string, content: string, frontmatter: Record<string, unknown>) {
   // Schedule auto-save in 2s
-  editorStore.scheduleAutoSave(tab.id, 2000, async () => {
+  editorStore.scheduleAutoSave(tabId, 2000, async () => {
     const vaultId = vaultsStore.activeVaultId;
-    if (!vaultId || !tab.filePath) return;
+    const tab = tabsStore.tabs.get(tabId);
+    if (!vaultId || !tab?.filePath) return;
     try {
       const saved = await filesStore.writeFile(vaultId, tab.filePath, {
-        content: newContent,
+        content,
         last_modified: tab.modified || undefined,
-        frontmatter: tab.frontmatter,
+        frontmatter,
       });
       tabsStore.markTabClean(tab.id, saved.modified);
     } catch (error) {
@@ -135,7 +173,7 @@ function onEditorUpdate(newContent: string) {
         uiStore.openConflictResolver({
           tabId: tab.id,
           filePath: tab.filePath,
-          yourVersion: newContent,
+          yourVersion: content,
           serverVersion: latest.content,
           serverModified: latest.modified,
         });
@@ -144,6 +182,21 @@ function onEditorUpdate(newContent: string) {
       throw error;
     }
   });
+}
+
+function onModeChange(value: EditorMode | null) {
+  if (!value) return;
+  editorStore.setMode(value);
+  prefsStore.set('editor_mode', value);
+  void prefsStore.save();
+}
+
+function onToolbarCommand(cmd: string) {
+  if (cmd === 'undo') { markdownEditorRef.value?.callUndo(); return; }
+  if (cmd === 'redo') { markdownEditorRef.value?.callRedo(); return; }
+  if (cmd === 'collapse_all_folds') { markdownEditorRef.value?.collapseAllFolds(); return; }
+  if (cmd === 'expand_all_folds') { markdownEditorRef.value?.expandAllFolds(); return; }
+  markdownEditorRef.value?.applyCommand(cmd as any);
 }
 </script>
 
@@ -154,11 +207,9 @@ function onEditorUpdate(newContent: string) {
   min-height: 0;
   overflow: auto;
 }
-.half-width {
-  flex: 1;
-  max-width: 50%;
-}
-.full-width {
-  max-width: 100%;
+.word-count-bar {
+  height: 22px;
+  flex-shrink: 0;
+  font-size: 11px;
 }
 </style>

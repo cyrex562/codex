@@ -22,11 +22,13 @@
     "codejar": "^4.3.0",
     "dompurify": "^3.2.5",
     "highlight.js": "^11.11.1",
+    "mermaid": "^11.13.0",
     "pdfjs-dist": "5.5.207",
     "pinia": "^2.3.1",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0",
-    "vuetify": "^3.7.15"
+    "vuetify": "^3.7.15",
+    "yaml": "^2.8.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",

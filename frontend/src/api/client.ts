@@ -22,6 +22,17 @@ import type {
     CreateUserRequest,
     CreateUserResponse,
     ChangePasswordRequest,
+    ImportResultItem,
+    Bookmark,
+    TagEntry,
+    BacklinkEntry,
+    GenerateOutlineRequest,
+    NoteOutlineResponse,
+    GenerateOrganizationSuggestionsRequest,
+    OrganizationSuggestionsResponse,
+    ApplyOrganizationSuggestionResponse,
+    OrganizationSuggestion,
+    UndoMlActionResponse,
 } from './types';
 import { useAuthStore } from '@/stores/auth';
 
@@ -40,8 +51,6 @@ async function request<T>(
     url: string,
     options: RequestInit = {},
 ): Promise<T> {
-    // Attach JWT header when a token is available.
-    // Lazy-import to avoid Pinia not-yet-initialized errors during module load.
     let authHeader: Record<string, string> = {};
     try {
         const auth = useAuthStore();
@@ -69,10 +78,27 @@ async function request<T>(
         throw new ApiError(response.status, message, body);
     }
 
-    // 204 No Content
     if (response.status === 204) return undefined as unknown as T;
 
-    return response.json() as Promise<T>;
+    const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+    if (contentType.includes('application/json')) {
+        return response.json() as Promise<T>;
+    }
+
+    const text = await response.text();
+    return text as unknown as T;
+}
+
+function getAuthHeaders(): Record<string, string> {
+    try {
+        const auth = useAuthStore();
+        if (auth.accessToken) {
+            return { Authorization: `Bearer ${auth.accessToken}` };
+        }
+    } catch {
+        // Pinia may not be initialized yet.
+    }
+    return {};
 }
 
 // ── Vaults ───────────────────────────────────────────────────────────────────
@@ -164,6 +190,50 @@ export const apiSearch = (
 export const apiReindex = (vaultId: string): Promise<{ indexed_files: number }> =>
     request(`/api/vaults/${vaultId}/reindex`, { method: 'POST' });
 
+// ── ML (outline + organization suggestions, suggest-only) ───────────────────
+
+export const apiGenerateOutline = (
+    vaultId: string,
+    data: GenerateOutlineRequest,
+): Promise<NoteOutlineResponse> =>
+    request(`/api/vaults/${vaultId}/ml/outline`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+
+export const apiGenerateOrganizationSuggestions = (
+    vaultId: string,
+    data: GenerateOrganizationSuggestionsRequest,
+): Promise<OrganizationSuggestionsResponse> =>
+    request(`/api/vaults/${vaultId}/ml/suggestions`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+
+export const apiApplyOrganizationSuggestion = (
+    vaultId: string,
+    filePath: string,
+    suggestion: OrganizationSuggestion,
+    dryRun = true,
+): Promise<ApplyOrganizationSuggestionResponse> =>
+    request(`/api/vaults/${vaultId}/ml/apply-suggestion`, {
+        method: 'POST',
+        body: JSON.stringify({
+            file_path: filePath,
+            suggestion,
+            dry_run: dryRun,
+        }),
+    });
+
+export const apiUndoMlAction = (
+    vaultId: string,
+    receiptId: string,
+): Promise<UndoMlActionResponse> =>
+    request(`/api/vaults/${vaultId}/ml/undo`, {
+        method: 'POST',
+        body: JSON.stringify({ receipt_id: receiptId }),
+    });
+
 // ── Markdown ──────────────────────────────────────────────────────────────────
 
 export const apiRenderMarkdown = (content: string): Promise<string> =>
@@ -225,7 +295,6 @@ export const apiGetRecentFiles = (vaultId: string): Promise<string[]> =>
     request(`/api/vaults/${vaultId}/recent`);
 
 export const apiRecordRecentFile = (vaultId: string, path: string): Promise<void> => {
-    // Fire-and-forget
     void request(`/api/vaults/${vaultId}/recent`, {
         method: 'POST',
         body: JSON.stringify({ path }),
@@ -253,18 +322,34 @@ export const apiUploadChunk = (
 ): Promise<{ uploaded_bytes: number }> =>
     fetch(`/api/vaults/${vaultId}/upload-sessions/${sessionId}`, {
         method: 'PUT',
+        headers: getAuthHeaders(),
         body: chunk,
-    }).then((r) => r.json());
+    }).then(async (r) => {
+        if (!r.ok) {
+            let body: unknown;
+            try { body = await r.json(); } catch { /* empty */ }
+            const message = (body as { error?: string })?.error ?? `HTTP ${r.status}`;
+            throw new ApiError(r.status, message, body);
+        }
+        return r.json();
+    });
+
+export const apiGetUploadSessionStatus = (
+    vaultId: string,
+    sessionId: string,
+): Promise<UploadSessionResponse> =>
+    request(`/api/vaults/${vaultId}/upload-sessions/${sessionId}`);
 
 export const apiFinishUploadSession = (
     vaultId: string,
     sessionId: string,
     filename: string,
     path = '',
-): Promise<unknown> =>
+    conflict: 'fail' | 'overwrite' | 'rename_with_timestamp' = 'rename_with_timestamp',
+): Promise<ImportResultItem> =>
     request(`/api/vaults/${vaultId}/upload-sessions/${sessionId}/finish`, {
         method: 'POST',
-        body: JSON.stringify({ filename, path }),
+        body: JSON.stringify({ filename, path, conflict }),
     });
 
 export const apiDownloadFileUrl = (vaultId: string, filePath: string): string =>
@@ -273,12 +358,48 @@ export const apiDownloadFileUrl = (vaultId: string, filePath: string): string =>
 export const apiDownloadZip = (vaultId: string, paths: string[]): Promise<Blob> =>
     fetch(`/api/vaults/${vaultId}/download-zip`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ paths }),
     }).then((r) => {
         if (!r.ok) throw new ApiError(r.status, 'Failed to download zip');
         return r.blob();
     });
+
+export const apiDownloadTar = (vaultId: string, paths: string[]): Promise<Blob> =>
+    fetch(`/api/vaults/${vaultId}/download-tar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ paths }),
+    }).then((r) => {
+        if (!r.ok) throw new ApiError(r.status, 'Failed to download tar');
+        return r.blob();
+    });
+
+export const apiImportArchive = (
+    vaultId: string,
+    archiveFile: File,
+    targetPath = '',
+): Promise<{ extracted: string[]; count: number }> => {
+    const archiveType = archiveFile.name.endsWith('.tar.gz') || archiveFile.name.endsWith('.tgz')
+        ? 'tar.gz'
+        : archiveFile.name.endsWith('.tar')
+            ? 'tar'
+            : 'zip';
+    const params = new URLSearchParams({ path: targetPath, archive_type: archiveType });
+    return fetch(`/api/vaults/${vaultId}/import-archive?${params}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', ...getAuthHeaders() },
+        body: archiveFile,
+    }).then(async (r) => {
+        if (!r.ok) {
+            let body: unknown;
+            try { body = await r.json(); } catch { /* empty */ }
+            const message = (body as { error?: string })?.error ?? `HTTP ${r.status}`;
+            throw new ApiError(r.status, message, body);
+        }
+        return r.json();
+    });
+};
 
 // ── Plugins ───────────────────────────────────────────────────────────────────
 
@@ -355,9 +476,35 @@ export const apiAddGroupMember = (
     });
 
 export const apiRemoveGroupMember = (groupId: string, userId: string): Promise<void> =>
-    request(`/api/groups/${groupId}/members/${userId}`, {
-        method: 'DELETE',
+    request(`/api/groups/${groupId}/members/${userId}`, { method: 'DELETE' });
+
+// ── Bookmarks ─────────────────────────────────────────────────────────────────
+
+export const apiListBookmarks = (vaultId: string): Promise<Bookmark[]> =>
+    request(`/api/vaults/${vaultId}/bookmarks`);
+
+export const apiCreateBookmark = (
+    vaultId: string,
+    path: string,
+    title: string,
+): Promise<Bookmark> =>
+    request(`/api/vaults/${vaultId}/bookmarks`, {
+        method: 'POST',
+        body: JSON.stringify({ path, title }),
     });
+
+export const apiDeleteBookmark = (vaultId: string, bookmarkId: string): Promise<void> =>
+    request(`/api/vaults/${vaultId}/bookmarks/${bookmarkId}`, { method: 'DELETE' });
+
+// ── Tags ──────────────────────────────────────────────────────────────────────
+
+export const apiListTags = (vaultId: string): Promise<TagEntry[]> =>
+    request(`/api/vaults/${vaultId}/tags`);
+
+// ── Backlinks ─────────────────────────────────────────────────────────────────
+
+export const apiGetBacklinks = (vaultId: string, path: string): Promise<BacklinkEntry[]> =>
+    request(`/api/vaults/${vaultId}/backlinks?path=${encodeURIComponent(path)}`);
 
 // ── Vault sharing ────────────────────────────────────────────────────────────
 

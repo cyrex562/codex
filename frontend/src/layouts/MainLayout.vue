@@ -6,7 +6,6 @@
     rail-width="0"
     style="background: rgb(var(--v-theme-surface)); border-right: 1px solid rgb(var(--v-theme-border));"
   >
-    <!-- Vault selector row -->
     <div class="d-flex align-center pa-2 gap-2" style="border-bottom: 1px solid rgb(var(--v-theme-border));">
       <v-select
         :items="vaultsStore.vaults"
@@ -23,43 +22,51 @@
       <v-btn icon="mdi-cog" size="small" @click="vaultManagerOpen = true" />
     </div>
 
-    <!-- Sidebar action buttons -->
     <SidebarActions />
 
-    <!-- File tree -->
     <div style="flex: 1; overflow-y: auto; overflow-x: hidden;">
       <FileTree v-if="vaultsStore.activeVaultId" />
       <div v-else class="pa-4 text-secondary text-caption text-center">
         Select a vault to start.
       </div>
+
+      <template v-if="vaultsStore.activeVaultId && activeMdContent !== null">
+        <MlInsightsPanel
+          :vault-id="vaultsStore.activeVaultId"
+          :file-path="tabsStore.activeTab?.filePath ?? ''"
+          :content="activeMdContent"
+        />
+        <OutlinePanel :content="activeMdContent" />
+        <OutgoingLinksPanel :content="activeMdContent" />
+        <BacklinksPanel :file-path="tabsStore.activeTab?.filePath ?? ''" />
+        <NeighboringFilesPanel :file-path="tabsStore.activeTab?.filePath ?? ''" />
+      </template>
+
+      <BookmarksPanel v-if="vaultsStore.activeVaultId" />
+      <RecentFilesPanel v-if="vaultsStore.activeVaultId" />
+      <TagsPanel v-if="vaultsStore.activeVaultId" @search="openTagSearch" />
     </div>
   </v-navigation-drawer>
 
-  <!-- Top app bar -->
   <TopBar @open-search="searchOpen = true" @open-plugins="pluginsOpen = true" />
 
-  <!-- Main content: tab bars + editor panes -->
   <v-main style="height: 100vh; display: flex; flex-direction: column; overflow: hidden;">
     <PaneContainer />
   </v-main>
 
-  <!-- Resize handle for sidebar -->
-  <div
-    class="sidebar-resize-handle"
-    @mousedown="startResize"
-  />
+  <div class="sidebar-resize-handle" @mousedown="startResize" />
 
-  <!-- Modals -->
   <VaultManager v-model="vaultManagerOpen" />
-  <SearchModal v-model="searchOpen" />
+  <SearchModal v-model="searchOpen" :initial-query="searchInitialQuery" />
   <QuickSwitcher v-model="quickSwitcherOpen" />
   <PluginManager v-model="pluginsOpen" />
   <TemplateSelector v-model="uiStore.templateSelectorOpen" />
   <ConflictResolver v-model="uiStore.conflictResolverOpen" />
+  <ImportVaultDialog v-model="uiStore.importDialogOpen" />
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { ApiError } from '@/api/client';
 import { useAuthStore } from '@/stores/auth';
@@ -67,11 +74,21 @@ import { useVaultsStore } from '@/stores/vaults';
 import { useFilesStore } from '@/stores/files';
 import { useTabsStore } from '@/stores/tabs';
 import { useUiStore } from '@/stores/ui';
+import { usePreferencesStore } from '@/stores/preferences';
+import { useEditorStore } from '@/stores/editor';
 import { useWebSocket } from '@/composables/useWebSocket';
 
 import TopBar from '@/components/TopBar.vue';
 import SidebarActions from '@/components/sidebar/SidebarActions.vue';
 import FileTree from '@/components/sidebar/FileTree.vue';
+import MlInsightsPanel from '@/components/sidebar/MlInsightsPanel.vue';
+import OutlinePanel from '@/components/sidebar/OutlinePanel.vue';
+import OutgoingLinksPanel from '@/components/sidebar/OutgoingLinksPanel.vue';
+import RecentFilesPanel from '@/components/sidebar/RecentFilesPanel.vue';
+import BacklinksPanel from '@/components/sidebar/BacklinksPanel.vue';
+import NeighboringFilesPanel from '@/components/sidebar/NeighboringFilesPanel.vue';
+import TagsPanel from '@/components/sidebar/TagsPanel.vue';
+import BookmarksPanel from '@/components/sidebar/BookmarksPanel.vue';
 import PaneContainer from '@/components/tabs/PaneContainer.vue';
 import VaultManager from '@/components/modals/VaultManager.vue';
 import SearchModal from '@/components/modals/SearchModal.vue';
@@ -79,18 +96,28 @@ import QuickSwitcher from '@/components/modals/QuickSwitcher.vue';
 import PluginManager from '@/components/modals/PluginManager.vue';
 import TemplateSelector from '@/components/modals/TemplateSelector.vue';
 import ConflictResolver from '@/components/modals/ConflictResolver.vue';
+import ImportVaultDialog from '@/components/modals/ImportVaultDialog.vue';
 
 const vaultsStore = useVaultsStore();
 const filesStore = useFilesStore();
 const tabsStore = useTabsStore();
 const uiStore = useUiStore();
+const prefsStore = usePreferencesStore();
+const editorStore = useEditorStore();
 const authStore = useAuthStore();
 const router = useRouter();
 
 const sidebarOpen = ref(true);
 const sidebarWidth = ref(280);
+
+const activeMdContent = computed<string | null>(() => {
+  const tab = tabsStore.activeTab;
+  if (!tab?.filePath?.endsWith('.md')) return null;
+  return tab.content ?? null;
+});
 const vaultManagerOpen = ref(false);
 const searchOpen = ref(false);
+const searchInitialQuery = ref('');
 const quickSwitcherOpen = ref(false);
 const pluginsOpen = ref(false);
 
@@ -115,7 +142,10 @@ onMounted(async () => {
     await filesStore.loadRecentFiles(vaultsStore.activeVaultId);
   }
 
-  // Keyboard shortcut: Ctrl+P → quick switcher
+  if (prefsStore.prefs.editor_mode) {
+    editorStore.setMode(prefsStore.prefs.editor_mode);
+  }
+
   window.addEventListener('keydown', onGlobalKeydown);
 });
 
@@ -142,6 +172,11 @@ function onGlobalKeydown(e: KeyboardEvent) {
     e.preventDefault();
     quickSwitcherOpen.value = true;
   }
+}
+
+function openTagSearch(query: string) {
+  searchInitialQuery.value = query;
+  searchOpen.value = true;
 }
 
 async function saveActiveTabNow() {
@@ -171,8 +206,6 @@ async function saveActiveTabNow() {
     throw error;
   }
 }
-
-// ── Sidebar resize ────────────────────────────────────────────────────────────
 
 let resizing = false;
 let resizeStartX = 0;

@@ -3,6 +3,7 @@ members = [
 	"crates/obsidian-server",
 	"crates/obsidian-types",
 	"crates/obsidian-client",
+	"crates/obsidian-desktop",
 ]
 default-members = ["crates/obsidian-server"]
 resolver = "2"

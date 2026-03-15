@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vault {
@@ -191,6 +192,126 @@ pub struct PagedSearchResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateOutlineRequest {
+    pub file_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_sections: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutlineSection {
+    pub level: u8,
+    pub title: String,
+    pub line_number: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteOutlineResponse {
+    pub file_path: String,
+    pub summary: String,
+    pub sections: Vec<OutlineSection>,
+    pub generated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateOrganizationSuggestionsRequest {
+    pub file_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_suggestions: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationSuggestionKind {
+    Tag,
+    Category,
+    MoveToFolder,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrganizationSuggestion {
+    pub id: String,
+    pub kind: OrganizationSuggestionKind,
+    pub confidence: f32,
+    pub rationale: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_folder: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrganizationSuggestionsResponse {
+    pub file_path: String,
+    pub suggestions: Vec<OrganizationSuggestion>,
+    pub existing_tags: Vec<String>,
+    pub generated_at: DateTime<Utc>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyOrganizationSuggestionRequest {
+    pub file_path: String,
+    pub suggestion: OrganizationSuggestion,
+    #[serde(default = "default_true")]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyChange {
+    pub kind: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyOrganizationSuggestionResponse {
+    pub file_path: String,
+    pub applied: bool,
+    pub dry_run: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_file_path: Option<String>,
+    pub changes: Vec<ApplyChange>,
+    pub applied_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipt_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum ReverseAction {
+    RemoveTag { tag: String },
+    RestoreCategory { previous_value: Option<String> },
+    MoveBack { from_path: String, to_path: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MlUndoReceipt {
+    pub receipt_id: String,
+    pub vault_id: String,
+    pub file_path: String,
+    pub description: String,
+    pub reverse_action: ReverseAction,
+    pub applied_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoMlActionResponse {
+    pub receipt_id: String,
+    pub undone: bool,
+    pub description: String,
+    pub file_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileChangeEvent {
     pub vault_id: String,
     pub path: String,
@@ -213,6 +334,7 @@ pub struct UserPreferences {
     pub editor_mode: EditorMode,
     pub font_size: u16,
     pub window_layout: Option<String>,
+    pub icon_map: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -231,6 +353,7 @@ impl Default for UserPreferences {
             editor_mode: EditorMode::SideBySide,
             font_size: 14,
             window_layout: None,
+            icon_map: None,
         }
     }
 }

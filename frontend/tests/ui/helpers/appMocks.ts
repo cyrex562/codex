@@ -62,6 +62,69 @@ export async function installCommonAppMocks(page: Page, options: MockOptions = {
     const fileFrontmatterByVaultId = options.fileFrontmatterByVaultId ?? {};
     const plugins = options.plugins ?? [];
     const searchResults = options.searchResults ?? [];
+    const uploadSessions = new Map<string, { filename: string; path: string; uploadedBytes: number; totalSize: number }>();
+
+    function ensureDirectoryNode(vaultId: string, path: string) {
+        if (!path) return;
+        const segments = path.split('/').filter(Boolean);
+        const root = (treeByVaultId[vaultId] as Array<any> | undefined) ?? [];
+        treeByVaultId[vaultId] = root;
+
+        let level = root;
+        let currentPath = '';
+        for (const segment of segments) {
+            currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+            let node = level.find((entry) => entry.path === currentPath && entry.is_directory);
+            if (!node) {
+                node = {
+                    name: segment,
+                    path: currentPath,
+                    is_directory: true,
+                    modified: new Date().toISOString(),
+                    children: [],
+                };
+                level.push(node);
+            }
+            node.children ??= [];
+            level = node.children;
+        }
+    }
+
+    function upsertFileNode(vaultId: string, filePath: string, size: number) {
+        const normalized = filePath.split('/').filter(Boolean).join('/');
+        const parentPath = normalized.includes('/') ? normalized.slice(0, normalized.lastIndexOf('/')) : '';
+        ensureDirectoryNode(vaultId, parentPath);
+
+        const root = (treeByVaultId[vaultId] as Array<any> | undefined) ?? [];
+        treeByVaultId[vaultId] = root;
+
+        let level = root;
+        if (parentPath) {
+            const segments = parentPath.split('/');
+            let current = '';
+            for (const segment of segments) {
+                current = current ? `${current}/${segment}` : segment;
+                const dirNode = level.find((entry) => entry.path === current && entry.is_directory);
+                level = (dirNode?.children as Array<any> | undefined) ?? [];
+            }
+        }
+
+        const fileName = normalized.split('/').pop() ?? normalized;
+        const existingIndex = level.findIndex((entry) => entry.path === normalized && !entry.is_directory);
+        const fileNode = {
+            name: fileName,
+            path: normalized,
+            is_directory: false,
+            modified: new Date().toISOString(),
+            size,
+        };
+
+        if (existingIndex >= 0) {
+            level.splice(existingIndex, 1, fileNode);
+        } else {
+            level.push(fileNode);
+        }
+    }
 
     const prefs = {
         theme: 'dark',
@@ -231,6 +294,11 @@ export async function installCommonAppMocks(page: Page, options: MockOptions = {
             return;
         }
 
+        const match = route.request().url().match(/\/api\/vaults\/([^/]+)\/directories$/);
+        const vaultId = match?.[1] ?? '';
+        const payload = route.request().postDataJSON() as { path: string };
+        ensureDirectoryNode(vaultId, payload.path);
+
         await route.fulfill({ status: 204, body: '' });
     });
 
@@ -348,6 +416,90 @@ export async function installCommonAppMocks(page: Page, options: MockOptions = {
             return;
         }
         await route.continue();
+    });
+
+    await page.route(/.*\/api\/vaults\/[^/]+\/upload-sessions$/, async (route) => {
+        if (route.request().method() !== 'POST') {
+            await route.continue();
+            return;
+        }
+
+        const payload = route.request().postDataJSON() as { filename: string; path?: string; total_size?: number };
+        const sessionId = `session-${uploadSessions.size + 1}`;
+        uploadSessions.set(sessionId, {
+            filename: payload.filename,
+            path: payload.path ?? '',
+            uploadedBytes: 0,
+            totalSize: payload.total_size ?? 0,
+        });
+
+        await route.fulfill({
+            status: 201,
+            contentType: 'application/json',
+            body: JSON.stringify({ session_id: sessionId, uploaded_bytes: 0, total_size: payload.total_size ?? 0 }),
+        });
+    });
+
+    await page.route(/.*\/api\/vaults\/[^/]+\/upload-sessions\/[^/]+$/, async (route) => {
+        const match = route.request().url().match(/\/api\/vaults\/([^/]+)\/upload-sessions\/([^/]+)$/);
+        const sessionId = match?.[2] ?? '';
+        const session = uploadSessions.get(sessionId);
+
+        if (!session) {
+            await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'Session not found' }) });
+            return;
+        }
+
+        if (route.request().method() === 'GET') {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ session_id: sessionId, uploaded_bytes: session.uploadedBytes, total_size: session.totalSize }),
+            });
+            return;
+        }
+
+        if (route.request().method() === 'PUT') {
+            const body = route.request().postDataBuffer() ?? Buffer.alloc(0);
+            session.uploadedBytes += body.length;
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ uploaded_bytes: session.uploadedBytes }),
+            });
+            return;
+        }
+
+        await route.continue();
+    });
+
+    await page.route(/.*\/api\/vaults\/[^/]+\/upload-sessions\/[^/]+\/finish$/, async (route) => {
+        if (route.request().method() !== 'POST') {
+            await route.continue();
+            return;
+        }
+
+        const match = route.request().url().match(/\/api\/vaults\/([^/]+)\/upload-sessions\/([^/]+)\/finish$/);
+        const vaultId = match?.[1] ?? '';
+        const sessionId = match?.[2] ?? '';
+        const session = uploadSessions.get(sessionId);
+        if (!session) {
+            await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'Session not found' }) });
+            return;
+        }
+
+        const payload = route.request().postDataJSON() as { filename: string; path?: string };
+        const finalPath = [payload.path ?? '', payload.filename].filter(Boolean).join('/');
+        const contentMap = (fileContentsByVaultId[vaultId] ??= {});
+        contentMap[finalPath] = contentMap[finalPath] ?? '';
+        upsertFileNode(vaultId, finalPath, session.uploadedBytes);
+        uploadSessions.delete(sessionId);
+
+        await route.fulfill({
+            status: 201,
+            contentType: 'application/json',
+            body: JSON.stringify({ path: finalPath, filename: payload.filename, size: session.uploadedBytes }),
+        });
     });
 
     await page.route('**/api/plugins', async (route) => {

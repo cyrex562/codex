@@ -11,6 +11,7 @@
         <v-text-field
           v-model="query"
           label="Search"
+          placeholder="Try #tag, phrase, or filename"
           prepend-inner-icon="mdi-magnify"
           autofocus
           clearable
@@ -39,13 +40,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { useVaultsStore } from '@/stores/vaults';
 import { useTabsStore } from '@/stores/tabs';
 import { apiSearch } from '@/api/client';
 import type { SearchResult } from '@/api/types';
 
-const props = defineProps<{ modelValue: boolean }>();
+const props = defineProps<{ modelValue: boolean; initialQuery?: string }>();
 const emit = defineEmits<{ 'update:modelValue': [v: boolean] }>();
 
 const vaultsStore = useVaultsStore();
@@ -59,6 +60,24 @@ const searched = ref(false);
 function close() {
   emit('update:modelValue', false);
 }
+
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (!open || !props.initialQuery) return;
+    query.value = props.initialQuery;
+    void search();
+  },
+);
+
+watch(
+  () => props.initialQuery,
+  (value) => {
+    if (!props.modelValue || !value) return;
+    query.value = value;
+    void search();
+  },
+);
 
 async function search() {
   if (!query.value.trim() || !vaultsStore.activeVaultId) return;

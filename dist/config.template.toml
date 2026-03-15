@@ -12,6 +12,10 @@ port = 8080
 path = "./obsidian-host.db"
 
 [vault]
+# Base directory where newly created vaults are stored when no explicit path is provided.
+# The UI creates vaults under this directory using the vault name.
+base_dir = "./vaults"
+
 # List of patterns to exclude from search indexing and file watcher
 # Default includes: .git, .obsidian, .trash, node_modules
 index_exclusions = [".git", ".obsidian", ".trash", "node_modules", "target"]

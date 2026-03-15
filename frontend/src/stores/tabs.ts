@@ -121,6 +121,45 @@ export const useTabsStore = defineStore('tabs', () => {
         tab.isDirty = true;
     }
 
+    function remapTabPaths(fromPath: string, toPath: string) {
+        const updatedTabs = new Map<string, Tab>();
+        const remappedIds = new Map<string, string>();
+        const prefix = `${fromPath}/`;
+        const newPrefix = `${toPath}/`;
+
+        tabs.value.forEach((tab, tabId) => {
+            let nextPath = tab.filePath;
+            if (tab.filePath === fromPath) {
+                nextPath = toPath;
+            } else if (tab.filePath.startsWith(prefix)) {
+                nextPath = `${newPrefix}${tab.filePath.slice(prefix.length)}`;
+            }
+
+            if (nextPath !== tab.filePath) {
+                const nextId = makeTabId(nextPath, tab.paneId);
+                remappedIds.set(tabId, nextId);
+                updatedTabs.set(nextId, {
+                    ...tab,
+                    id: nextId,
+                    filePath: nextPath,
+                    fileName: nextPath.split('/').pop() ?? nextPath,
+                    fileType: getFileType(nextPath),
+                });
+                return;
+            }
+
+            updatedTabs.set(tabId, tab);
+        });
+
+        tabs.value = updatedTabs;
+
+        panes.value.forEach((pane) => {
+            if (pane.activeTabId && remappedIds.has(pane.activeTabId)) {
+                pane.activeTabId = remappedIds.get(pane.activeTabId) ?? pane.activeTabId;
+            }
+        });
+    }
+
     // ── Pane management ──────────────────────────────────────────────────────
 
     function splitPane(sourcePaneId?: string, orientation: 'vertical' | 'horizontal' = 'vertical'): string | null {
@@ -168,6 +207,7 @@ export const useTabsStore = defineStore('tabs', () => {
         updateTabContent,
         markTabClean,
         updateTabFrontmatter,
+        remapTabPaths,
         splitPane,
         closePane,
         setActivePaneId,

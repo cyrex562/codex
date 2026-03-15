@@ -1,7 +1,7 @@
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AdminUser, EditorMode, GroupInfo, GroupMember, UserPreferences, Vault, VaultRole, VaultRow,
-    VaultShareEntry, VaultShareList,
+    AdminUser, EditorMode, GroupInfo, GroupMember, MlUndoReceipt, ReverseAction, UserPreferences,
+    Vault, VaultRole, VaultRow, VaultShareEntry, VaultShareList,
 };
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
@@ -62,6 +62,16 @@ struct FileChangeLogRow {
     timestamp: i64,
 }
 
+#[derive(sqlx::FromRow)]
+struct MlUndoReceiptRow {
+    receipt_id: String,
+    vault_id: String,
+    file_path: String,
+    description: String,
+    reverse_action: String,
+    applied_at: String,
+}
+
 #[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
@@ -106,6 +116,7 @@ impl Database {
                 editor_mode TEXT NOT NULL DEFAULT 'side_by_side',
                 font_size INTEGER NOT NULL DEFAULT 14,
                 window_layout TEXT,
+                icon_map TEXT,
                 updated_at TEXT NOT NULL
             )
             "#,
@@ -126,6 +137,10 @@ impl Database {
 
         // Add window_layout column if it doesn't exist (for existing DBs)
         let _ = sqlx::query("ALTER TABLE preferences ADD COLUMN window_layout TEXT")
+            .execute(&self.pool)
+            .await;
+
+        let _ = sqlx::query("ALTER TABLE preferences ADD COLUMN icon_map TEXT")
             .execute(&self.pool)
             .await;
 
@@ -191,6 +206,7 @@ impl Database {
                 editor_mode TEXT NOT NULL DEFAULT 'side_by_side',
                 font_size INTEGER NOT NULL DEFAULT 14,
                 window_layout TEXT,
+                icon_map TEXT,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
@@ -198,6 +214,10 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
+
+        let _ = sqlx::query("ALTER TABLE user_preferences ADD COLUMN icon_map TEXT")
+            .execute(&self.pool)
+            .await;
 
         let _ =
             sqlx::query("ALTER TABLE vaults ADD COLUMN owner_user_id TEXT REFERENCES users(id)")
@@ -309,6 +329,49 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Bookmarks table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS bookmarks (
+                id TEXT PRIMARY KEY NOT NULL,
+                vault_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE CASCADE,
+                UNIQUE(vault_id, path)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_bookmarks_vault_id ON bookmarks(vault_id)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS ml_undo_receipts (
+                receipt_id TEXT PRIMARY KEY NOT NULL,
+                vault_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                description TEXT NOT NULL,
+                reverse_action TEXT NOT NULL,
+                applied_at TEXT NOT NULL,
+                FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_ml_undo_receipts_vault_id ON ml_undo_receipts(vault_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -322,6 +385,124 @@ impl Database {
             .await
             .map_err(AppError::from)?;
         Ok(count.0)
+    }
+
+    pub async fn save_ml_undo_receipt(&self, receipt: &MlUndoReceipt) -> AppResult<()> {
+        let reverse_action = serde_json::to_string(&receipt.reverse_action).map_err(|e| {
+            AppError::InternalError(format!("Failed to serialize reverse action: {e}"))
+        })?;
+
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO ml_undo_receipts
+            (receipt_id, vault_id, file_path, description, reverse_action, applied_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&receipt.receipt_id)
+        .bind(&receipt.vault_id)
+        .bind(&receipt.file_path)
+        .bind(&receipt.description)
+        .bind(reverse_action)
+        .bind(receipt.applied_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        Ok(())
+    }
+
+    pub async fn consume_ml_undo_receipt(
+        &self,
+        vault_id: &str,
+        receipt_id: &str,
+    ) -> AppResult<MlUndoReceipt> {
+        let row = sqlx::query_as::<_, MlUndoReceiptRow>(
+            r#"
+            SELECT receipt_id, vault_id, file_path, description, reverse_action, applied_at
+            FROM ml_undo_receipts
+            WHERE vault_id = ? AND receipt_id = ?
+            "#,
+        )
+        .bind(vault_id)
+        .bind(receipt_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(AppError::from)?
+        .ok_or_else(|| {
+            AppError::NotFound(format!(
+                "Undo receipt '{}' was not found (it may be expired or already used)",
+                receipt_id
+            ))
+        })?;
+
+        let delete_result =
+            sqlx::query("DELETE FROM ml_undo_receipts WHERE vault_id = ? AND receipt_id = ?")
+                .bind(vault_id)
+                .bind(receipt_id)
+                .execute(&self.pool)
+                .await
+                .map_err(AppError::from)?;
+
+        if delete_result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!(
+                "Undo receipt '{}' was not found (it may be expired or already used)",
+                receipt_id
+            )));
+        }
+
+        let reverse_action: ReverseAction = serde_json::from_str(&row.reverse_action)
+            .map_err(|e| AppError::InternalError(format!("Failed to parse reverse action: {e}")))?;
+
+        Ok(MlUndoReceipt {
+            receipt_id: row.receipt_id,
+            vault_id: row.vault_id,
+            file_path: row.file_path,
+            description: row.description,
+            reverse_action,
+            applied_at: parse_rfc3339_utc(&row.applied_at),
+        })
+    }
+
+    // ── Bookmarks ─────────────────────────────────────────────────────────────
+
+    pub async fn list_bookmarks(
+        &self,
+        vault_id: &str,
+    ) -> AppResult<Vec<crate::models::bookmarks::Bookmark>> {
+        let rows = sqlx::query_as::<_, crate::models::bookmarks::Bookmark>(
+            "SELECT id, vault_id, path, title, created_at FROM bookmarks WHERE vault_id = ? ORDER BY created_at DESC"
+        )
+        .bind(vault_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+        Ok(rows)
+    }
+
+    pub async fn create_bookmark(&self, bm: &crate::models::bookmarks::Bookmark) -> AppResult<()> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO bookmarks (id, vault_id, path, title, created_at) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind(&bm.id)
+        .bind(&bm.vault_id)
+        .bind(&bm.path)
+        .bind(&bm.title)
+        .bind(&bm.created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+        Ok(())
+    }
+
+    pub async fn delete_bookmark(&self, vault_id: &str, bookmark_id: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM bookmarks WHERE vault_id = ? AND id = ?")
+            .bind(vault_id)
+            .bind(bookmark_id)
+            .execute(&self.pool)
+            .await
+            .map_err(AppError::from)?;
+        Ok(())
     }
 
     pub async fn create_user(&self, username: &str, password_hash: &str) -> AppResult<()> {
@@ -1075,9 +1256,12 @@ impl Database {
         &self,
         user_id: Option<&str>,
     ) -> AppResult<UserPreferences> {
-        let row: Option<(String, String, i64, Option<String>)> = if let Some(user_id) = user_id {
+        let row: Option<(String, String, i64, Option<String>, Option<String>)> = if let Some(
+            user_id,
+        ) = user_id
+        {
             sqlx::query_as(
-                "SELECT theme, editor_mode, font_size, window_layout FROM user_preferences WHERE user_id = ?",
+                "SELECT theme, editor_mode, font_size, window_layout, icon_map FROM user_preferences WHERE user_id = ?",
             )
             .bind(user_id)
             .fetch_optional(&self.pool)
@@ -1085,19 +1269,23 @@ impl Database {
             .map_err(AppError::from)?
         } else {
             sqlx::query_as(
-                "SELECT theme, editor_mode, font_size, window_layout FROM preferences WHERE id = 1",
+                "SELECT theme, editor_mode, font_size, window_layout, icon_map FROM preferences WHERE id = 1",
             )
             .fetch_optional(&self.pool)
             .await
             .map_err(AppError::from)?
         };
 
-        if let Some((theme, editor_mode, font_size, window_layout)) = row {
+        if let Some((theme, editor_mode, font_size, window_layout, icon_map_raw)) = row {
+            let icon_map = icon_map_raw
+                .as_deref()
+                .and_then(|raw| serde_json::from_str(raw).ok());
             return Ok(UserPreferences {
                 theme,
                 editor_mode: editor_mode_from_str(&editor_mode),
                 font_size: font_size as u16,
                 window_layout,
+                icon_map,
             });
         }
 
@@ -1107,19 +1295,25 @@ impl Database {
             return Ok(default);
         }
 
-        let fallback_row: Option<(String, String, i64, Option<String>)> = sqlx::query_as(
-            "SELECT theme, editor_mode, font_size, window_layout FROM preferences WHERE id = 1",
+        let fallback_row: Option<(String, String, i64, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT theme, editor_mode, font_size, window_layout, icon_map FROM preferences WHERE id = 1",
         )
         .fetch_optional(&self.pool)
         .await
         .map_err(AppError::from)?;
 
-        let fallback = if let Some((theme, editor_mode, font_size, window_layout)) = fallback_row {
+        let fallback = if let Some((theme, editor_mode, font_size, window_layout, icon_map_raw)) =
+            fallback_row
+        {
+            let icon_map = icon_map_raw
+                .as_deref()
+                .and_then(|raw| serde_json::from_str(raw).ok());
             UserPreferences {
                 theme,
                 editor_mode: editor_mode_from_str(&editor_mode),
                 font_size: font_size as u16,
                 window_layout,
+                icon_map,
             }
         } else {
             UserPreferences::default()
@@ -1140,17 +1334,22 @@ impl Database {
     ) -> AppResult<()> {
         let mode_str = editor_mode_to_str(&prefs.editor_mode);
         let now = Utc::now().to_rfc3339();
+        let icon_map_json = prefs
+            .icon_map
+            .as_ref()
+            .and_then(|m| serde_json::to_string(m).ok());
 
         if let Some(user_id) = user_id {
             sqlx::query(
                 r#"
-                INSERT INTO user_preferences (user_id, theme, editor_mode, font_size, window_layout, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO user_preferences (user_id, theme, editor_mode, font_size, window_layout, icon_map, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET
                     theme = excluded.theme,
                     editor_mode = excluded.editor_mode,
                     font_size = excluded.font_size,
                     window_layout = excluded.window_layout,
+                    icon_map = excluded.icon_map,
                     updated_at = excluded.updated_at
                 "#,
             )
@@ -1159,6 +1358,7 @@ impl Database {
             .bind(mode_str)
             .bind(prefs.font_size as i64)
             .bind(&prefs.window_layout)
+            .bind(&icon_map_json)
             .bind(&now)
             .execute(&self.pool)
             .await?;
@@ -1168,7 +1368,7 @@ impl Database {
         sqlx::query(
             r#"
             UPDATE preferences
-            SET theme = ?, editor_mode = ?, font_size = ?, window_layout = ?, updated_at = ?
+            SET theme = ?, editor_mode = ?, font_size = ?, window_layout = ?, icon_map = ?, updated_at = ?
             WHERE id = 1
             "#,
         )
@@ -1176,6 +1376,7 @@ impl Database {
         .bind(mode_str)
         .bind(prefs.font_size as i64)
         .bind(&prefs.window_layout)
+        .bind(&icon_map_json)
         .bind(now)
         .execute(&self.pool)
         .await?;

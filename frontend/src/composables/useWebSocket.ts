@@ -1,5 +1,5 @@
 import { ref, onUnmounted } from 'vue';
-import type { WsMessage, FileChangeType } from '@/api/types';
+import type { WsMessage } from '@/api/types';
 import { useFilesStore } from '@/stores/files';
 import { useTabsStore } from '@/stores/tabs';
 import { useVaultsStore } from '@/stores/vaults';
@@ -33,6 +33,10 @@ function handleMessage(event: MessageEvent) {
             const filesStore = useFilesStore();
             const tabsStore = useTabsStore();
             const vaultsStore = useVaultsStore();
+
+            if (typeof msg.event_type === 'object' && 'renamed' in msg.event_type) {
+                tabsStore.remapTabPaths(msg.event_type.renamed.from, msg.event_type.renamed.to);
+            }
 
             // Refresh the file tree for the affected vault
             if (vaultsStore.activeVaultId === msg.vault_id) {
@@ -95,20 +99,35 @@ async function connect() {
     ws.addEventListener('open', () => {
         connected.value = true;
         reconnectAttempts = 0;
+        if (reconnectTimer !== null) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
     });
 
     ws.addEventListener('message', handleMessage);
 
-    ws.addEventListener('close', () => {
+    ws.addEventListener('close', (event) => {
         connected.value = false;
         ws = null;
         const authStore = useAuthStore();
         if (!authStore.isAuthenticated) {
             return;
         }
+
+        // Avoid reconnect storms when server rejected auth/token.
+        if (event.code === 1008) {
+            return;
+        }
+
+        if (reconnectTimer !== null) {
+            return;
+        }
+
         const delay = getReconnectDelay();
         reconnectAttempts++;
         reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
             void connect();
         }, delay);
     });
@@ -128,13 +147,14 @@ function disconnect() {
     connected.value = false;
 }
 
-export function useWebSocket() {
-    // Start the connection if not already running
-    void connect();
+export function useWebSocket(autoConnect = true) {
+    if (autoConnect) {
+        void connect();
+    }
 
     // Cleanup when the last consumer unmounts is not straightforward with a singleton,
     // so we intentionally keep the connection alive for the app lifetime.
     // disconnect() can be called explicitly (e.g. on logout).
 
-    return { connected, disconnect };
+    return { connected, disconnect, connect };
 }

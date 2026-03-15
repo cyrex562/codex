@@ -3,7 +3,7 @@ import { ref } from 'vue';
 import type { EditorMode } from '@/api/types';
 
 export const useEditorStore = defineStore('editor', () => {
-    const mode = ref<EditorMode>('side_by_side');
+    const mode = ref<EditorMode>('formatted_raw');
     // Per-tab pending auto-save timers (tabId → timer handle)
     const autoSaveTimers = ref<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 

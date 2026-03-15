@@ -30,6 +30,29 @@
       @click="uiStore.openTemplateSelector()"
     />
     <v-btn
+      icon="mdi-folder-upload-outline"
+      size="small"
+      density="compact"
+      title="Import files or folders"
+      @click="uiStore.openImportDialog()"
+    />
+    <v-menu>
+      <template #activator="{ props: menuProps }">
+        <v-btn
+          icon="mdi-export"
+          size="small"
+          density="compact"
+          title="Export vault or folder"
+          v-bind="menuProps"
+        />
+      </template>
+      <v-list density="compact" min-width="200">
+        <v-list-subheader>Export entire vault</v-list-subheader>
+        <v-list-item prepend-icon="mdi-folder-zip-outline" title="Download as ZIP" @click="exportVaultZip" />
+        <v-list-item prepend-icon="mdi-archive-arrow-down-outline" title="Download as tar.gz" @click="exportVaultTar" />
+      </v-list>
+    </v-menu>
+    <v-btn
       icon="mdi-dice-5-outline"
       size="small"
       density="compact"
@@ -173,6 +196,23 @@ async function openDailyNote() {
   if (!vaultId) return;
   const note = await filesStore.getDailyNote(vaultId);
   tabsStore.openTab(tabsStore.activePaneId, note.path, note.path.split('/').pop()!);
+}
+
+async function exportVaultZip() {
+  const vaultId = vaultsStore.activeVaultId;
+  if (!vaultId) return;
+  // Export all top-level entries by passing each root tree node path.
+  const paths = filesStore.tree.map((n) => n.path);
+  if (paths.length === 0) return;
+  await filesStore.downloadAsZip(vaultId, paths);
+}
+
+async function exportVaultTar() {
+  const vaultId = vaultsStore.activeVaultId;
+  if (!vaultId) return;
+  const paths = filesStore.tree.map((n) => n.path);
+  if (paths.length === 0) return;
+  await filesStore.downloadAsTar(vaultId, paths);
 }
 </script>
 

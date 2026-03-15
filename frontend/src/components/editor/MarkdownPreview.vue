@@ -8,6 +8,17 @@ import DOMPurify from 'dompurify';
 import { apiRenderMarkdownInVault, apiResolveWikiLink } from '@/api/client';
 import { useTabsStore } from '@/stores/tabs';
 
+let mermaidReady = false;
+async function getMermaid() {
+  const mod = await import('mermaid');
+  const m = mod.default;
+  if (!mermaidReady) {
+    m.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+    mermaidReady = true;
+  }
+  return m;
+}
+
 const props = defineProps<{
   content: string;
   vaultId: string;
@@ -46,8 +57,89 @@ async function render() {
       ADD_ATTR: ['allow', 'allowfullscreen', 'frameborder', 'scrolling'],
     });
     await nextTick();
+    attachCodeBlockCopyButtons();
+    void renderMermaidDiagrams();
   } catch {
     // Fall through silently on transient errors; keep last rendered content
+  }
+}
+
+function attachCodeBlockCopyButtons() {
+  const root = previewEl.value;
+  if (!root) return;
+
+  const codeBlocks = root.querySelectorAll('pre > code:not(.language-mermaid)');
+  codeBlocks.forEach((codeEl) => {
+    const pre = codeEl.parentElement as HTMLElement | null;
+    if (!pre) return;
+    if (pre.querySelector('.code-copy-btn')) return;
+
+    pre.style.position = 'relative';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'code-copy-btn';
+    btn.textContent = 'Copy';
+    btn.setAttribute('aria-label', 'Copy code block');
+    btn.title = 'Copy code block';
+
+    btn.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const text = codeEl.textContent ?? '';
+      if (!text) return;
+
+      try {
+        await navigator.clipboard.writeText(text);
+        const prev = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => {
+          btn.textContent = prev;
+        }, 1200);
+      } catch {
+        btn.textContent = 'Failed';
+        setTimeout(() => {
+          btn.textContent = 'Copy';
+        }, 1200);
+      }
+    });
+
+    pre.appendChild(btn);
+  });
+}
+
+async function renderMermaidDiagrams() {
+  const root = previewEl.value;
+  if (!root) return;
+
+  const mermaidBlocks = root.querySelectorAll('pre > code.language-mermaid');
+  if (!mermaidBlocks.length) return;
+
+  let m: Awaited<ReturnType<typeof getMermaid>>;
+  try {
+    m = await getMermaid();
+  } catch {
+    return;
+  }
+
+  let idx = 0;
+  for (const codeEl of mermaidBlocks) {
+    const pre = codeEl.parentElement;
+    if (!pre || pre.dataset.mermaidRendered) continue;
+
+    const text = codeEl.textContent ?? '';
+    const id = `mermaid-render-${Date.now()}-${idx++}`;
+    try {
+      const { svg } = await m.render(id, text);
+      const container = document.createElement('div');
+      container.className = 'mermaid-diagram';
+      // Sanitize the SVG produced by mermaid before inserting
+      container.innerHTML = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true } });
+      pre.replaceWith(container);
+    } catch {
+      pre.dataset.mermaidRendered = 'error';
+    }
   }
 }
 
@@ -92,5 +184,23 @@ async function onPreviewClick(event: MouseEvent) {
   border-left: 1px solid rgb(var(--v-theme-border));
   font-size: 15px;
   line-height: 1.7;
+}
+
+:deep(.code-copy-btn) {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: 1px solid rgb(var(--v-theme-border));
+  background: rgba(10, 10, 10, 0.85);
+  color: rgb(var(--v-theme-on-background));
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+:deep(.code-copy-btn:hover) {
+  background: rgba(var(--v-theme-primary), 0.25);
 }
 </style>

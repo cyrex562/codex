@@ -1,0 +1,9 @@
+[package]
+name = "obsidian-desktop"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+iced = { version = "0.13", features = ["tokio"] }
+obsidian-client = { path = "../obsidian-client" }
+obsidian-types = { path = "../obsidian-types" }
