@@ -175,21 +175,21 @@
 11. ~~Sync: Offline support with local cache + edit queue~~
 12. ~~Desktop: Auth token persistence + auto-login~~
 
-### Phase 4a — Quick Wins & Foundation
-13. Auth: API key system (generate/revoke, middleware acceptance alongside JWT)
-14. Server: Per-user/IP rate limiting middleware (configurable in config.toml)
-15. Desktop: Theme toggle (wire preferences theme to Iced Theme enum)
-16. Server: Vault ownership transfer endpoint
-17. Server: Public/private vault toggle (anonymous read access for public vaults)
+### Phase 4a — Quick Wins & Foundation ✅
+13. ~~Auth: API key system (generate/revoke, middleware acceptance alongside JWT)~~
+14. ~~Server: Per-user/IP rate limiting middleware (configurable in config.toml)~~
+15. ~~Desktop: Theme toggle (wire preferences theme to Iced Theme enum)~~
+16. ~~Server: Vault ownership transfer endpoint~~
+17. ~~Server: Public/private vault toggle (anonymous read access for public vaults)~~
 
-### Phase 4b — Security & Collaboration
-18. Auth: TOTP 2FA (enrollment, QR code, verification on login, backup codes)
-19. Auth: Invitation system (invite links with role + expiration, acceptance endpoint)
-20. Server: Bulk user import (CSV/JSON endpoint for batch creation)
+### Phase 4b — Security & Collaboration ✅
+18. ~~Auth: TOTP 2FA (enrollment, QR code, verification on login, backup codes)~~
+19. ~~Auth: Invitation system (invite links with role + expiration, acceptance endpoint)~~
+20. ~~Server: Bulk user import (CSV/JSON endpoint for batch creation)~~
 
-### Phase 4c — Admin UX & Sync
-21. Desktop: Admin panel (user list, create/edit/deactivate/delete in Iced UI)
-22. Sync: Selective sync (config for which vaults/folders to sync, filter WS events)
+### Phase 4c — Admin UX & Sync ✅
+21. ~~Desktop: Admin panel (user list, create/edit/deactivate/delete in Iced UI)~~
+22. ~~Sync: Selective sync (config for which vaults/folders to sync, filter WS events)~~
 
 ### Phase 4d — Enterprise Auth
 23. Auth: OAuth2/OIDC provider support (finish stubbed OIDC, Google/GitHub login)
