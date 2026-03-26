@@ -3,8 +3,8 @@ use iced::{ContentFit, Element, Length, Theme};
 use std::collections::BTreeSet;
 
 use crate::state::{
-    file_kind_label, is_media_file_kind, DesktopApp, DesktopMode, EditorMode, FileKind,
-    TemplateInsertMode, ToolbarAction,
+    file_kind_label, is_media_file_kind, CollapsedSections, DesktopApp, DesktopMode, EditorMode,
+    FileKind, TemplateInsertMode, ToolbarAction,
 };
 use crate::Message;
 
@@ -155,29 +155,42 @@ fn view_sidebar(state: &DesktopApp) -> Element<'_, Message> {
         )
         .push(button("Refresh Tree").on_press(Message::LoadTreePressed));
 
-    let tree_panel = scrollable(state.tree_entries.iter().fold(
-        column![text("Vault Tree")].spacing(4),
-        |col, entry| {
-            let prefix = if state.selected_tree_path.as_deref() == Some(entry.path.as_str()) {
-                "• "
-            } else {
-                ""
-            };
+    let tree_header = row![
+        text("Vault Tree"),
+        button(if state.tree_sort_ascending { "A→Z" } else { "Z→A" })
+            .on_press(Message::ToggleTreeSort),
+        button(if state.collapsed_sections.file_tree { "▶" } else { "▼" })
+            .on_press(Message::ToggleSidebarSection("file_tree".to_string())),
+    ]
+    .spacing(6);
 
-            let label = if entry.is_directory {
-                format!("{prefix}📁 {}", entry.display)
-            } else {
-                format!("{prefix}📄 {}", entry.display)
-            };
+    let tree_panel = if state.collapsed_sections.file_tree {
+        scrollable(column![tree_header].spacing(4)).height(40)
+    } else {
+        scrollable(state.tree_entries.iter().fold(
+            column![tree_header].spacing(4),
+            |col, entry| {
+                let prefix = if state.selected_tree_path.as_deref() == Some(entry.path.as_str()) {
+                    "• "
+                } else {
+                    ""
+                };
 
-            col.push(
-                button(text(label))
-                    .width(Length::Fill)
-                    .on_press(Message::TreeEntrySelected(entry.path.clone())),
-            )
-        },
-    ))
-    .height(Length::Fill);
+                let label = if entry.is_directory {
+                    format!("{prefix}📁 {}", entry.display)
+                } else {
+                    format!("{prefix}📄 {}", entry.display)
+                };
+
+                col.push(
+                    button(text(label))
+                        .width(Length::Fill)
+                        .on_press(Message::TreeEntrySelected(entry.path.clone())),
+                )
+            },
+        ))
+        .height(Length::Fill)
+    };
 
     let quick_create = column![
         text("Quick Actions"),
@@ -279,14 +292,11 @@ fn view_sidebar(state: &DesktopApp) -> Element<'_, Message> {
         .spacing(4);
 
         for tag in state.tag_entries.iter().take(12) {
-            panel = panel.push(text(format!("#{} ({})", tag.tag, tag.count)).size(12));
-            if let Some(first_file) = tag.files.first() {
-                panel = panel.push(
-                    button(text(format!("↳ {}", first_file)))
-                        .width(Length::Fill)
-                        .on_press(Message::QuickReopenPressed(first_file.clone())),
-                );
-            }
+            panel = panel.push(
+                button(text(format!("#{} ({})", tag.tag, tag.count)).size(12))
+                    .width(Length::Fill)
+                    .on_press(Message::TagSearchPressed(tag.tag.clone())),
+            );
         }
 
         panel

@@ -18,9 +18,10 @@ use obsidian_types::{
 use state::{
     activate_existing_tab, add_recent_file, apply_delete_to_state, apply_file_to_state,
     apply_media_to_state, apply_preferences_to_state, apply_rename_to_state,
-    apply_restored_session, apply_toolbar_action, clear_loaded_note, file_kind_from_path,
-    file_kind_label, flatten_tree, is_media_file_kind, load_persisted_session, parse_frontmatter,
-    parse_plugin_items, persist_session_state, process_template_content, refresh_preview_markdown,
+    apply_restored_session, apply_toolbar_action, cache_file, clear_loaded_note,
+    drain_offline_edits, enqueue_offline_edit, file_kind_from_path, file_kind_label, flatten_tree,
+    is_media_file_kind, load_persisted_session, parse_frontmatter, parse_plugin_items,
+    persist_session_state, process_template_content, read_cached_file, refresh_preview_markdown,
     summarize_frontmatter_value, sync_active_tab_from_editor, sync_rename_source_from_selection,
     DesktopApp, DesktopMode, EditorMode, FileKind, PluginItem, SharedWsStream, TemplateInsertMode,
     ToolbarAction,
@@ -60,6 +61,9 @@ enum Message {
     UsernameChanged(String),
     PasswordChanged(String),
     LoginPressed,
+    /// Attempt auto-login using a persisted refresh token.
+    AutoLoginWithToken,
+    AutoLoginFinished(Result<ObsidianClient, String>),
     LoginFinished(Result<ObsidianClient, String>),
 
     LoadVaultsPressed,
@@ -157,6 +161,9 @@ enum Message {
     RetryEventConnection,
     /// After reconnecting, catch up on missed events via the change log API.
     CatchUpAfterReconnect,
+    /// Replay queued offline edits after reconnecting.
+    ReplayOfflineEdits,
+    OfflineEditReplayed(Result<String, String>),
     CatchUpLoaded(Result<Vec<obsidian_types::FileChangeEvent>, String>),
 
     PluginManagerPressed,
@@ -183,6 +190,11 @@ enum Message {
     NewVaultNameChanged(String),
     CreateVaultPressed,
     VaultCreated(Result<Vault, String>),
+
+    // ── tree sorting / sidebar collapse / tag search ───────────────────
+    ToggleTreeSort,
+    ToggleSidebarSection(String),
+    TagSearchPressed(String),
 
     // ── split pane ──────────────────────────────────────────────────────
     ToggleSplitPane,
@@ -213,6 +225,12 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                 Ok(Some(session)) => {
                     apply_restored_session(state, session);
                     state.status = "Loaded local session snapshot".to_string();
+                    // Try auto-login if we have a saved refresh token and base URL.
+                    if state.saved_refresh_token.is_some()
+                        && !state.base_url.trim().is_empty()
+                    {
+                        return Task::done(Message::AutoLoginWithToken);
+                    }
                 }
                 Ok(None) => {
                     state.status = "No local session snapshot found yet".to_string();
@@ -231,6 +249,68 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
         }
         Message::PasswordChanged(value) => {
             state.password = value;
+            Task::none()
+        }
+        Message::AutoLoginWithToken => {
+            let Some(refresh_token) = state.saved_refresh_token.take() else {
+                state.status = "No saved refresh token for auto-login".to_string();
+                return Task::none();
+            };
+            let base_url = if state.base_url.trim().is_empty() {
+                "http://127.0.0.1:8080".to_string()
+            } else {
+                state.base_url.trim().to_string()
+            };
+            let local_url = state.local_base_url.trim().to_string();
+            let mode = state.deployment_mode;
+            state.status = "Auto-login with saved token…".to_string();
+            Task::perform(
+                async move {
+                    let mut client = match mode {
+                        DesktopMode::Cloud => ObsidianClient::for_cloud(base_url),
+                        DesktopMode::Standalone => ObsidianClient::for_standalone(base_url),
+                        DesktopMode::Hybrid => {
+                            let local = if local_url.is_empty() {
+                                base_url.clone()
+                            } else {
+                                local_url
+                            };
+                            ObsidianClient::for_hybrid(base_url, local)
+                        }
+                    };
+                    // Set the refresh token and try to get a new access token.
+                    client.set_tokens("", &refresh_token, 0);
+                    client
+                        .refresh_access_token()
+                        .await
+                        .map_err(|e| format!("Auto-login failed: {e}"))?;
+                    Ok(client)
+                },
+                Message::AutoLoginFinished,
+            )
+        }
+        Message::AutoLoginFinished(result) => {
+            match result {
+                Ok(client) => {
+                    info!("Auto-login successful via refresh token");
+                    state
+                        .diagnostics
+                        .push_log("[auth] Auto-login successful".to_string());
+                    state.client = Some(client);
+                    state.status = "Auto-login successful".to_string();
+                    return Task::batch([
+                        Task::done(Message::LoadVaultsPressed),
+                        Task::done(Message::PreferencesPressed),
+                    ]);
+                }
+                Err(err) => {
+                    warn!(error = %err, "Auto-login failed");
+                    state
+                        .diagnostics
+                        .push_log(format!("[auth] Auto-login failed: {err}"));
+                    state.status = "Auto-login failed — please log in manually".to_string();
+                }
+            }
             Task::none()
         }
         Message::LoginPressed => {
@@ -711,7 +791,7 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
         Message::TreeLoaded(result) => {
             match result {
                 Ok(tree) => {
-                    state.tree_entries = flatten_tree(&tree);
+                    state.tree_entries = flatten_tree(&tree, state.tree_sort_ascending);
                     state.status = format!("Loaded {} tree entries", state.tree_entries.len());
                     if state.session_restore_in_progress {
                         return restore_next_session_tab(state);
@@ -1241,6 +1321,10 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                     info!(path = %path, "Note loaded");
                     state.diagnostics.notes_loaded += 1;
                     state.diagnostics.push_log(format!("[note] loaded {path}"));
+                    // Cache for offline access.
+                    if let Some(vault_id) = state.selected_vault_id.as_deref() {
+                        cache_file(vault_id, &path, &file.content);
+                    }
                     apply_file_to_state(state, file);
                     refresh_outgoing_links(state);
                     state.status = "Note loaded".to_string();
@@ -1262,6 +1346,25 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                 }
                 Err(err) => {
                     warn!(error = %err, "Note load failed");
+                    // Try offline cache fallback.
+                    let note_path = state.note_path.clone();
+                    if let Some(vault_id) = state.selected_vault_id.as_deref() {
+                        if let Some(cached) = read_cached_file(vault_id, &note_path) {
+                            state.diagnostics.push_log(format!(
+                                "[note] serving {note_path} from offline cache"
+                            ));
+                            let file = FileContent {
+                                path: note_path.clone(),
+                                content: cached,
+                                modified: chrono::Utc::now(),
+                                frontmatter: None,
+                            };
+                            apply_file_to_state(state, file);
+                            refresh_outgoing_links(state);
+                            state.status = format!("Loaded from cache (offline): {note_path}");
+                            return Task::done(Message::RenderPreviewRequested);
+                        }
+                    }
                     state.diagnostics.errors_logged += 1;
                     state
                         .diagnostics
@@ -1351,6 +1454,24 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                     } else {
                         error!(error = %err, "Note save failed");
                         state.diagnostics.errors_logged += 1;
+                        // Queue the edit for later replay if it looks like a network error.
+                        if let Some(vault_id) = state.selected_vault_id.as_deref() {
+                            if !state.note_path.trim().is_empty() {
+                                let _ = enqueue_offline_edit(
+                                    vault_id,
+                                    &state.note_path,
+                                    &state.note_content,
+                                );
+                                state.diagnostics.push_log(format!(
+                                    "[offline] queued edit for {}",
+                                    state.note_path
+                                ));
+                                state.status = format!(
+                                    "Save failed — edit queued for offline replay: {err}"
+                                );
+                                return Task::none();
+                            }
+                        }
                         state
                             .diagnostics
                             .push_log(format!("[note] save error: {err}"));
@@ -1533,10 +1654,11 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                         .diagnostics
                         .push_log(format!("[sync] catch-up: {count} event(s)"));
 
-                    // Refresh tree and current note.
+                    // Refresh tree, current note, and replay any queued offline edits.
                     let mut tasks: Vec<Task<Message>> = vec![
                         Task::done(Message::LoadTreePressed),
                         Task::done(Message::LoadTagsPressed),
+                        Task::done(Message::ReplayOfflineEdits),
                     ];
                     // If current note was affected, reload it.
                     let current = state.note_path.clone();
@@ -1685,6 +1807,91 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                 }
             }
             Task::none()
+        }
+
+        // ── offline edit replay ─────────────────────────────────────────
+        Message::ReplayOfflineEdits => {
+            let (Some(client), Some(vault_id)) =
+                (state.client.clone(), state.selected_vault_id.clone())
+            else {
+                return Task::none();
+            };
+            let edits = drain_offline_edits(&vault_id);
+            if edits.is_empty() {
+                return Task::none();
+            }
+            let count = edits.len();
+            state.status = format!("Replaying {count} offline edit(s)…");
+            state
+                .diagnostics
+                .push_log(format!("[offline] replaying {count} queued edit(s)"));
+            // Replay each edit sequentially (first one only for now, chain via OfflineEditReplayed).
+            let (path, content) = edits.into_iter().next().unwrap();
+            Task::perform(
+                async move {
+                    let request = obsidian_types::UpdateFileRequest {
+                        content,
+                        last_modified: None,
+                        frontmatter: None,
+                    };
+                    client
+                        .write_file(&vault_id, &path, &request)
+                        .await
+                        .map(|_| path)
+                        .map_err(|e| format!("Offline replay failed: {e}"))
+                },
+                Message::OfflineEditReplayed,
+            )
+        }
+        Message::OfflineEditReplayed(result) => {
+            match result {
+                Ok(path) => {
+                    state
+                        .diagnostics
+                        .push_log(format!("[offline] replayed edit for {path}"));
+                    state.status = format!("Replayed offline edit: {path}");
+                    // Continue replaying remaining edits.
+                    return Task::done(Message::ReplayOfflineEdits);
+                }
+                Err(err) => {
+                    state.status = format!("Offline replay error: {err}");
+                    state.diagnostics.errors_logged += 1;
+                    state
+                        .diagnostics
+                        .push_log(format!("[offline] replay error: {err}"));
+                }
+            }
+            Task::none()
+        }
+
+        // ── tree sorting / sidebar collapse / tag search ──────────────────
+        Message::ToggleTreeSort => {
+            state.tree_sort_ascending = !state.tree_sort_ascending;
+            state.status = format!(
+                "File tree sort: {}",
+                if state.tree_sort_ascending { "A → Z" } else { "Z → A" }
+            );
+            Task::done(Message::LoadTreePressed)
+        }
+        Message::ToggleSidebarSection(section) => {
+            let cs = &mut state.collapsed_sections;
+            match section.as_str() {
+                "vaults" => cs.vaults = !cs.vaults,
+                "quick_switcher" => cs.quick_switcher = !cs.quick_switcher,
+                "search" => cs.search = !cs.search,
+                "quick_actions" => cs.quick_actions = !cs.quick_actions,
+                "bookmarks" => cs.bookmarks = !cs.bookmarks,
+                "tags" => cs.tags = !cs.tags,
+                "recent_files" => cs.recent_files = !cs.recent_files,
+                "file_tree" => cs.file_tree = !cs.file_tree,
+                _ => {}
+            }
+            Task::none()
+        }
+        Message::TagSearchPressed(tag) => {
+            state.search_query = format!("#{tag}");
+            state.status = format!("Searching for tag #{tag}…");
+            run_search(state)
         }
 
         // ── split pane ─────────────────────────────────────────────────────

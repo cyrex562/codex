@@ -1,4 +1,4 @@
-use chrono::Local;
+use chrono::{Local, Utc};
 use iced::futures::lock::Mutex as AsyncMutex;
 use iced::widget::{image, markdown};
 use obsidian_client::ObsidianClient;
@@ -128,6 +128,19 @@ impl DiagnosticsState {
     }
 }
 
+/// Tracks which sidebar sections are collapsed.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CollapsedSections {
+    pub(crate) vaults: bool,
+    pub(crate) quick_switcher: bool,
+    pub(crate) search: bool,
+    pub(crate) quick_actions: bool,
+    pub(crate) bookmarks: bool,
+    pub(crate) tags: bool,
+    pub(crate) recent_files: bool,
+    pub(crate) file_tree: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TemplateInsertMode {
     Append,
@@ -165,6 +178,8 @@ pub(crate) struct DesktopApp {
     pub(crate) diagnostics: DiagnosticsState,
 
     pub(crate) client: Option<ObsidianClient>,
+    /// Saved refresh token from a prior session; used for auto-login.
+    pub(crate) saved_refresh_token: Option<String>,
     pub(crate) vaults: Vec<Vault>,
     pub(crate) selected_vault_id: Option<String>,
     pub(crate) event_sync_requested: bool,
@@ -185,6 +200,10 @@ pub(crate) struct DesktopApp {
     pub(crate) session_restore_in_progress: bool,
 
     pub(crate) tree_entries: Vec<TreeEntry>,
+    /// Current sort order for the file tree.
+    pub(crate) tree_sort_ascending: bool,
+    /// Which sidebar sections are collapsed.
+    pub(crate) collapsed_sections: CollapsedSections,
     pub(crate) recent_files: Vec<String>,
     pub(crate) quick_switcher_query: String,
     pub(crate) search_query: String,
@@ -270,6 +289,7 @@ impl Default for DesktopApp {
             feature_flags: FeatureFlags::default(),
             diagnostics: DiagnosticsState::default(),
             client: None,
+            saved_refresh_token: None,
             vaults: Vec::new(),
             selected_vault_id: None,
             event_sync_requested: false,
@@ -287,6 +307,8 @@ impl Default for DesktopApp {
             pending_session_tab_paths: Vec::new(),
             session_restore_in_progress: false,
             tree_entries: Vec::new(),
+            tree_sort_ascending: true,
+            collapsed_sections: CollapsedSections::default(),
             recent_files: Vec::new(),
             quick_switcher_query: String::new(),
             search_query: String::new(),
@@ -443,10 +465,13 @@ pub(crate) struct PersistedSessionState {
     pub(crate) deployment_mode: Option<DesktopMode>,
     #[serde(default)]
     pub(crate) local_base_url: Option<String>,
+    /// Persisted refresh token for auto-login on restart.
+    #[serde(default)]
+    pub(crate) refresh_token: Option<String>,
 }
 
-pub(crate) fn flatten_tree(nodes: &[FileNode]) -> Vec<TreeEntry> {
-    fn walk(node: &FileNode, depth: usize, out: &mut Vec<TreeEntry>) {
+pub(crate) fn flatten_tree(nodes: &[FileNode], ascending: bool) -> Vec<TreeEntry> {
+    fn walk(node: &FileNode, depth: usize, ascending: bool, out: &mut Vec<TreeEntry>) {
         let prefix = "  ".repeat(depth);
         out.push(TreeEntry {
             path: node.path.clone(),
@@ -455,15 +480,41 @@ pub(crate) fn flatten_tree(nodes: &[FileNode]) -> Vec<TreeEntry> {
         });
 
         if let Some(children) = &node.children {
-            for child in children {
-                walk(child, depth + 1, out);
+            let mut sorted: Vec<_> = children.iter().collect();
+            // Directories first, then sort by name.
+            sorted.sort_by(|a, b| {
+                let dir_ord = b.is_directory.cmp(&a.is_directory);
+                if dir_ord != std::cmp::Ordering::Equal {
+                    return dir_ord;
+                }
+                if ascending {
+                    a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase())
+                } else {
+                    b.name.to_ascii_lowercase().cmp(&a.name.to_ascii_lowercase())
+                }
+            });
+            for child in sorted {
+                walk(child, depth + 1, ascending, out);
             }
         }
     }
 
+    let mut roots: Vec<_> = nodes.iter().collect();
+    roots.sort_by(|a, b| {
+        let dir_ord = b.is_directory.cmp(&a.is_directory);
+        if dir_ord != std::cmp::Ordering::Equal {
+            return dir_ord;
+        }
+        if ascending {
+            a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase())
+        } else {
+            b.name.to_ascii_lowercase().cmp(&a.name.to_ascii_lowercase())
+        }
+    });
+
     let mut out = Vec::new();
-    for node in nodes {
-        walk(node, 0, &mut out);
+    for node in roots {
+        walk(node, 0, ascending, &mut out);
     }
     out
 }
@@ -972,6 +1023,7 @@ pub(crate) fn capture_session_state(state: &DesktopApp) -> PersistedSessionState
         deployment_mode: Some(state.deployment_mode),
         local_base_url: (!state.local_base_url.trim().is_empty())
             .then(|| state.local_base_url.clone()),
+        refresh_token: state.client.as_ref().and_then(|c| c.refresh_token()),
     }
 }
 
@@ -992,6 +1044,7 @@ pub(crate) fn apply_restored_session(state: &mut DesktopApp, session: PersistedS
     if let Some(local_url) = session.local_base_url {
         state.local_base_url = local_url;
     }
+    state.saved_refresh_token = session.refresh_token;
 
     let preferred_path = session
         .active_tab_path
@@ -1042,6 +1095,92 @@ pub(crate) fn load_persisted_session() -> Result<Option<PersistedSessionState>, 
     let session = serde_json::from_str(&raw)
         .map_err(|err| format!("Failed to parse session state file: {err}"))?;
     Ok(Some(session))
+}
+
+/// ── Offline file cache ──────────────────────────────────────────────
+///
+/// Caches file content locally so the desktop can serve it when offline.
+
+fn file_cache_dir() -> Result<PathBuf, String> {
+    let base_dir = if let Ok(app_data) = env::var("APPDATA") {
+        PathBuf::from(app_data)
+    } else if let Ok(xdg_config) = env::var("XDG_CONFIG_HOME") {
+        PathBuf::from(xdg_config)
+    } else if let Ok(home) = env::var("HOME") {
+        PathBuf::from(home).join(".config")
+    } else {
+        env::current_dir().map_err(|err| format!("Failed to resolve cwd: {err}"))?
+    };
+    Ok(base_dir.join("obsidian-host").join("file-cache"))
+}
+
+/// Persist a file's content to the local cache so it can be read offline.
+pub(crate) fn cache_file(vault_id: &str, file_path: &str, content: &str) {
+    if let Ok(cache_dir) = file_cache_dir() {
+        let dir = cache_dir.join(vault_id);
+        let _ = fs::create_dir_all(&dir);
+        // Use base64-like encoding of the path to avoid nested dirs.
+        let safe_name = file_path.replace('/', "__");
+        let _ = fs::write(dir.join(&safe_name), content);
+    }
+}
+
+/// Read a file from the local cache (returns None if not cached).
+pub(crate) fn read_cached_file(vault_id: &str, file_path: &str) -> Option<String> {
+    let cache_dir = file_cache_dir().ok()?;
+    let safe_name = file_path.replace('/', "__");
+    let path = cache_dir.join(vault_id).join(&safe_name);
+    fs::read_to_string(path).ok()
+}
+
+/// Queue an offline edit to be replayed when connectivity returns.
+pub(crate) fn enqueue_offline_edit(
+    vault_id: &str,
+    file_path: &str,
+    content: &str,
+) -> Result<(), String> {
+    let cache_dir = file_cache_dir()?;
+    let queue_dir = cache_dir.join(vault_id).join("__edit_queue__");
+    fs::create_dir_all(&queue_dir)
+        .map_err(|e| format!("Failed to create edit queue dir: {e}"))?;
+    let safe_name = file_path.replace('/', "__");
+    let ts = chrono::Utc::now().timestamp_millis();
+    let filename = format!("{ts}__{safe_name}");
+    fs::write(queue_dir.join(&filename), content)
+        .map_err(|e| format!("Failed to write queued edit: {e}"))?;
+    // Also update the local cache so the UI reflects the edit immediately.
+    cache_file(vault_id, file_path, content);
+    Ok(())
+}
+
+/// Drain the edit queue, returning (file_path, content) pairs oldest-first.
+pub(crate) fn drain_offline_edits(vault_id: &str) -> Vec<(String, String)> {
+    let cache_dir = match file_cache_dir() {
+        Ok(d) => d,
+        Err(_) => return Vec::new(),
+    };
+    let queue_dir = cache_dir.join(vault_id).join("__edit_queue__");
+    let Ok(entries) = fs::read_dir(&queue_dir) else {
+        return Vec::new();
+    };
+    let mut items: Vec<(String, PathBuf)> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| (e.file_name().to_string_lossy().to_string(), e.path()))
+        .collect();
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut result = Vec::new();
+    for (name, path) in items {
+        if let Ok(content) = fs::read_to_string(&path) {
+            // Extract original file_path from "{timestamp}__{safe_name}"
+            if let Some((_ts, safe_name)) = name.split_once("__") {
+                let file_path = safe_name.replace("__", "/");
+                result.push((file_path, content));
+            }
+            let _ = fs::remove_file(&path);
+        }
+    }
+    result
 }
 
 fn session_state_file_path() -> Result<PathBuf, String> {

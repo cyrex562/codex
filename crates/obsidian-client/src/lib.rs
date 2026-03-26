@@ -277,6 +277,13 @@ impl ObsidianClient {
         }
     }
 
+    pub fn refresh_token(&self) -> Option<String> {
+        self.auth
+            .read()
+            .ok()
+            .and_then(|auth| auth.refresh_token.clone())
+    }
+
     pub fn access_token(&self) -> Option<String> {
         self.auth
             .read()
