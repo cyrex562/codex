@@ -287,7 +287,11 @@ fn should_skip_auth(req: &ServiceRequest) -> bool {
         return true;
     }
 
-    if path == "/api/auth/login" || path == "/api/auth/refresh" {
+    if path == "/api/auth/login"
+        || path == "/api/auth/refresh"
+        || path.starts_with("/api/auth/oidc/")
+        || path == "/api/invitations/accept"
+    {
         return true;
     }
 

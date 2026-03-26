@@ -5,6 +5,7 @@ pub mod files;
 pub mod groups;
 pub mod invitations;
 pub mod markdown;
+pub mod oidc;
 pub mod ml;
 pub mod plugins;
 pub mod preferences;

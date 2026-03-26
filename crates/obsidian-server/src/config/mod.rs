@@ -78,6 +78,40 @@ pub struct AuthConfig {
     /// Lockout duration in minutes after exceeding failed attempts.
     #[serde(default = "default_lockout_minutes")]
     pub lockout_minutes: u64,
+
+    // ── OIDC settings ───────────────────────────────────────────────
+    /// OIDC provider discovery URL (e.g. https://accounts.google.com).
+    #[serde(default)]
+    pub oidc_issuer_url: Option<String>,
+    /// OIDC client ID.
+    #[serde(default)]
+    pub oidc_client_id: Option<String>,
+    /// OIDC client secret.
+    #[serde(default)]
+    pub oidc_client_secret: Option<String>,
+    /// URL the provider redirects back to after auth (e.g. http://localhost:8080/api/auth/oidc/callback).
+    #[serde(default)]
+    pub oidc_redirect_uri: Option<String>,
+
+    // ── LDAP settings ───────────────────────────────────────────────
+    /// LDAP server URL (e.g. ldap://ldap.example.com:389).
+    #[serde(default)]
+    pub ldap_url: Option<String>,
+    /// Base DN for user search (e.g. ou=people,dc=example,dc=com).
+    #[serde(default)]
+    pub ldap_base_dn: Option<String>,
+    /// Bind DN for the service account (e.g. cn=admin,dc=example,dc=com).
+    #[serde(default)]
+    pub ldap_bind_dn: Option<String>,
+    /// Bind password for the service account.
+    #[serde(default)]
+    pub ldap_bind_password: Option<String>,
+    /// LDAP attribute that contains the username (default: uid).
+    #[serde(default = "default_ldap_user_attr")]
+    pub ldap_user_attr: String,
+    /// LDAP search filter template. Use {username} as placeholder.
+    #[serde(default = "default_ldap_search_filter")]
+    pub ldap_search_filter: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,6 +211,14 @@ fn default_s3_path_style() -> bool {
     true
 }
 
+fn default_ldap_user_attr() -> String {
+    "uid".to_string()
+}
+
+fn default_ldap_search_filter() -> String {
+    "(&(objectClass=inetOrgPerson)({attr}={username}))".to_string()
+}
+
 fn default_min_password_length() -> usize {
     12
 }
@@ -261,6 +303,16 @@ impl Default for AuthConfig {
             require_special: false,
             max_failed_logins: default_max_failed_logins(),
             lockout_minutes: default_lockout_minutes(),
+            oidc_issuer_url: None,
+            oidc_client_id: None,
+            oidc_client_secret: None,
+            oidc_redirect_uri: None,
+            ldap_url: None,
+            ldap_base_dn: None,
+            ldap_bind_dn: None,
+            ldap_bind_password: None,
+            ldap_user_attr: default_ldap_user_attr(),
+            ldap_search_filter: default_ldap_search_filter(),
         }
     }
 }

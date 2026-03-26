@@ -193,6 +193,16 @@ async fn change_password(
     Ok(HttpResponse::Ok().json(serde_json::json!({ "success": true })))
 }
 
+/// Public entry point so other route modules (e.g. OIDC callback) can issue tokens.
+pub fn issue_tokens_public(
+    user_id: &str,
+    username: &str,
+    auth_method: &str,
+    auth_cfg: &crate::config::AuthConfig,
+) -> AppResult<LoginResponse> {
+    issue_tokens(user_id, username, auth_method, auth_cfg)
+}
+
 fn issue_tokens(
     user_id: &str,
     username: &str,

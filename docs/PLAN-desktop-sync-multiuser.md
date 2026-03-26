@@ -191,6 +191,6 @@
 21. ~~Desktop: Admin panel (user list, create/edit/deactivate/delete in Iced UI)~~
 22. ~~Sync: Selective sync (config for which vaults/folders to sync, filter WS events)~~
 
-### Phase 4d — Enterprise Auth
-23. Auth: OAuth2/OIDC provider support (finish stubbed OIDC, Google/GitHub login)
-24. Auth: LDAP/Active Directory integration
+### Phase 4d — Enterprise Auth ✅
+23. ~~Auth: OAuth2/OIDC provider support (finish stubbed OIDC, Google/GitHub login)~~
+24. ~~Auth: LDAP/Active Directory integration~~

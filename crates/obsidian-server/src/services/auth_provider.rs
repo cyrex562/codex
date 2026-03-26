@@ -42,6 +42,7 @@ pub fn validate_password_policy(password: &str, auth_cfg: &AuthConfig) -> AppRes
 pub enum AuthProviderKind {
     Password,
     Oidc,
+    Ldap,
     Mtls,
 }
 
@@ -49,6 +50,7 @@ impl AuthProviderKind {
     pub fn from_config_value(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
             "oidc" => Self::Oidc,
+            "ldap" | "active_directory" | "ad" => Self::Ldap,
             "mtls" | "m_tls" | "mutual_tls" => Self::Mtls,
             _ => Self::Password,
         }
@@ -58,6 +60,7 @@ impl AuthProviderKind {
         match self {
             Self::Password => "password",
             Self::Oidc => "oidc",
+            Self::Ldap => "ldap",
             Self::Mtls => "mtls",
         }
     }
@@ -82,8 +85,11 @@ pub async fn authenticate_username_password(
         AuthProviderKind::Password => {
             authenticate_with_password_provider(db, auth_cfg, username, password).await
         }
+        AuthProviderKind::Ldap => {
+            authenticate_with_ldap_provider(db, auth_cfg, username, password).await
+        }
         AuthProviderKind::Oidc => Err(AppError::Unauthorized(
-            "OIDC authentication is not yet implemented".to_string(),
+            "OIDC uses redirect-based login. Use /api/auth/oidc/authorize instead.".to_string(),
         )),
         AuthProviderKind::Mtls => Err(AppError::Unauthorized(
             "mTLS authentication is not yet implemented".to_string(),
@@ -203,5 +209,61 @@ async fn authenticate_with_password_provider(
         username: user.1,
         auth_method: AuthProviderKind::Password.as_str().to_string(),
         totp_required,
+    })
+}
+
+/// Authenticate via LDAP: verify credentials against the directory, then
+/// find-or-create a local user record so the rest of the app works normally.
+async fn authenticate_with_ldap_provider(
+    db: &Database,
+    auth_cfg: &AuthConfig,
+    username: &str,
+    password: &str,
+) -> AppResult<AuthenticatedPrincipal> {
+    // Verify credentials against LDAP.
+    let canonical_username =
+        crate::services::ldap_provider::authenticate_ldap(auth_cfg, username, password).await?;
+
+    // Find or create local user row (LDAP users get a placeholder password hash
+    // since their password is managed by the directory).
+    let local_user = db.get_user_auth_by_username(&canonical_username).await?;
+    let user_id = match local_user {
+        Some((id, _, _)) => id,
+        None => {
+            // Auto-provision the LDAP user locally.
+            let placeholder_hash = "ldap-managed";
+            let (id, _, _, _) = db
+                .create_user_with_options(&canonical_username, placeholder_hash, false, false)
+                .await?;
+            let _ = db
+                .write_audit_log(
+                    Some(&id),
+                    Some(&canonical_username),
+                    "ldap_user_provisioned",
+                    Some("Auto-provisioned from LDAP directory"),
+                    None,
+                    true,
+                )
+                .await;
+            id
+        }
+    };
+
+    let _ = db
+        .write_audit_log(
+            Some(&user_id),
+            Some(&canonical_username),
+            "login_success",
+            Some("Authenticated via LDAP"),
+            None,
+            true,
+        )
+        .await;
+
+    Ok(AuthenticatedPrincipal {
+        user_id,
+        username: canonical_username,
+        auth_method: AuthProviderKind::Ldap.as_str().to_string(),
+        totp_required: false,
     })
 }
