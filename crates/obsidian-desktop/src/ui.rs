@@ -43,6 +43,8 @@ pub(crate) fn view(state: &DesktopApp) -> Element<'_, Message> {
             button("Preferences").on_press(Message::PreferencesPressed),
             button("Plugins").on_press(Message::PluginManagerPressed),
             button("Import/Export").on_press(Message::ImportExportPressed),
+            button(if state.admin_panel_visible { "● Admin" } else { "Admin" })
+                .on_press(Message::AdminPanelToggled),
             button(text(format!("Theme: {}", state.preferences_theme))).on_press(Message::CycleTheme),
             button(if state.feature_flags.diagnostics_panel {
                 "● Diag"
@@ -97,6 +99,12 @@ pub(crate) fn view(state: &DesktopApp) -> Element<'_, Message> {
         container(column![])
     };
 
+    let admin_panel = if state.admin_panel_visible {
+        container(view_admin_panel(state)).padding(8)
+    } else {
+        container(column![])
+    };
+
     let diagnostics_panel = if state.feature_flags.diagnostics_panel {
         container(view_diagnostics_panel(state)).padding(8)
     } else {
@@ -120,6 +128,7 @@ pub(crate) fn view(state: &DesktopApp) -> Element<'_, Message> {
             preferences_panel,
             plugin_panel,
             import_export_panel,
+            admin_panel,
             diagnostics_panel,
             body,
             view_status_footer(state)
@@ -1374,6 +1383,100 @@ fn view_media_workspace(state: &DesktopApp) -> Element<'_, Message> {
     )
     .padding(10)
     .height(Length::Fill)
+    .width(Length::Fill)
+    .into()
+}
+
+fn view_admin_panel(state: &DesktopApp) -> Element<'_, Message> {
+    let user_list: Element<'_, Message> = if state.admin_users.is_empty() {
+        column![text(state.admin_status.as_str()).size(12)]
+            .spacing(4)
+            .into()
+    } else {
+        let list = state
+            .admin_users
+            .iter()
+            .fold(column![].spacing(4), |col, user| {
+                let status_badge = if user.is_active { "active" } else { "inactive" };
+                let admin_badge = if user.is_admin { " [admin]" } else { "" };
+                let toggle_btn = if user.is_active {
+                    button("Deactivate")
+                        .on_press(Message::AdminDeactivateUser(user.id.clone()))
+                } else {
+                    button("Reactivate")
+                        .on_press(Message::AdminReactivateUser(user.id.clone()))
+                };
+
+                col.push(
+                    row![
+                        text(format!(
+                            "{}{} ({})",
+                            user.username, admin_badge, status_badge
+                        )),
+                        toggle_btn,
+                        button("Delete")
+                            .on_press(Message::AdminDeleteUser(user.id.clone())),
+                    ]
+                    .spacing(8),
+                )
+            });
+
+        scrollable(list).height(200).into()
+    };
+
+    let create_form = column![
+        text("Create User").size(14),
+        row![
+            text_input("Username", &state.admin_new_username)
+                .on_input(Message::AdminNewUsernameChanged)
+                .width(Length::FillPortion(2)),
+            text_input("Password (auto if empty)", &state.admin_new_password)
+                .on_input(Message::AdminNewPasswordChanged)
+                .width(Length::FillPortion(2)),
+            button(if state.admin_new_is_admin {
+                "● Admin"
+            } else {
+                "Admin"
+            })
+            .on_press(Message::AdminNewIsAdminToggled),
+            button("Create").on_press(Message::AdminCreateUserPressed),
+        ]
+        .spacing(6),
+    ]
+    .spacing(6);
+
+    // Selective sync: show vault list with sync toggle.
+    let sync_controls = state.vaults.iter().fold(
+        column![text("Selective Sync").size(14)].spacing(4),
+        |col, vault| {
+            let excluded = state.sync_excluded_vaults.contains(&vault.id);
+            col.push(
+                row![
+                    text(vault.name.as_str()),
+                    button(if excluded { "Sync: OFF" } else { "Sync: ON" })
+                        .on_press(Message::ToggleVaultSync(vault.id.clone())),
+                ]
+                .spacing(8),
+            )
+        },
+    );
+
+    container(
+        column![
+            row![
+                text("Admin Panel").size(18),
+                button("Refresh").on_press(Message::AdminRefreshUsers),
+                button("Close").on_press(Message::AdminPanelToggled),
+            ]
+            .spacing(8),
+            text(state.admin_status.as_str()).size(12),
+            user_list,
+            create_form,
+            sync_controls,
+        ]
+        .spacing(8),
+    )
+    .padding(8)
     .width(Length::Fill)
     .into()
 }

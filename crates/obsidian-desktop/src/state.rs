@@ -128,6 +128,15 @@ impl DiagnosticsState {
     }
 }
 
+/// Desktop representation of a user in the admin panel.
+#[derive(Debug, Clone)]
+pub(crate) struct AdminUserRow {
+    pub(crate) id: String,
+    pub(crate) username: String,
+    pub(crate) is_admin: bool,
+    pub(crate) is_active: bool,
+}
+
 /// Tracks which sidebar sections are collapsed.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CollapsedSections {
@@ -262,6 +271,17 @@ pub(crate) struct DesktopApp {
     pub(crate) plugins: Vec<PluginItem>,
     pub(crate) plugin_status: String,
 
+    // ── Admin panel state ───────────────────────────────────────────
+    pub(crate) admin_panel_visible: bool,
+    pub(crate) admin_users: Vec<AdminUserRow>,
+    pub(crate) admin_status: String,
+    pub(crate) admin_new_username: String,
+    pub(crate) admin_new_password: String,
+    pub(crate) admin_new_is_admin: bool,
+
+    /// Set of vault IDs to exclude from WS sync (selective sync).
+    pub(crate) sync_excluded_vaults: std::collections::HashSet<String>,
+
     /// Monotonically increasing counter bumped on each editor change; used
     /// to implement debounced auto-save (the timer callback checks whether
     /// the counter has moved since it was captured).
@@ -361,6 +381,13 @@ impl Default for DesktopApp {
             plugin_panel_visible: false,
             plugins: Vec::new(),
             plugin_status: String::new(),
+            admin_panel_visible: false,
+            admin_users: Vec::new(),
+            admin_status: String::new(),
+            admin_new_username: String::new(),
+            admin_new_password: String::new(),
+            admin_new_is_admin: false,
+            sync_excluded_vaults: std::collections::HashSet::new(),
             auto_save_generation: 0,
             import_export_visible: false,
             import_local_path: String::new(),

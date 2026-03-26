@@ -23,8 +23,8 @@ use state::{
     is_media_file_kind, load_persisted_session, parse_frontmatter, parse_plugin_items,
     persist_session_state, process_template_content, read_cached_file, refresh_preview_markdown,
     summarize_frontmatter_value, sync_active_tab_from_editor, sync_rename_source_from_selection,
-    DesktopApp, DesktopMode, EditorMode, FileKind, PluginItem, SharedWsStream, TemplateInsertMode,
-    ToolbarAction,
+    AdminUserRow, DesktopApp, DesktopMode, EditorMode, FileKind, PluginItem, SharedWsStream,
+    TemplateInsertMode, ToolbarAction,
 };
 
 type MediaLoadResult = (String, FileKind, String, Option<Vec<u8>>);
@@ -202,6 +202,23 @@ enum Message {
 
     /// Cycle through available themes.
     CycleTheme,
+
+    // ── admin panel ─────────────────────────────────────────────────────
+    AdminPanelToggled,
+    AdminRefreshUsers,
+    AdminUsersLoaded(Result<Vec<obsidian_types::AdminUser>, String>),
+    AdminNewUsernameChanged(String),
+    AdminNewPasswordChanged(String),
+    AdminNewIsAdminToggled,
+    AdminCreateUserPressed,
+    AdminUserCreated(Result<String, String>),
+    AdminDeactivateUser(String),
+    AdminReactivateUser(String),
+    AdminDeleteUser(String),
+    AdminUserActionDone(Result<String, String>),
+
+    // ── selective sync ──────────────────────────────────────────────────
+    ToggleVaultSync(String),
 
     // ── deployment mode / vault management ──────────────────────────────
     DeploymentModeSelected(DesktopMode),
@@ -1967,6 +1984,146 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        // ── admin panel ──────────────────────────────────────────────────
+        Message::AdminPanelToggled => {
+            state.admin_panel_visible = !state.admin_panel_visible;
+            if state.admin_panel_visible {
+                return Task::done(Message::AdminRefreshUsers);
+            }
+            Task::none()
+        }
+        Message::AdminRefreshUsers => {
+            let Some(client) = state.client.clone() else {
+                state.admin_status = "Please login first".to_string();
+                return Task::none();
+            };
+            state.admin_status = "Loading users…".to_string();
+            Task::perform(
+                async move {
+                    client
+                        .admin_list_users()
+                        .await
+                        .map_err(|e| format!("Failed to list users: {e}"))
+                },
+                Message::AdminUsersLoaded,
+            )
+        }
+        Message::AdminUsersLoaded(result) => {
+            match result {
+                Ok(users) => {
+                    state.admin_status = format!("{} user(s)", users.len());
+                    state.admin_users = users
+                        .into_iter()
+                        .map(|u| AdminUserRow {
+                            id: u.id,
+                            username: u.username,
+                            is_admin: u.is_admin,
+                            is_active: u.is_active,
+                        })
+                        .collect();
+                }
+                Err(err) => state.admin_status = err,
+            }
+            Task::none()
+        }
+        Message::AdminNewUsernameChanged(v) => { state.admin_new_username = v; Task::none() }
+        Message::AdminNewPasswordChanged(v) => { state.admin_new_password = v; Task::none() }
+        Message::AdminNewIsAdminToggled => { state.admin_new_is_admin = !state.admin_new_is_admin; Task::none() }
+        Message::AdminCreateUserPressed => {
+            let Some(client) = state.client.clone() else {
+                return Task::none();
+            };
+            let username = state.admin_new_username.trim().to_string();
+            let password = if state.admin_new_password.trim().is_empty() {
+                None
+            } else {
+                Some(state.admin_new_password.clone())
+            };
+            let is_admin = state.admin_new_is_admin;
+            state.admin_status = format!("Creating user {username}…");
+            Task::perform(
+                async move {
+                    client
+                        .admin_create_user(&obsidian_types::CreateUserRequest {
+                            username: username.clone(),
+                            temporary_password: password,
+                            is_admin: Some(is_admin),
+                        })
+                        .await
+                        .map(|r| format!("Created user {} (temp password shown once)", r.username))
+                        .map_err(|e| format!("Failed: {e}"))
+                },
+                Message::AdminUserCreated,
+            )
+        }
+        Message::AdminUserCreated(result) => {
+            match &result {
+                Ok(msg) => {
+                    state.admin_status = msg.clone();
+                    state.admin_new_username.clear();
+                    state.admin_new_password.clear();
+                    state.admin_new_is_admin = false;
+                }
+                Err(err) => state.admin_status = err.clone(),
+            }
+            Task::done(Message::AdminRefreshUsers)
+        }
+        Message::AdminDeactivateUser(user_id) => {
+            let Some(client) = state.client.clone() else { return Task::none(); };
+            state.admin_status = format!("Deactivating {user_id}…");
+            Task::perform(
+                async move {
+                    client.admin_deactivate_user(&user_id).await
+                        .map(|_| format!("User {user_id} deactivated"))
+                        .map_err(|e| format!("Failed: {e}"))
+                },
+                Message::AdminUserActionDone,
+            )
+        }
+        Message::AdminReactivateUser(user_id) => {
+            let Some(client) = state.client.clone() else { return Task::none(); };
+            state.admin_status = format!("Reactivating {user_id}…");
+            Task::perform(
+                async move {
+                    client.admin_reactivate_user(&user_id).await
+                        .map(|_| format!("User {user_id} reactivated"))
+                        .map_err(|e| format!("Failed: {e}"))
+                },
+                Message::AdminUserActionDone,
+            )
+        }
+        Message::AdminDeleteUser(user_id) => {
+            let Some(client) = state.client.clone() else { return Task::none(); };
+            state.admin_status = format!("Deleting {user_id}…");
+            Task::perform(
+                async move {
+                    client.admin_delete_user(&user_id).await
+                        .map(|_| format!("User {user_id} deleted"))
+                        .map_err(|e| format!("Failed: {e}"))
+                },
+                Message::AdminUserActionDone,
+            )
+        }
+        Message::AdminUserActionDone(result) => {
+            match result {
+                Ok(msg) => state.admin_status = msg,
+                Err(err) => state.admin_status = err,
+            }
+            Task::done(Message::AdminRefreshUsers)
+        }
+
+        // ── selective sync ──────────────────────────────────────────────
+        Message::ToggleVaultSync(vault_id) => {
+            if state.sync_excluded_vaults.contains(&vault_id) {
+                state.sync_excluded_vaults.remove(&vault_id);
+                state.status = format!("Sync enabled for vault {vault_id}");
+            } else {
+                state.sync_excluded_vaults.insert(vault_id.clone());
+                state.status = format!("Sync disabled for vault {vault_id}");
+            }
+            Task::none()
+        }
+
         // ── deployment mode / vault management ──────────────────────────────
         Message::DeploymentModeSelected(mode) => {
             state.deployment_mode = mode;
@@ -2188,6 +2345,13 @@ fn handle_event_message(state: &mut DesktopApp, message: WsMessage) -> Task<Mess
             // Track the latest event timestamp for catch-up on reconnect.
             if timestamp > state.event_sync_last_timestamp_ms {
                 state.event_sync_last_timestamp_ms = timestamp;
+            }
+
+            // Skip events for excluded vaults (selective sync).
+            if state.sync_excluded_vaults.contains(&vault_id) {
+                state.event_sync_last_message =
+                    format!("Skipped (excluded): {path}");
+                return Task::batch(tasks);
             }
 
             if let FileChangeType::Renamed { from, to } = &event_type {
