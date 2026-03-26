@@ -60,6 +60,24 @@ pub struct AuthConfig {
     pub bootstrap_admin_username: Option<String>,
     #[serde(default)]
     pub bootstrap_admin_password: Option<String>,
+
+    // Password policy settings
+    #[serde(default = "default_min_password_length")]
+    pub min_password_length: usize,
+    #[serde(default)]
+    pub require_uppercase: bool,
+    #[serde(default)]
+    pub require_lowercase: bool,
+    #[serde(default)]
+    pub require_digit: bool,
+    #[serde(default)]
+    pub require_special: bool,
+    /// Maximum failed login attempts before lockout (0 = disabled).
+    #[serde(default = "default_max_failed_logins")]
+    pub max_failed_logins: u64,
+    /// Lockout duration in minutes after exceeding failed attempts.
+    #[serde(default = "default_lockout_minutes")]
+    pub lockout_minutes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +177,18 @@ fn default_s3_path_style() -> bool {
     true
 }
 
+fn default_min_password_length() -> usize {
+    12
+}
+
+fn default_max_failed_logins() -> u64 {
+    5
+}
+
+fn default_lockout_minutes() -> u64 {
+    15
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -173,15 +203,7 @@ impl Default for AppConfig {
                 base_dir: default_vault_base_dir(),
                 index_exclusions: default_exclusions(),
             },
-            auth: AuthConfig {
-                enabled: default_auth_enabled(),
-                provider: default_auth_provider(),
-                jwt_secret: default_jwt_secret(),
-                access_token_ttl: default_access_token_ttl(),
-                refresh_token_ttl: default_refresh_token_ttl(),
-                bootstrap_admin_username: None,
-                bootstrap_admin_password: None,
-            },
+            auth: AuthConfig::default(),
             sync: SyncConfig {
                 change_log_retention_days: default_change_log_retention_days(),
             },
@@ -232,6 +254,13 @@ impl Default for AuthConfig {
             refresh_token_ttl: default_refresh_token_ttl(),
             bootstrap_admin_username: None,
             bootstrap_admin_password: None,
+            min_password_length: default_min_password_length(),
+            require_uppercase: false,
+            require_lowercase: false,
+            require_digit: false,
+            require_special: false,
+            max_failed_logins: default_max_failed_logins(),
+            lockout_minutes: default_lockout_minutes(),
         }
     }
 }

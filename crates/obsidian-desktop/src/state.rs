@@ -171,6 +171,9 @@ pub(crate) struct DesktopApp {
     pub(crate) event_sync_connected: bool,
     pub(crate) event_sync_retry_attempt: u32,
     pub(crate) event_sync_last_message: String,
+    /// Unix-ms timestamp of the most recent file change event received via WS,
+    /// used for catch-up queries when reconnecting.
+    pub(crate) event_sync_last_timestamp_ms: i64,
     pub(crate) event_sync_stream: Option<SharedWsStream>,
     pub(crate) preferences_visible: bool,
     pub(crate) preferences_theme: String,
@@ -273,6 +276,7 @@ impl Default for DesktopApp {
             event_sync_connected: false,
             event_sync_retry_attempt: 0,
             event_sync_last_message: "Disconnected".to_string(),
+            event_sync_last_timestamp_ms: 0,
             event_sync_stream: None,
             preferences_visible: false,
             preferences_theme: "dark".to_string(),

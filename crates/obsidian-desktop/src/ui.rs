@@ -1300,21 +1300,49 @@ fn view_media_workspace(state: &DesktopApp) -> Element<'_, Message> {
                 container(text("Image preview is still loading or unavailable.")).into()
             }
         }
-        FileKind::Pdf => container(text(
-            "PDF files can be opened in your default browser or system PDF viewer from here.",
-        ))
+        FileKind::Pdf => container(
+            column![
+                text("PDF Document").size(16),
+                text("Use \"Open Externally\" to view in your system PDF reader.").size(13),
+                text(format!("File: {}", state.note_path)).size(12),
+                button("Open in System PDF Viewer").on_press(Message::OpenMediaExternallyPressed),
+            ]
+            .spacing(8),
+        )
+        .padding(16)
         .into(),
-        FileKind::Audio => container(text(
-            "Audio playback is delegated to your default system player for now.",
-        ))
+        FileKind::Audio => container(
+            column![
+                text("Audio File").size(16),
+                text("Use \"Open Externally\" to play in your system audio player.").size(13),
+                text(format!("File: {}", state.note_path)).size(12),
+                button("Play in System Audio Player").on_press(Message::OpenMediaExternallyPressed),
+            ]
+            .spacing(8),
+        )
+        .padding(16)
         .into(),
-        FileKind::Video => container(text(
-            "Video playback is delegated to your default system player for now.",
-        ))
+        FileKind::Video => container(
+            column![
+                text("Video File").size(16),
+                text("Use \"Open Externally\" to play in your system video player.").size(13),
+                text(format!("File: {}", state.note_path)).size(12),
+                button("Play in System Video Player").on_press(Message::OpenMediaExternallyPressed),
+            ]
+            .spacing(8),
+        )
+        .padding(16)
         .into(),
-        FileKind::Other => container(text(
-            "This binary file type does not have an embedded desktop preview yet, but it can be opened externally.",
-        ))
+        FileKind::Other => container(
+            column![
+                text("Binary File").size(16),
+                text("This file type cannot be previewed. Use \"Open Externally\" to view it.").size(13),
+                text(format!("File: {}", state.note_path)).size(12),
+                button("Open Externally").on_press(Message::OpenMediaExternallyPressed),
+            ]
+            .spacing(8),
+        )
+        .padding(16)
         .into(),
         FileKind::Markdown | FileKind::Text => container(text("Not a media file.")).into(),
     };

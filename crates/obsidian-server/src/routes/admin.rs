@@ -8,6 +8,7 @@ use argon2::{
     Argon2,
 };
 use rand::{distr::Alphanumeric, Rng};
+use sqlx::Executor;
 
 fn require_authenticated_user(req: &HttpRequest) -> AppResult<AuthenticatedUser> {
     req.extensions()
@@ -56,6 +57,7 @@ async fn list_users(state: web::Data<AppState>, req: HttpRequest) -> AppResult<H
 #[post("/api/admin/users")]
 async fn create_user(
     state: web::Data<AppState>,
+    config: web::Data<crate::config::AppConfig>,
     req: HttpRequest,
     body: web::Json<CreateUserRequest>,
 ) -> AppResult<HttpResponse> {
@@ -76,11 +78,7 @@ async fn create_user(
         .map(str::to_string)
         .unwrap_or_else(generate_temporary_password);
 
-    if temporary_password.len() < 12 {
-        return Err(AppError::InvalidInput(
-            "Temporary password must be at least 12 characters".to_string(),
-        ));
-    }
+    crate::services::validate_password_policy(&temporary_password, &config.auth)?;
 
     let password_hash = hash_password(&temporary_password)?;
 
@@ -195,6 +193,75 @@ async fn delete_user(
     Ok(HttpResponse::Ok().json(serde_json::json!({ "success": true })))
 }
 
+#[post("/api/admin/users/{user_id}/edit")]
+async fn edit_user(
+    state: web::Data<AppState>,
+    config: web::Data<crate::config::AppConfig>,
+    req: HttpRequest,
+    path: web::Path<String>,
+    body: web::Json<EditUserRequest>,
+) -> AppResult<HttpResponse> {
+    let admin = require_admin_user(&state, &req).await?;
+    let user_id = path.into_inner();
+
+    // Toggle admin status.
+    if let Some(is_admin) = body.is_admin {
+        if admin.user_id == user_id && !is_admin {
+            return Err(AppError::InvalidInput(
+                "Cannot revoke your own admin privileges".to_string(),
+            ));
+        }
+        sqlx::query("UPDATE users SET is_admin = ? WHERE id = ?")
+            .bind(if is_admin { 1_i64 } else { 0_i64 })
+            .bind(&user_id)
+            .execute(state.db.pool())
+            .await
+            .map_err(AppError::from)?;
+        state
+            .db
+            .write_audit_log(
+                Some(&admin.user_id),
+                Some(&admin.username),
+                "user_admin_toggled",
+                Some(&format!(
+                    "Set is_admin={is_admin} for user {user_id}"
+                )),
+                None,
+                true,
+            )
+            .await?;
+    }
+
+    // Reset password.
+    if let Some(ref new_password) = body.reset_password {
+        crate::services::validate_password_policy(new_password, &config.auth)?;
+        let password_hash = hash_password(new_password)?;
+        state
+            .db
+            .set_user_password(&user_id, &password_hash, true)
+            .await?;
+        state
+            .db
+            .write_audit_log(
+                Some(&admin.user_id),
+                Some(&admin.username),
+                "user_password_reset",
+                Some(&format!("Admin reset password for user {user_id}")),
+                None,
+                true,
+            )
+            .await?;
+    }
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "success": true })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct EditUserRequest {
+    is_admin: Option<bool>,
+    reset_password: Option<String>,
+}
+
 #[get("/api/admin/audit-log")]
 async fn get_audit_log(
     state: web::Data<AppState>,
@@ -214,6 +281,7 @@ struct AuditLogQuery {
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(list_users)
         .service(create_user)
+        .service(edit_user)
         .service(deactivate_user)
         .service(reactivate_user)
         .service(delete_user)

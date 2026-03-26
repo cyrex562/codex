@@ -10,7 +10,10 @@ pub mod search_service;
 pub mod storage;
 pub mod wiki_link_service;
 
-pub use auth_provider::{authenticate_username_password, AuthProviderKind, AuthenticatedPrincipal};
+pub use auth_provider::{
+    authenticate_username_password, validate_password_policy, AuthProviderKind,
+    AuthenticatedPrincipal,
+};
 pub use file_service::{FileService, RenameStrategy};
 pub use image_service::ImageService;
 pub use markdown_service::{MarkdownService, RenderOptions};

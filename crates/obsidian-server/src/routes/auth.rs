@@ -4,7 +4,7 @@ use crate::middleware::AuthenticatedUser;
 use crate::models::AuthenticatedUserProfile;
 use crate::models::ChangePasswordRequest;
 use crate::routes::vaults::AppState;
-use crate::services::authenticate_username_password;
+use crate::services::{authenticate_username_password, validate_password_policy};
 use actix_web::{get, post, web, HttpMessage, HttpRequest, HttpResponse};
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, SaltString},
@@ -129,6 +129,7 @@ async fn me(
 #[post("/api/auth/change-password")]
 async fn change_password(
     state: web::Data<AppState>,
+    config: web::Data<AppConfig>,
     req: HttpRequest,
     body: web::Json<ChangePasswordRequest>,
 ) -> AppResult<HttpResponse> {
@@ -147,11 +148,7 @@ async fn change_password(
         ));
     }
 
-    if new_password.len() < 12 {
-        return Err(AppError::InvalidInput(
-            "New password must be at least 12 characters".to_string(),
-        ));
-    }
+    validate_password_policy(new_password, &config.auth)?;
 
     let auth_row = state
         .db
@@ -267,10 +264,55 @@ fn effective_jwt_secret(auth_cfg: &crate::config::AuthConfig) -> String {
     }
 }
 
+/// List active sessions for the authenticated user.
+#[get("/api/auth/sessions")]
+async fn list_sessions(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> AppResult<HttpResponse> {
+    let user = req
+        .extensions()
+        .get::<AuthenticatedUser>()
+        .cloned()
+        .ok_or_else(|| AppError::Unauthorized("Authentication required".to_string()))?;
+
+    let sessions = state.db.list_active_sessions(&user.user_id).await?;
+    Ok(HttpResponse::Ok().json(sessions))
+}
+
+/// Revoke all sessions for the authenticated user (log out everywhere).
+#[post("/api/auth/revoke-all")]
+async fn revoke_all_sessions(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> AppResult<HttpResponse> {
+    let user = req
+        .extensions()
+        .get::<AuthenticatedUser>()
+        .cloned()
+        .ok_or_else(|| AppError::Unauthorized("Authentication required".to_string()))?;
+
+    let count = state.db.revoke_all_sessions(&user.user_id).await?;
+    let _ = state
+        .db
+        .write_audit_log(
+            Some(&user.user_id),
+            Some(&user.username),
+            "revoke_all_sessions",
+            Some(&format!("Revoked {count} active session(s)")),
+            None,
+            true,
+        )
+        .await;
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "revoked": count })))
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(login)
         .service(me)
-    .service(change_password)
+        .service(change_password)
         .service(refresh_access_token)
-        .service(logout);
+        .service(logout)
+        .service(list_sessions)
+        .service(revoke_all_sessions);
 }

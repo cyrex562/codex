@@ -1,7 +1,7 @@
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AdminUser, AuditLogEntry, EditorMode, GroupInfo, GroupMember, MlUndoReceipt, ReverseAction,
-    UserPreferences, Vault, VaultRole, VaultRow, VaultShareEntry, VaultShareList,
+    SessionInfo, UserPreferences, Vault, VaultRole, VaultRow, VaultShareEntry, VaultShareList,
 };
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
@@ -416,6 +416,28 @@ impl Database {
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Active sessions table for token revocation support.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
         )
         .execute(&self.pool)
         .await?;
@@ -1833,5 +1855,94 @@ impl Database {
                 },
             )
             .collect())
+    }
+
+    // ── Session management ──────────────────────────────────────────────
+
+    /// Record a new token session for revocation tracking.
+    pub async fn create_session(
+        &self,
+        token_id: &str,
+        user_id: &str,
+        expires_at: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO sessions (token_id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(token_id)
+        .bind(user_id)
+        .bind(&now)
+        .bind(expires_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Check whether a session has been revoked.
+    pub async fn is_session_revoked(&self, token_id: &str) -> AppResult<bool> {
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT revoked FROM sessions WHERE token_id = ?")
+                .bind(token_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(AppError::from)?;
+        // If the session isn't tracked at all, treat it as valid (backwards compat).
+        Ok(row.map(|(v,)| v != 0).unwrap_or(false))
+    }
+
+    /// Revoke a specific session.
+    pub async fn revoke_session(&self, token_id: &str) -> AppResult<()> {
+        sqlx::query("UPDATE sessions SET revoked = 1 WHERE token_id = ?")
+            .bind(token_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Revoke all active sessions for a user (log out everywhere).
+    pub async fn revoke_all_sessions(&self, user_id: &str) -> AppResult<u64> {
+        let result = sqlx::query(
+            "UPDATE sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0",
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// List active (non-revoked, non-expired) sessions for a user.
+    pub async fn list_active_sessions(
+        &self,
+        user_id: &str,
+    ) -> AppResult<Vec<SessionInfo>> {
+        let now = Utc::now().to_rfc3339();
+        let rows = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT token_id, created_at, expires_at FROM sessions WHERE user_id = ? AND revoked = 0 AND expires_at > ? ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .bind(&now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(token_id, created_at, expires_at)| SessionInfo {
+                token_id,
+                created_at: parse_rfc3339_utc(&created_at),
+                expires_at: parse_rfc3339_utc(&expires_at),
+            })
+            .collect())
+    }
+
+    /// Clean up expired sessions (housekeeping).
+    pub async fn purge_expired_sessions(&self) -> AppResult<u64> {
+        let now = Utc::now().to_rfc3339();
+        let result = sqlx::query("DELETE FROM sessions WHERE expires_at < ?")
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 }

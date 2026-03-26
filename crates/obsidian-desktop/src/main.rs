@@ -155,6 +155,9 @@ enum Message {
     PollNextEvent(SharedWsStream),
     EventMessageReceived(Result<WsMessage, String>),
     RetryEventConnection,
+    /// After reconnecting, catch up on missed events via the change log API.
+    CatchUpAfterReconnect,
+    CatchUpLoaded(Result<Vec<obsidian_types::FileChangeEvent>, String>),
 
     PluginManagerPressed,
     PluginsRefreshPressed,
@@ -1406,12 +1409,19 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                 Ok(stream) => {
                     info!("Event sync loop connected");
                     state.diagnostics.push_log("[sync] connected".to_string());
+                    let was_reconnect = state.event_sync_retry_attempt > 0
+                        || state.event_sync_last_timestamp_ms > 0;
                     state.event_sync_connected = true;
                     state.event_sync_retry_attempt = 0;
                     state.event_sync_last_message = "Connected".to_string();
                     state.event_sync_stream = Some(stream.clone());
                     state.status = "Event sync loop connected".to_string();
-                    return Task::done(Message::PollNextEvent(stream));
+                    let mut tasks = vec![Task::done(Message::PollNextEvent(stream))];
+                    // Catch up on missed events if this is a reconnect.
+                    if was_reconnect {
+                        tasks.push(Task::done(Message::CatchUpAfterReconnect));
+                    }
+                    return Task::batch(tasks);
                 }
                 Err(err) => {
                     warn!(error = %err, "Event sync connection failed");
@@ -1469,6 +1479,86 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                 Task::done(Message::ConnectEventsPressed)
             } else {
                 Task::none()
+            }
+        }
+        Message::CatchUpAfterReconnect => {
+            let (Some(client), Some(vault_id)) =
+                (state.client.clone(), state.selected_vault_id.clone())
+            else {
+                return Task::none();
+            };
+            let since = state.event_sync_last_timestamp_ms;
+            if since == 0 {
+                // No previous timestamp — do a full tree/tags refresh instead.
+                return Task::batch([
+                    Task::done(Message::LoadTreePressed),
+                    Task::done(Message::LoadTagsPressed),
+                ]);
+            }
+            state.status = format!("Catching up on changes since {since}…");
+            state
+                .diagnostics
+                .push_log(format!("[sync] catch-up since {since}"));
+            Task::perform(
+                async move {
+                    client
+                        .get_file_changes(&vault_id, since)
+                        .await
+                        .map_err(|e| format!("Catch-up failed: {e}"))
+                },
+                Message::CatchUpLoaded,
+            )
+        }
+        Message::CatchUpLoaded(result) => {
+            match result {
+                Ok(events) => {
+                    let count = events.len();
+                    for event in &events {
+                        match &event.event_type {
+                            FileChangeType::Renamed { from, to } => {
+                                apply_rename_to_state(state, from, to);
+                            }
+                            FileChangeType::Deleted => {
+                                apply_delete_to_state(state, &event.path);
+                            }
+                            _ => {}
+                        }
+                        let ts = event.timestamp.timestamp_millis();
+                        if ts > state.event_sync_last_timestamp_ms {
+                            state.event_sync_last_timestamp_ms = ts;
+                        }
+                    }
+                    state.status = format!("Caught up: {count} change(s) since disconnect");
+                    state
+                        .diagnostics
+                        .push_log(format!("[sync] catch-up: {count} event(s)"));
+
+                    // Refresh tree and current note.
+                    let mut tasks: Vec<Task<Message>> = vec![
+                        Task::done(Message::LoadTreePressed),
+                        Task::done(Message::LoadTagsPressed),
+                    ];
+                    // If current note was affected, reload it.
+                    let current = state.note_path.clone();
+                    if !current.is_empty()
+                        && events
+                            .iter()
+                            .any(|e| e.path == current || matches!(&e.event_type, FileChangeType::Renamed { from, .. } if from == &current))
+                    {
+                        if !state.note_is_dirty {
+                            tasks.push(Task::done(Message::LoadNotePressed));
+                        }
+                    }
+                    return Task::batch(tasks);
+                }
+                Err(err) => {
+                    state.status = err;
+                    // Fall back to full refresh.
+                    return Task::batch([
+                        Task::done(Message::LoadTreePressed),
+                        Task::done(Message::LoadTagsPressed),
+                    ]);
+                }
             }
         }
 
@@ -1849,9 +1939,14 @@ fn handle_event_message(state: &mut DesktopApp, message: WsMessage) -> Task<Mess
             vault_id,
             path,
             event_type,
+            timestamp,
             ..
         } => {
             state.event_sync_connected = true;
+            // Track the latest event timestamp for catch-up on reconnect.
+            if timestamp > state.event_sync_last_timestamp_ms {
+                state.event_sync_last_timestamp_ms = timestamp;
+            }
 
             if let FileChangeType::Renamed { from, to } = &event_type {
                 apply_rename_to_state(state, from, to);

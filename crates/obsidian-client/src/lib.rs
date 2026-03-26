@@ -8,7 +8,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use obsidian_types::{
     ApplyOrganizationSuggestionRequest, ApplyOrganizationSuggestionResponse, CreateFileRequest,
-    CreateUploadSessionRequest, CreateVaultRequest, FileContent, FileNode,
+    CreateUploadSessionRequest, CreateVaultRequest, FileChangeEvent, FileContent, FileNode,
     GenerateOrganizationSuggestionsRequest, GenerateOutlineRequest, NoteOutlineResponse,
     OrganizationSuggestionsResponse, PagedSearchResult, UndoMlActionResponse, UpdateFileRequest,
     UploadSessionResponse, UserPreferences, Vault,
@@ -677,6 +677,17 @@ impl ObsidianClient {
 
     pub async fn get_tags(&self, vault_id: &str) -> Result<Vec<TagEntry>, ClientError> {
         let endpoint = format!("/api/vaults/{vault_id}/tags");
+        self.send_json(HttpMethod::Get, &endpoint, Option::<&()>::None)
+            .await
+    }
+
+    /// Fetch file change events since a given Unix millisecond timestamp.
+    pub async fn get_file_changes(
+        &self,
+        vault_id: &str,
+        since_ms: i64,
+    ) -> Result<Vec<FileChangeEvent>, ClientError> {
+        let endpoint = format!("/api/vaults/{vault_id}/changes?since={since_ms}");
         self.send_json(HttpMethod::Get, &endpoint, Option::<&()>::None)
             .await
     }

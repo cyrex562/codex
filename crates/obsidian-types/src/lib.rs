@@ -69,6 +69,13 @@ pub struct AdminUser {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInfo {
+    pub token_id: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditLogEntry {
     pub id: i64,
     pub timestamp: DateTime<Utc>,

@@ -3,6 +3,41 @@ use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use argon2::{password_hash::PasswordHash, Argon2, PasswordVerifier};
 
+/// Validate a new password against the configured password policy.
+pub fn validate_password_policy(password: &str, auth_cfg: &AuthConfig) -> AppResult<()> {
+    if password.len() < auth_cfg.min_password_length {
+        return Err(AppError::InvalidInput(format!(
+            "Password must be at least {} characters",
+            auth_cfg.min_password_length
+        )));
+    }
+    if auth_cfg.require_uppercase && !password.chars().any(|c| c.is_uppercase()) {
+        return Err(AppError::InvalidInput(
+            "Password must contain at least one uppercase letter".to_string(),
+        ));
+    }
+    if auth_cfg.require_lowercase && !password.chars().any(|c| c.is_lowercase()) {
+        return Err(AppError::InvalidInput(
+            "Password must contain at least one lowercase letter".to_string(),
+        ));
+    }
+    if auth_cfg.require_digit && !password.chars().any(|c| c.is_ascii_digit()) {
+        return Err(AppError::InvalidInput(
+            "Password must contain at least one digit".to_string(),
+        ));
+    }
+    if auth_cfg.require_special
+        && !password
+            .chars()
+            .any(|c| !c.is_alphanumeric() && !c.is_whitespace())
+    {
+        return Err(AppError::InvalidInput(
+            "Password must contain at least one special character".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthProviderKind {
     Password,
@@ -43,7 +78,7 @@ pub async fn authenticate_username_password(
 ) -> AppResult<AuthenticatedPrincipal> {
     match AuthProviderKind::from_config_value(&auth_cfg.provider) {
         AuthProviderKind::Password => {
-            authenticate_with_password_provider(db, username, password).await
+            authenticate_with_password_provider(db, auth_cfg, username, password).await
         }
         AuthProviderKind::Oidc => Err(AppError::Unauthorized(
             "OIDC authentication is not yet implemented".to_string(),
@@ -56,6 +91,7 @@ pub async fn authenticate_username_password(
 
 async fn authenticate_with_password_provider(
     db: &Database,
+    auth_cfg: &AuthConfig,
     username: &str,
     password: &str,
 ) -> AppResult<AuthenticatedPrincipal> {
@@ -90,12 +126,20 @@ async fn authenticate_with_password_provider(
     {
         // Record failed attempt and optionally lock the account.
         let attempts = db.record_failed_login(user_id).await.unwrap_or(0);
-        const MAX_ATTEMPTS: i64 = 5;
-        const LOCKOUT_MINUTES: i64 = 15;
+        let max_attempts = if auth_cfg.max_failed_logins > 0 {
+            auth_cfg.max_failed_logins as i64
+        } else {
+            5
+        };
+        let lockout_minutes = if auth_cfg.lockout_minutes > 0 {
+            auth_cfg.lockout_minutes as i64
+        } else {
+            15
+        };
 
-        if attempts >= MAX_ATTEMPTS {
+        if max_attempts > 0 && attempts >= max_attempts {
             let until = chrono::Utc::now()
-                + chrono::Duration::minutes(LOCKOUT_MINUTES);
+                + chrono::Duration::minutes(lockout_minutes);
             let _ = db.lock_user_until(user_id, until).await;
             let _ = db
                 .write_audit_log(
@@ -103,7 +147,7 @@ async fn authenticate_with_password_provider(
                     Some(username),
                     "account_locked",
                     Some(&format!(
-                        "Locked after {attempts} failed attempts for {LOCKOUT_MINUTES} minutes"
+                        "Locked after {attempts} failed attempts for {lockout_minutes} minutes"
                     )),
                     None,
                     false,
