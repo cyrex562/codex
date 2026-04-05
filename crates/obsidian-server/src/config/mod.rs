@@ -60,14 +60,58 @@ pub struct AuthConfig {
     pub bootstrap_admin_username: Option<String>,
     #[serde(default)]
     pub bootstrap_admin_password: Option<String>,
+
+    // Password policy settings
+    #[serde(default = "default_min_password_length")]
+    pub min_password_length: usize,
     #[serde(default)]
-    pub google_client_id: String,
+    pub require_uppercase: bool,
     #[serde(default)]
-    pub google_client_secret: String,
-    #[serde(default = "default_external_url")]
-    pub external_url: String,
-    #[serde(default = "default_session_duration_hours")]
-    pub session_duration_hours: i64,
+    pub require_lowercase: bool,
+    #[serde(default)]
+    pub require_digit: bool,
+    #[serde(default)]
+    pub require_special: bool,
+    /// Maximum failed login attempts before lockout (0 = disabled).
+    #[serde(default = "default_max_failed_logins")]
+    pub max_failed_logins: u64,
+    /// Lockout duration in minutes after exceeding failed attempts.
+    #[serde(default = "default_lockout_minutes")]
+    pub lockout_minutes: u64,
+
+    // ── OIDC settings ───────────────────────────────────────────────
+    /// OIDC provider discovery URL (e.g. https://accounts.google.com).
+    #[serde(default)]
+    pub oidc_issuer_url: Option<String>,
+    /// OIDC client ID.
+    #[serde(default)]
+    pub oidc_client_id: Option<String>,
+    /// OIDC client secret.
+    #[serde(default)]
+    pub oidc_client_secret: Option<String>,
+    /// URL the provider redirects back to after auth (e.g. http://localhost:8080/api/auth/oidc/callback).
+    #[serde(default)]
+    pub oidc_redirect_uri: Option<String>,
+
+    // ── LDAP settings ───────────────────────────────────────────────
+    /// LDAP server URL (e.g. ldap://ldap.example.com:389).
+    #[serde(default)]
+    pub ldap_url: Option<String>,
+    /// Base DN for user search (e.g. ou=people,dc=example,dc=com).
+    #[serde(default)]
+    pub ldap_base_dn: Option<String>,
+    /// Bind DN for the service account (e.g. cn=admin,dc=example,dc=com).
+    #[serde(default)]
+    pub ldap_bind_dn: Option<String>,
+    /// Bind password for the service account.
+    #[serde(default)]
+    pub ldap_bind_password: Option<String>,
+    /// LDAP attribute that contains the username (default: uid).
+    #[serde(default = "default_ldap_user_attr")]
+    pub ldap_user_attr: String,
+    /// LDAP search filter template. Use {username} as placeholder.
+    #[serde(default = "default_ldap_search_filter")]
+    pub ldap_search_filter: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,14 +195,6 @@ fn default_refresh_token_ttl() -> u64 {
     604800
 }
 
-fn default_session_duration_hours() -> i64 {
-    168 // 7 days
-}
-
-fn default_external_url() -> String {
-    "http://localhost:8080".to_string()
-}
-
 fn default_change_log_retention_days() -> u64 {
     7
 }
@@ -175,6 +211,26 @@ fn default_s3_path_style() -> bool {
     true
 }
 
+fn default_ldap_user_attr() -> String {
+    "uid".to_string()
+}
+
+fn default_ldap_search_filter() -> String {
+    "(&(objectClass=inetOrgPerson)({attr}={username}))".to_string()
+}
+
+fn default_min_password_length() -> usize {
+    12
+}
+
+fn default_max_failed_logins() -> u64 {
+    5
+}
+
+fn default_lockout_minutes() -> u64 {
+    15
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -189,19 +245,7 @@ impl Default for AppConfig {
                 base_dir: default_vault_base_dir(),
                 index_exclusions: default_exclusions(),
             },
-            auth: AuthConfig {
-                enabled: default_auth_enabled(),
-                provider: default_auth_provider(),
-                jwt_secret: default_jwt_secret(),
-                access_token_ttl: default_access_token_ttl(),
-                refresh_token_ttl: default_refresh_token_ttl(),
-                bootstrap_admin_username: None,
-                bootstrap_admin_password: None,
-                google_client_id: "".to_string(),
-                google_client_secret: "".to_string(),
-                external_url: default_external_url(),
-                session_duration_hours: default_session_duration_hours(),
-            },
+            auth: AuthConfig::default(),
             sync: SyncConfig {
                 change_log_retention_days: default_change_log_retention_days(),
             },
@@ -252,10 +296,23 @@ impl Default for AuthConfig {
             refresh_token_ttl: default_refresh_token_ttl(),
             bootstrap_admin_username: None,
             bootstrap_admin_password: None,
-            google_client_id: "".to_string(),
-            google_client_secret: "".to_string(),
-            external_url: default_external_url(),
-            session_duration_hours: default_session_duration_hours(),
+            min_password_length: default_min_password_length(),
+            require_uppercase: false,
+            require_lowercase: false,
+            require_digit: false,
+            require_special: false,
+            max_failed_logins: default_max_failed_logins(),
+            lockout_minutes: default_lockout_minutes(),
+            oidc_issuer_url: None,
+            oidc_client_id: None,
+            oidc_client_secret: None,
+            oidc_redirect_uri: None,
+            ldap_url: None,
+            ldap_base_dn: None,
+            ldap_bind_dn: None,
+            ldap_bind_password: None,
+            ldap_user_attr: default_ldap_user_attr(),
+            ldap_search_filter: default_ldap_search_filter(),
         }
     }
 }

@@ -18,12 +18,13 @@ use obsidian_types::{
 use state::{
     activate_existing_tab, add_recent_file, apply_delete_to_state, apply_file_to_state,
     apply_media_to_state, apply_preferences_to_state, apply_rename_to_state,
-    apply_restored_session, apply_toolbar_action, clear_loaded_note, file_kind_from_path,
-    file_kind_label, flatten_tree, is_media_file_kind, load_persisted_session, parse_frontmatter,
-    parse_plugin_items, persist_session_state, process_template_content, refresh_preview_markdown,
+    apply_restored_session, apply_toolbar_action, cache_file, clear_loaded_note,
+    drain_offline_edits, enqueue_offline_edit, file_kind_from_path, file_kind_label, flatten_tree,
+    is_media_file_kind, load_persisted_session, parse_frontmatter, parse_plugin_items,
+    persist_session_state, process_template_content, read_cached_file, refresh_preview_markdown,
     summarize_frontmatter_value, sync_active_tab_from_editor, sync_rename_source_from_selection,
-    DesktopApp, DesktopMode, EditorMode, FileKind, PluginItem, SharedWsStream, TemplateInsertMode,
-    ToolbarAction,
+    AdminUserRow, DesktopApp, DesktopMode, EditorMode, FileKind, PluginItem, SharedWsStream,
+    TemplateInsertMode, ToolbarAction,
 };
 
 type MediaLoadResult = (String, FileKind, String, Option<Vec<u8>>);
@@ -41,7 +42,23 @@ fn main() -> iced::Result {
     info!("Obsidian Desktop starting up");
 
     iced::application("Obsidian Desktop (Iced) Skeleton", update, ui::view)
-        .theme(|_| Theme::TokyoNight)
+        .theme(|state: &DesktopApp| match state.preferences_theme.as_str() {
+            "light" => Theme::Light,
+            "dark" => Theme::Dark,
+            "tokyo_night" | "tokyonight" => Theme::TokyoNight,
+            "dracula" => Theme::Dracula,
+            "nord" => Theme::Nord,
+            "solarized_light" => Theme::SolarizedLight,
+            "solarized_dark" => Theme::SolarizedDark,
+            "gruvbox_light" => Theme::GruvboxLight,
+            "gruvbox_dark" => Theme::GruvboxDark,
+            "catppuccin_latte" => Theme::CatppuccinLatte,
+            "catppuccin_mocha" => Theme::CatppuccinMocha,
+            "kanagawa_wave" => Theme::KanagawaWave,
+            "moonfly" => Theme::Moonfly,
+            "oxocarbon" => Theme::Oxocarbon,
+            _ => Theme::TokyoNight,
+        })
         .subscription(subscription)
         .run_with(|| {
             (
@@ -60,6 +77,9 @@ enum Message {
     UsernameChanged(String),
     PasswordChanged(String),
     LoginPressed,
+    /// Attempt auto-login using a persisted refresh token.
+    AutoLoginWithToken,
+    AutoLoginFinished(Result<ObsidianClient, String>),
     LoginFinished(Result<ObsidianClient, String>),
 
     LoadVaultsPressed,
@@ -155,6 +175,12 @@ enum Message {
     PollNextEvent(SharedWsStream),
     EventMessageReceived(Result<WsMessage, String>),
     RetryEventConnection,
+    /// After reconnecting, catch up on missed events via the change log API.
+    CatchUpAfterReconnect,
+    /// Replay queued offline edits after reconnecting.
+    ReplayOfflineEdits,
+    OfflineEditReplayed(Result<String, String>),
+    CatchUpLoaded(Result<Vec<obsidian_types::FileChangeEvent>, String>),
 
     PluginManagerPressed,
     PluginsRefreshPressed,
@@ -174,12 +200,46 @@ enum Message {
     OpenMediaExternallyPressed,
     MediaExternalOpened(Result<String, String>),
 
+    /// Cycle through available themes.
+    CycleTheme,
+
+    // ── admin panel ─────────────────────────────────────────────────────
+    AdminPanelToggled,
+    AdminRefreshUsers,
+    AdminUsersLoaded(Result<Vec<obsidian_types::AdminUser>, String>),
+    AdminNewUsernameChanged(String),
+    AdminNewPasswordChanged(String),
+    AdminNewIsAdminToggled,
+    AdminCreateUserPressed,
+    AdminUserCreated(Result<String, String>),
+    AdminDeactivateUser(String),
+    AdminReactivateUser(String),
+    AdminDeleteUser(String),
+    AdminUserActionDone(Result<String, String>),
+
+    // ── selective sync ──────────────────────────────────────────────────
+    ToggleVaultSync(String),
+
     // ── deployment mode / vault management ──────────────────────────────
     DeploymentModeSelected(DesktopMode),
     LocalBaseUrlChanged(String),
     NewVaultNameChanged(String),
     CreateVaultPressed,
     VaultCreated(Result<Vault, String>),
+
+    // ── tree sorting / sidebar collapse / tag search ───────────────────
+    ToggleTreeSort,
+    ToggleSidebarSection(String),
+    TagSearchPressed(String),
+
+    // ── split pane ──────────────────────────────────────────────────────
+    ToggleSplitPane,
+    /// Open a file in the secondary (split) pane.
+    SplitPaneTabSelected(String),
+
+    // ── auto-save ───────────────────────────────────────────────────────
+    /// Fired after a 2-second debounce; only saves if the generation matches.
+    AutoSaveTick(u64),
 
     // ── diagnostics / feature flags ──────────────────────────────────────
     DiagnosticsPanelToggled,
@@ -201,6 +261,12 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                 Ok(Some(session)) => {
                     apply_restored_session(state, session);
                     state.status = "Loaded local session snapshot".to_string();
+                    // Try auto-login if we have a saved refresh token and base URL.
+                    if state.saved_refresh_token.is_some()
+                        && !state.base_url.trim().is_empty()
+                    {
+                        return Task::done(Message::AutoLoginWithToken);
+                    }
                 }
                 Ok(None) => {
                     state.status = "No local session snapshot found yet".to_string();
@@ -219,6 +285,68 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
         }
         Message::PasswordChanged(value) => {
             state.password = value;
+            Task::none()
+        }
+        Message::AutoLoginWithToken => {
+            let Some(refresh_token) = state.saved_refresh_token.take() else {
+                state.status = "No saved refresh token for auto-login".to_string();
+                return Task::none();
+            };
+            let base_url = if state.base_url.trim().is_empty() {
+                "http://127.0.0.1:8080".to_string()
+            } else {
+                state.base_url.trim().to_string()
+            };
+            let local_url = state.local_base_url.trim().to_string();
+            let mode = state.deployment_mode;
+            state.status = "Auto-login with saved token…".to_string();
+            Task::perform(
+                async move {
+                    let mut client = match mode {
+                        DesktopMode::Cloud => ObsidianClient::for_cloud(base_url),
+                        DesktopMode::Standalone => ObsidianClient::for_standalone(base_url),
+                        DesktopMode::Hybrid => {
+                            let local = if local_url.is_empty() {
+                                base_url.clone()
+                            } else {
+                                local_url
+                            };
+                            ObsidianClient::for_hybrid(base_url, local)
+                        }
+                    };
+                    // Set the refresh token and try to get a new access token.
+                    client.set_tokens("", &refresh_token, 0);
+                    client
+                        .refresh_access_token()
+                        .await
+                        .map_err(|e| format!("Auto-login failed: {e}"))?;
+                    Ok(client)
+                },
+                Message::AutoLoginFinished,
+            )
+        }
+        Message::AutoLoginFinished(result) => {
+            match result {
+                Ok(client) => {
+                    info!("Auto-login successful via refresh token");
+                    state
+                        .diagnostics
+                        .push_log("[auth] Auto-login successful".to_string());
+                    state.client = Some(client);
+                    state.status = "Auto-login successful".to_string();
+                    return Task::batch([
+                        Task::done(Message::LoadVaultsPressed),
+                        Task::done(Message::PreferencesPressed),
+                    ]);
+                }
+                Err(err) => {
+                    warn!(error = %err, "Auto-login failed");
+                    state
+                        .diagnostics
+                        .push_log(format!("[auth] Auto-login failed: {err}"));
+                    state.status = "Auto-login failed — please log in manually".to_string();
+                }
+            }
             Task::none()
         }
         Message::LoginPressed => {
@@ -699,7 +827,7 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
         Message::TreeLoaded(result) => {
             match result {
                 Ok(tree) => {
-                    state.tree_entries = flatten_tree(&tree);
+                    state.tree_entries = flatten_tree(&tree, state.tree_sort_ascending);
                     state.status = format!("Loaded {} tree entries", state.tree_entries.len());
                     if state.session_restore_in_progress {
                         return restore_next_session_tab(state);
@@ -1229,6 +1357,10 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                     info!(path = %path, "Note loaded");
                     state.diagnostics.notes_loaded += 1;
                     state.diagnostics.push_log(format!("[note] loaded {path}"));
+                    // Cache for offline access.
+                    if let Some(vault_id) = state.selected_vault_id.as_deref() {
+                        cache_file(vault_id, &path, &file.content);
+                    }
                     apply_file_to_state(state, file);
                     refresh_outgoing_links(state);
                     state.status = "Note loaded".to_string();
@@ -1250,6 +1382,25 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                 }
                 Err(err) => {
                     warn!(error = %err, "Note load failed");
+                    // Try offline cache fallback.
+                    let note_path = state.note_path.clone();
+                    if let Some(vault_id) = state.selected_vault_id.as_deref() {
+                        if let Some(cached) = read_cached_file(vault_id, &note_path) {
+                            state.diagnostics.push_log(format!(
+                                "[note] serving {note_path} from offline cache"
+                            ));
+                            let file = FileContent {
+                                path: note_path.clone(),
+                                content: cached,
+                                modified: chrono::Utc::now(),
+                                frontmatter: None,
+                            };
+                            apply_file_to_state(state, file);
+                            refresh_outgoing_links(state);
+                            state.status = format!("Loaded from cache (offline): {note_path}");
+                            return Task::done(Message::RenderPreviewRequested);
+                        }
+                    }
                     state.diagnostics.errors_logged += 1;
                     state
                         .diagnostics
@@ -1269,6 +1420,18 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
             state.conflict_active = false;
             state.conflict_message.clear();
             sync_active_tab_from_editor(state);
+
+            // Bump auto-save generation and schedule a debounced save.
+            state.auto_save_generation = state.auto_save_generation.wrapping_add(1);
+            let generation = state.auto_save_generation;
+            let auto_save_task = Task::perform(
+                async move {
+                    sleep(Duration::from_secs(2)).await;
+                    generation
+                },
+                Message::AutoSaveTick,
+            );
+
             if matches!(
                 state.editor_mode,
                 EditorMode::Formatted | EditorMode::Preview
@@ -1276,9 +1439,13 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                 Task::batch([
                     Task::done(Message::RenderPreviewRequested),
                     Task::done(Message::OutlineRefreshPressed),
+                    auto_save_task,
                 ])
             } else {
-                Task::done(Message::OutlineRefreshPressed)
+                Task::batch([
+                    Task::done(Message::OutlineRefreshPressed),
+                    auto_save_task,
+                ])
             }
         }
         Message::SaveNotePressed => save_note_task(state, false),
@@ -1323,6 +1490,24 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                     } else {
                         error!(error = %err, "Note save failed");
                         state.diagnostics.errors_logged += 1;
+                        // Queue the edit for later replay if it looks like a network error.
+                        if let Some(vault_id) = state.selected_vault_id.as_deref() {
+                            if !state.note_path.trim().is_empty() {
+                                let _ = enqueue_offline_edit(
+                                    vault_id,
+                                    &state.note_path,
+                                    &state.note_content,
+                                );
+                                state.diagnostics.push_log(format!(
+                                    "[offline] queued edit for {}",
+                                    state.note_path
+                                ));
+                                state.status = format!(
+                                    "Save failed — edit queued for offline replay: {err}"
+                                );
+                                return Task::none();
+                            }
+                        }
                         state
                             .diagnostics
                             .push_log(format!("[note] save error: {err}"));
@@ -1381,12 +1566,19 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                 Ok(stream) => {
                     info!("Event sync loop connected");
                     state.diagnostics.push_log("[sync] connected".to_string());
+                    let was_reconnect = state.event_sync_retry_attempt > 0
+                        || state.event_sync_last_timestamp_ms > 0;
                     state.event_sync_connected = true;
                     state.event_sync_retry_attempt = 0;
                     state.event_sync_last_message = "Connected".to_string();
                     state.event_sync_stream = Some(stream.clone());
                     state.status = "Event sync loop connected".to_string();
-                    return Task::done(Message::PollNextEvent(stream));
+                    let mut tasks = vec![Task::done(Message::PollNextEvent(stream))];
+                    // Catch up on missed events if this is a reconnect.
+                    if was_reconnect {
+                        tasks.push(Task::done(Message::CatchUpAfterReconnect));
+                    }
+                    return Task::batch(tasks);
                 }
                 Err(err) => {
                     warn!(error = %err, "Event sync connection failed");
@@ -1444,6 +1636,87 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                 Task::done(Message::ConnectEventsPressed)
             } else {
                 Task::none()
+            }
+        }
+        Message::CatchUpAfterReconnect => {
+            let (Some(client), Some(vault_id)) =
+                (state.client.clone(), state.selected_vault_id.clone())
+            else {
+                return Task::none();
+            };
+            let since = state.event_sync_last_timestamp_ms;
+            if since == 0 {
+                // No previous timestamp — do a full tree/tags refresh instead.
+                return Task::batch([
+                    Task::done(Message::LoadTreePressed),
+                    Task::done(Message::LoadTagsPressed),
+                ]);
+            }
+            state.status = format!("Catching up on changes since {since}…");
+            state
+                .diagnostics
+                .push_log(format!("[sync] catch-up since {since}"));
+            Task::perform(
+                async move {
+                    client
+                        .get_file_changes(&vault_id, since)
+                        .await
+                        .map_err(|e| format!("Catch-up failed: {e}"))
+                },
+                Message::CatchUpLoaded,
+            )
+        }
+        Message::CatchUpLoaded(result) => {
+            match result {
+                Ok(events) => {
+                    let count = events.len();
+                    for event in &events {
+                        match &event.event_type {
+                            FileChangeType::Renamed { from, to } => {
+                                apply_rename_to_state(state, from, to);
+                            }
+                            FileChangeType::Deleted => {
+                                apply_delete_to_state(state, &event.path);
+                            }
+                            _ => {}
+                        }
+                        let ts = event.timestamp.timestamp_millis();
+                        if ts > state.event_sync_last_timestamp_ms {
+                            state.event_sync_last_timestamp_ms = ts;
+                        }
+                    }
+                    state.status = format!("Caught up: {count} change(s) since disconnect");
+                    state
+                        .diagnostics
+                        .push_log(format!("[sync] catch-up: {count} event(s)"));
+
+                    // Refresh tree, current note, and replay any queued offline edits.
+                    let mut tasks: Vec<Task<Message>> = vec![
+                        Task::done(Message::LoadTreePressed),
+                        Task::done(Message::LoadTagsPressed),
+                        Task::done(Message::ReplayOfflineEdits),
+                    ];
+                    // If current note was affected, reload it.
+                    let current = state.note_path.clone();
+                    if !current.is_empty()
+                        && events
+                            .iter()
+                            .any(|e| e.path == current || matches!(&e.event_type, FileChangeType::Renamed { from, .. } if from == &current))
+                    {
+                        if !state.note_is_dirty {
+                            tasks.push(Task::done(Message::LoadNotePressed));
+                        }
+                    }
+                    return Task::batch(tasks);
+                }
+                Err(err) => {
+                    state.status = err;
+                    // Fall back to full refresh.
+                    return Task::batch([
+                        Task::done(Message::LoadTreePressed),
+                        Task::done(Message::LoadTagsPressed),
+                    ]);
+                }
             }
         }
 
@@ -1568,6 +1841,285 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                     state.media_status = format!("Open failed: {err}");
                     state.status = state.media_status.clone();
                 }
+            }
+            Task::none()
+        }
+
+        // ── offline edit replay ─────────────────────────────────────────
+        Message::ReplayOfflineEdits => {
+            let (Some(client), Some(vault_id)) =
+                (state.client.clone(), state.selected_vault_id.clone())
+            else {
+                return Task::none();
+            };
+            let edits = drain_offline_edits(&vault_id);
+            if edits.is_empty() {
+                return Task::none();
+            }
+            let count = edits.len();
+            state.status = format!("Replaying {count} offline edit(s)…");
+            state
+                .diagnostics
+                .push_log(format!("[offline] replaying {count} queued edit(s)"));
+            // Replay each edit sequentially (first one only for now, chain via OfflineEditReplayed).
+            let (path, content) = edits.into_iter().next().unwrap();
+            Task::perform(
+                async move {
+                    let request = obsidian_types::UpdateFileRequest {
+                        content,
+                        last_modified: None,
+                        frontmatter: None,
+                    };
+                    client
+                        .write_file(&vault_id, &path, &request)
+                        .await
+                        .map(|_| path)
+                        .map_err(|e| format!("Offline replay failed: {e}"))
+                },
+                Message::OfflineEditReplayed,
+            )
+        }
+        Message::OfflineEditReplayed(result) => {
+            match result {
+                Ok(path) => {
+                    state
+                        .diagnostics
+                        .push_log(format!("[offline] replayed edit for {path}"));
+                    state.status = format!("Replayed offline edit: {path}");
+                    // Continue replaying remaining edits.
+                    return Task::done(Message::ReplayOfflineEdits);
+                }
+                Err(err) => {
+                    state.status = format!("Offline replay error: {err}");
+                    state.diagnostics.errors_logged += 1;
+                    state
+                        .diagnostics
+                        .push_log(format!("[offline] replay error: {err}"));
+                }
+            }
+            Task::none()
+        }
+
+        // ── tree sorting / sidebar collapse / tag search ──────────────────
+        Message::ToggleTreeSort => {
+            state.tree_sort_ascending = !state.tree_sort_ascending;
+            state.status = format!(
+                "File tree sort: {}",
+                if state.tree_sort_ascending { "A → Z" } else { "Z → A" }
+            );
+            Task::done(Message::LoadTreePressed)
+        }
+        Message::ToggleSidebarSection(section) => {
+            let cs = &mut state.collapsed_sections;
+            match section.as_str() {
+                "vaults" => cs.vaults = !cs.vaults,
+                "quick_switcher" => cs.quick_switcher = !cs.quick_switcher,
+                "search" => cs.search = !cs.search,
+                "quick_actions" => cs.quick_actions = !cs.quick_actions,
+                "bookmarks" => cs.bookmarks = !cs.bookmarks,
+                "tags" => cs.tags = !cs.tags,
+                "recent_files" => cs.recent_files = !cs.recent_files,
+                "file_tree" => cs.file_tree = !cs.file_tree,
+                _ => {}
+            }
+            Task::none()
+        }
+        Message::TagSearchPressed(tag) => {
+            state.search_query = format!("#{tag}");
+            state.status = format!("Searching for tag #{tag}…");
+            run_search(state)
+        }
+
+        // ── split pane ─────────────────────────────────────────────────────
+        Message::ToggleSplitPane => {
+            state.split_pane_enabled = !state.split_pane_enabled;
+            if !state.split_pane_enabled {
+                state.split_pane_active_tab = None;
+            }
+            state.status = if state.split_pane_enabled {
+                "Split pane enabled — select a tab for the right pane".to_string()
+            } else {
+                "Split pane disabled".to_string()
+            };
+            Task::none()
+        }
+        Message::SplitPaneTabSelected(path) => {
+            state.split_pane_active_tab = Some(path.clone());
+            state.status = format!("Right pane: {path}");
+            Task::none()
+        }
+
+        // ── auto-save ──────────────────────────────────────────────────────
+        Message::AutoSaveTick(generation) => {
+            // Only auto-save if the generation still matches (no new edits since
+            // the timer was scheduled), the note is dirty, and we have an active path.
+            if generation == state.auto_save_generation
+                && state.note_is_dirty
+                && !state.note_path.trim().is_empty()
+                && state.client.is_some()
+                && state.selected_vault_id.is_some()
+            {
+                debug!(path = %state.note_path, "Auto-save triggered");
+                state
+                    .diagnostics
+                    .push_log(format!("[auto-save] saving {}", state.note_path));
+                return save_note_task(state, false);
+            }
+            Task::none()
+        }
+
+        Message::CycleTheme => {
+            const THEMES: &[&str] = &[
+                "dark", "light", "tokyo_night", "dracula", "nord",
+                "solarized_dark", "gruvbox_dark", "catppuccin_mocha",
+                "kanagawa_wave", "moonfly", "oxocarbon",
+            ];
+            let current_idx = THEMES
+                .iter()
+                .position(|t| *t == state.preferences_theme)
+                .unwrap_or(0);
+            let next_idx = (current_idx + 1) % THEMES.len();
+            state.preferences_theme = THEMES[next_idx].to_string();
+            state.status = format!("Theme: {}", state.preferences_theme);
+            Task::none()
+        }
+
+        // ── admin panel ──────────────────────────────────────────────────
+        Message::AdminPanelToggled => {
+            state.admin_panel_visible = !state.admin_panel_visible;
+            if state.admin_panel_visible {
+                return Task::done(Message::AdminRefreshUsers);
+            }
+            Task::none()
+        }
+        Message::AdminRefreshUsers => {
+            let Some(client) = state.client.clone() else {
+                state.admin_status = "Please login first".to_string();
+                return Task::none();
+            };
+            state.admin_status = "Loading users…".to_string();
+            Task::perform(
+                async move {
+                    client
+                        .admin_list_users()
+                        .await
+                        .map_err(|e| format!("Failed to list users: {e}"))
+                },
+                Message::AdminUsersLoaded,
+            )
+        }
+        Message::AdminUsersLoaded(result) => {
+            match result {
+                Ok(users) => {
+                    state.admin_status = format!("{} user(s)", users.len());
+                    state.admin_users = users
+                        .into_iter()
+                        .map(|u| AdminUserRow {
+                            id: u.id,
+                            username: u.username,
+                            is_admin: u.is_admin,
+                            is_active: u.is_active,
+                        })
+                        .collect();
+                }
+                Err(err) => state.admin_status = err,
+            }
+            Task::none()
+        }
+        Message::AdminNewUsernameChanged(v) => { state.admin_new_username = v; Task::none() }
+        Message::AdminNewPasswordChanged(v) => { state.admin_new_password = v; Task::none() }
+        Message::AdminNewIsAdminToggled => { state.admin_new_is_admin = !state.admin_new_is_admin; Task::none() }
+        Message::AdminCreateUserPressed => {
+            let Some(client) = state.client.clone() else {
+                return Task::none();
+            };
+            let username = state.admin_new_username.trim().to_string();
+            let password = if state.admin_new_password.trim().is_empty() {
+                None
+            } else {
+                Some(state.admin_new_password.clone())
+            };
+            let is_admin = state.admin_new_is_admin;
+            state.admin_status = format!("Creating user {username}…");
+            Task::perform(
+                async move {
+                    client
+                        .admin_create_user(&obsidian_types::CreateUserRequest {
+                            username: username.clone(),
+                            temporary_password: password,
+                            is_admin: Some(is_admin),
+                        })
+                        .await
+                        .map(|r| format!("Created user {} (temp password shown once)", r.username))
+                        .map_err(|e| format!("Failed: {e}"))
+                },
+                Message::AdminUserCreated,
+            )
+        }
+        Message::AdminUserCreated(result) => {
+            match &result {
+                Ok(msg) => {
+                    state.admin_status = msg.clone();
+                    state.admin_new_username.clear();
+                    state.admin_new_password.clear();
+                    state.admin_new_is_admin = false;
+                }
+                Err(err) => state.admin_status = err.clone(),
+            }
+            Task::done(Message::AdminRefreshUsers)
+        }
+        Message::AdminDeactivateUser(user_id) => {
+            let Some(client) = state.client.clone() else { return Task::none(); };
+            state.admin_status = format!("Deactivating {user_id}…");
+            Task::perform(
+                async move {
+                    client.admin_deactivate_user(&user_id).await
+                        .map(|_| format!("User {user_id} deactivated"))
+                        .map_err(|e| format!("Failed: {e}"))
+                },
+                Message::AdminUserActionDone,
+            )
+        }
+        Message::AdminReactivateUser(user_id) => {
+            let Some(client) = state.client.clone() else { return Task::none(); };
+            state.admin_status = format!("Reactivating {user_id}…");
+            Task::perform(
+                async move {
+                    client.admin_reactivate_user(&user_id).await
+                        .map(|_| format!("User {user_id} reactivated"))
+                        .map_err(|e| format!("Failed: {e}"))
+                },
+                Message::AdminUserActionDone,
+            )
+        }
+        Message::AdminDeleteUser(user_id) => {
+            let Some(client) = state.client.clone() else { return Task::none(); };
+            state.admin_status = format!("Deleting {user_id}…");
+            Task::perform(
+                async move {
+                    client.admin_delete_user(&user_id).await
+                        .map(|_| format!("User {user_id} deleted"))
+                        .map_err(|e| format!("Failed: {e}"))
+                },
+                Message::AdminUserActionDone,
+            )
+        }
+        Message::AdminUserActionDone(result) => {
+            match result {
+                Ok(msg) => state.admin_status = msg,
+                Err(err) => state.admin_status = err,
+            }
+            Task::done(Message::AdminRefreshUsers)
+        }
+
+        // ── selective sync ──────────────────────────────────────────────
+        Message::ToggleVaultSync(vault_id) => {
+            if state.sync_excluded_vaults.contains(&vault_id) {
+                state.sync_excluded_vaults.remove(&vault_id);
+                state.status = format!("Sync enabled for vault {vault_id}");
+            } else {
+                state.sync_excluded_vaults.insert(vault_id.clone());
+                state.status = format!("Sync disabled for vault {vault_id}");
             }
             Task::none()
         }
@@ -1736,6 +2288,10 @@ fn handle_window_event(state: &mut DesktopApp, event: Event) -> Task<Message> {
                 Task::done(Message::ConnectEventsPressed)
             }
         }
+        keyboard::Key::Character("\\") => {
+            state.status = "Shortcut: toggle split pane".to_string();
+            Task::done(Message::ToggleSplitPane)
+        }
         keyboard::Key::Character("r") | keyboard::Key::Character("R") => {
             state.status = "Shortcut: refresh active note".to_string();
             Task::batch([
@@ -1782,9 +2338,21 @@ fn handle_event_message(state: &mut DesktopApp, message: WsMessage) -> Task<Mess
             vault_id,
             path,
             event_type,
+            timestamp,
             ..
         } => {
             state.event_sync_connected = true;
+            // Track the latest event timestamp for catch-up on reconnect.
+            if timestamp > state.event_sync_last_timestamp_ms {
+                state.event_sync_last_timestamp_ms = timestamp;
+            }
+
+            // Skip events for excluded vaults (selective sync).
+            if state.sync_excluded_vaults.contains(&vault_id) {
+                state.event_sync_last_message =
+                    format!("Skipped (excluded): {path}");
+                return Task::batch(tasks);
+            }
 
             if let FileChangeType::Renamed { from, to } = &event_type {
                 apply_rename_to_state(state, from, to);

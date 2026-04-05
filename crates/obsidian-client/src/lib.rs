@@ -7,8 +7,9 @@ use thiserror::Error;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use obsidian_types::{
-    ApplyOrganizationSuggestionRequest, ApplyOrganizationSuggestionResponse, CreateFileRequest,
-    CreateUploadSessionRequest, CreateVaultRequest, FileContent, FileNode,
+    AdminUser, ApplyOrganizationSuggestionRequest, ApplyOrganizationSuggestionResponse,
+    CreateFileRequest, CreateUploadSessionRequest, CreateUserRequest, CreateUserResponse,
+    CreateVaultRequest, FileChangeEvent, FileContent, FileNode,
     GenerateOrganizationSuggestionsRequest, GenerateOutlineRequest, NoteOutlineResponse,
     OrganizationSuggestionsResponse, PagedSearchResult, UndoMlActionResponse, UpdateFileRequest,
     UploadSessionResponse, UserPreferences, Vault,
@@ -275,6 +276,13 @@ impl ObsidianClient {
             auth.refresh_token = None;
             auth.expires_at_epoch_seconds = None;
         }
+    }
+
+    pub fn refresh_token(&self) -> Option<String> {
+        self.auth
+            .read()
+            .ok()
+            .and_then(|auth| auth.refresh_token.clone())
     }
 
     pub fn access_token(&self) -> Option<String> {
@@ -681,6 +689,17 @@ impl ObsidianClient {
             .await
     }
 
+    /// Fetch file change events since a given Unix millisecond timestamp.
+    pub async fn get_file_changes(
+        &self,
+        vault_id: &str,
+        since_ms: i64,
+    ) -> Result<Vec<FileChangeEvent>, ClientError> {
+        let endpoint = format!("/api/vaults/{vault_id}/changes?since={since_ms}");
+        self.send_json(HttpMethod::Get, &endpoint, Option::<&()>::None)
+            .await
+    }
+
     pub async fn record_recent_file(&self, vault_id: &str, path: &str) -> Result<(), ClientError> {
         let endpoint = format!("/api/vaults/{vault_id}/recent");
         self.send_json::<serde_json::Value, _>(
@@ -797,6 +816,66 @@ impl ObsidianClient {
             Some(&TogglePluginRequest { enabled }),
         )
         .await
+    }
+
+    // ── Admin methods ────────────────────────────────────────────────
+
+    pub async fn admin_list_users(&self) -> Result<Vec<AdminUser>, ClientError> {
+        self.send_json(HttpMethod::Get, "/api/admin/users", Option::<&()>::None)
+            .await
+    }
+
+    pub async fn admin_create_user(
+        &self,
+        request: &CreateUserRequest,
+    ) -> Result<CreateUserResponse, ClientError> {
+        self.send_json(HttpMethod::Post, "/api/admin/users", Some(request))
+            .await
+    }
+
+    pub async fn admin_edit_user(
+        &self,
+        user_id: &str,
+        is_admin: Option<bool>,
+        reset_password: Option<&str>,
+    ) -> Result<serde_json::Value, ClientError> {
+        let endpoint = format!("/api/admin/users/{user_id}/edit");
+        self.send_json(
+            HttpMethod::Post,
+            &endpoint,
+            Some(&serde_json::json!({
+                "is_admin": is_admin,
+                "reset_password": reset_password,
+            })),
+        )
+        .await
+    }
+
+    pub async fn admin_deactivate_user(
+        &self,
+        user_id: &str,
+    ) -> Result<serde_json::Value, ClientError> {
+        let endpoint = format!("/api/admin/users/{user_id}/deactivate");
+        self.send_json(HttpMethod::Post, &endpoint, Option::<&()>::None)
+            .await
+    }
+
+    pub async fn admin_reactivate_user(
+        &self,
+        user_id: &str,
+    ) -> Result<serde_json::Value, ClientError> {
+        let endpoint = format!("/api/admin/users/{user_id}/reactivate");
+        self.send_json(HttpMethod::Post, &endpoint, Option::<&()>::None)
+            .await
+    }
+
+    pub async fn admin_delete_user(
+        &self,
+        user_id: &str,
+    ) -> Result<serde_json::Value, ClientError> {
+        let endpoint = format!("/api/admin/users/{user_id}");
+        self.send_json(HttpMethod::Delete, &endpoint, Option::<&()>::None)
+            .await
     }
 
     pub async fn connect_ws(&self) -> Result<WsStream, ClientError> {

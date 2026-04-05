@@ -2,15 +2,20 @@ pub mod auth_provider;
 pub mod file_service;
 pub mod frontmatter_service;
 pub mod image_service;
+pub mod ldap_provider;
 pub mod markdown_service;
 pub mod ml_service;
+pub mod oidc_provider;
 pub mod plugin_api;
 pub mod plugin_service;
 pub mod search_service;
 pub mod storage;
 pub mod wiki_link_service;
 
-pub use auth_provider::{authenticate_username_password, AuthProviderKind, AuthenticatedPrincipal};
+pub use auth_provider::{
+    authenticate_username_password, validate_password_policy, AuthProviderKind,
+    AuthenticatedPrincipal,
+};
 pub use file_service::{FileService, RenameStrategy};
 pub use image_service::ImageService;
 pub use markdown_service::{MarkdownService, RenderOptions};

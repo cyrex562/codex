@@ -1,14 +1,20 @@
 pub mod admin;
+pub mod api_keys;
+pub mod auth;
 pub mod files;
 pub mod groups;
+pub mod health;
+pub mod invitations;
 pub mod markdown;
+pub mod oidc;
 pub mod ml;
 pub mod plugins;
 pub mod preferences;
 pub mod search;
+pub mod tags;
+pub mod totp;
 pub mod vaults;
 pub mod ws;
 pub mod bookmarks;
-pub mod tags;
 
 pub use vaults::AppState;

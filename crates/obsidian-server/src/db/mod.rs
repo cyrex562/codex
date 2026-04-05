@@ -1,14 +1,14 @@
 use crate::error::{AppError, AppResult};
-use crate::auth::models::{Session, SessionRow, User, UserRole, UserRow};
 use crate::models::{
-    AdminUser, EditorMode, GroupInfo, GroupMember, MlUndoReceipt, ReverseAction, UserPreferences,
-    Vault, VaultRole, VaultRow, VaultShareEntry, VaultShareList,
+    AdminUser, ApiKeyInfo, AuditLogEntry, EditorMode, GroupInfo, GroupMember, MlUndoReceipt,
+    ReverseAction, SessionInfo, UserPreferences, Vault, VaultRole, VaultRow, VaultShareEntry,
+    VaultShareList,
 };
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Argon2,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::str::FromStr;
 use uuid::Uuid;
@@ -164,60 +164,25 @@ impl Database {
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE,
-                password_hash TEXT,
+                password_hash TEXT NOT NULL,
                 is_admin INTEGER NOT NULL DEFAULT 0,
                 must_change_password INTEGER NOT NULL DEFAULT 0,
-                email TEXT,
-                name TEXT,
-                picture TEXT,
-                role TEXT,
-                oidc_subject TEXT,
-                oidc_issuer TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        let _ = sqlx::query("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0").execute(&self.pool).await;
-        let _ = sqlx::query("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0").execute(&self.pool).await;
-        let _ = sqlx::query("ALTER TABLE users ADD COLUMN email TEXT").execute(&self.pool).await;
-        let _ = sqlx::query("ALTER TABLE users ADD COLUMN name TEXT").execute(&self.pool).await;
-        let _ = sqlx::query("ALTER TABLE users ADD COLUMN picture TEXT").execute(&self.pool).await;
-        let _ = sqlx::query("ALTER TABLE users ADD COLUMN role TEXT").execute(&self.pool).await;
-        let _ = sqlx::query("ALTER TABLE users ADD COLUMN oidc_subject TEXT").execute(&self.pool).await;
-        let _ = sqlx::query("ALTER TABLE users ADD COLUMN oidc_issuer TEXT").execute(&self.pool).await;
-        let _ = sqlx::query("ALTER TABLE users ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP").execute(&self.pool).await;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                token_hash TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS oidc_states (
-                csrf_token TEXT PRIMARY KEY,
-                nonce TEXT NOT NULL,
-                pkce_verifier TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
             "#,
         )
         .execute(&self.pool)
         .await?;
+
+        let _ = sqlx::query("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+            .execute(&self.pool)
+            .await;
+
+        let _ = sqlx::query(
+            "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&self.pool)
+        .await;
 
         sqlx::query(
             r#"
@@ -404,6 +369,156 @@ impl Database {
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_ml_undo_receipts_vault_id ON ml_undo_receipts(vault_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // ── Multi-user hardening migrations ─────────────────────────────────
+
+        // Add is_active flag for user deactivation (default true = active).
+        let _ = sqlx::query("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+            .execute(&self.pool)
+            .await;
+
+        // Failed-login tracking columns for account lockout.
+        let _ = sqlx::query(
+            "ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&self.pool)
+        .await;
+
+        let _ = sqlx::query("ALTER TABLE users ADD COLUMN locked_until TEXT")
+            .execute(&self.pool)
+            .await;
+
+        // Audit log table for security-relevant events.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                user_id TEXT,
+                username TEXT,
+                event_type TEXT NOT NULL,
+                detail TEXT,
+                ip_address TEXT,
+                success INTEGER NOT NULL DEFAULT 1
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Active sessions table for token revocation support.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // API keys table for programmatic access.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                prefix TEXT NOT NULL,
+                key_hash TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(prefix)")
+            .execute(&self.pool)
+            .await?;
+
+        // Vault visibility: 'private' (default) or 'public'.
+        let _ = sqlx::query(
+            "ALTER TABLE vaults ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'",
+        )
+        .execute(&self.pool)
+        .await;
+
+        // ── Phase 4b: TOTP 2FA ──────────────────────────────────────────
+        let _ = sqlx::query(
+            "ALTER TABLE users ADD COLUMN totp_secret TEXT",
+        )
+        .execute(&self.pool)
+        .await;
+
+        let _ = sqlx::query(
+            "ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&self.pool)
+        .await;
+
+        let _ = sqlx::query(
+            "ALTER TABLE users ADD COLUMN totp_backup_codes TEXT",
+        )
+        .execute(&self.pool)
+        .await;
+
+        // ── Phase 4b: Invitations ───────────────────────────────────────
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS invitations (
+                id TEXT PRIMARY KEY,
+                token TEXT NOT NULL UNIQUE,
+                role TEXT NOT NULL DEFAULT 'viewer',
+                vault_id TEXT,
+                created_by_user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                accepted INTEGER NOT NULL DEFAULT 0,
+                accepted_by_user_id TEXT,
+                FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token)",
         )
         .execute(&self.pool)
         .await?;
@@ -645,8 +760,8 @@ impl Database {
     }
 
     pub async fn list_users(&self) -> AppResult<Vec<AdminUser>> {
-        let rows = sqlx::query_as::<_, (String, String, i64, i64, String)>(
-            "SELECT id, username, is_admin, must_change_password, created_at FROM users ORDER BY username ASC",
+        let rows = sqlx::query_as::<_, (String, String, i64, i64, i64, String)>(
+            "SELECT id, username, is_admin, must_change_password, is_active, created_at FROM users ORDER BY username ASC",
         )
         .fetch_all(&self.pool)
         .await
@@ -655,11 +770,12 @@ impl Database {
         Ok(rows
             .into_iter()
             .map(
-                |(id, username, is_admin, must_change_password, created_at)| AdminUser {
+                |(id, username, is_admin, must_change_password, is_active, created_at)| AdminUser {
                     id,
                     username,
                     is_admin: is_admin != 0,
                     must_change_password: must_change_password != 0,
+                    is_active: is_active != 0,
                     created_at: parse_rfc3339_utc(&created_at),
                 },
             )
@@ -1617,156 +1733,625 @@ impl Database {
         Ok(events)
     }
 
-    // =========================================================================
-    // Auth: Session & OIDC operations
-    // =========================================================================
+    // ── User deactivation / deletion ────────────────────────────────────
 
-    pub async fn upsert_user_from_oidc(
-        &self,
-        email: &str,
-        name: &str,
-        picture: Option<&str>,
-        oidc_subject: &str,
-        oidc_issuer: &str,
-    ) -> AppResult<User> {
-        let existing = sqlx::query_as::<_, UserRow>(
-            "SELECT * FROM users WHERE oidc_subject = ? AND oidc_issuer = ?",
-        )
-        .bind(oidc_subject)
-        .bind(oidc_issuer)
-        .fetch_optional(&self.pool)
-        .await?;
+    /// Soft-deactivate a user (keeps data, prevents login).
+    pub async fn deactivate_user(&self, user_id: &str) -> AppResult<()> {
+        let result = sqlx::query("UPDATE users SET is_active = 0 WHERE id = ?")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!("User {user_id} not found")));
+        }
+        Ok(())
+    }
 
-        if let Some(row) = existing {
-            let now = Utc::now().to_rfc3339();
-            sqlx::query(
-                "UPDATE users SET email = ?, name = ?, picture = ?, updated_at = ? WHERE id = ?",
-            )
-            .bind(email)
-            .bind(name)
-            .bind(picture)
-            .bind(&now)
-            .bind(&row.id)
+    /// Reactivate a previously deactivated user.
+    pub async fn reactivate_user(&self, user_id: &str) -> AppResult<()> {
+        let result = sqlx::query("UPDATE users SET is_active = 1 WHERE id = ?")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!("User {user_id} not found")));
+        }
+        Ok(())
+    }
+
+    /// Check whether a user account is active.
+    pub async fn is_user_active(&self, user_id: &str) -> AppResult<bool> {
+        let row: Option<(i64,)> = sqlx::query_as("SELECT is_active FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(AppError::from)?;
+        Ok(row.map(|(v,)| v != 0).unwrap_or(false))
+    }
+
+    /// Hard-delete a user and cascade-remove group memberships and vault shares.
+    pub async fn delete_user(&self, user_id: &str) -> AppResult<()> {
+        // Remove vault shares
+        sqlx::query("DELETE FROM vault_user_shares WHERE user_id = ?")
+            .bind(user_id)
             .execute(&self.pool)
             .await?;
 
-            let mut user: User = row.into();
-            user.email = Some(email.to_string());
-            user.name = Some(name.to_string());
-            user.picture = picture.map(|s| s.to_string());
-            return Ok(user);
-        }
-
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-            .fetch_one(&self.pool)
+        // Remove group memberships
+        sqlx::query("DELETE FROM group_members WHERE user_id = ?")
+            .bind(user_id)
+            .execute(&self.pool)
             .await?;
 
-        let role = if count.0 == 0 { UserRole::Admin } else { UserRole::Pending };
-        let is_admin = if count.0 == 0 { 1_i64 } else { 0_i64 };
-        
-        // Ensure unique username
-        let base_username = email.split('@').next().unwrap_or("user");
-        let mut final_username = base_username.to_string();
-        let mut idx = 1;
-        while sqlx::query("SELECT id FROM users WHERE username = ?").bind(&final_username).fetch_optional(&self.pool).await?.is_some() {
-            final_username = format!("{}_{}", base_username, idx);
-            idx += 1;
+        // Remove user preferences
+        sqlx::query("DELETE FROM user_preferences WHERE user_id = ?")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+
+        // Unset vault ownership (vaults become unowned, not deleted)
+        sqlx::query("UPDATE vaults SET owner_user_id = NULL WHERE owner_user_id = ?")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+
+        // Delete the user row
+        let result = sqlx::query("DELETE FROM users WHERE id = ?")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!("User {user_id} not found")));
         }
-
-        let id = Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
-
-        let row: UserRow = sqlx::query_as::<_, UserRow>(
-            r#"
-            INSERT INTO users (id, username, email, name, picture, role, is_admin, oidc_subject, oidc_issuer, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            RETURNING *
-            "#,
-        )
-        .bind(&id)
-        .bind(&final_username)
-        .bind(email)
-        .bind(name)
-        .bind(picture)
-        .bind(role.as_str())
-        .bind(is_admin)
-        .bind(oidc_subject)
-        .bind(oidc_issuer)
-        .bind(&now)
-        .bind(&now)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(row.into())
-    }
-
-    pub async fn create_session(&self, user_id: &str, token_hash: &str, duration_hours: i64) -> AppResult<Session> {
-        let id = Uuid::new_v4().to_string();
-        let now = Utc::now();
-        let expires_at = now + chrono::Duration::hours(duration_hours);
-
-        let row: SessionRow = sqlx::query_as::<_, SessionRow>(
-            "INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?) RETURNING *"
-        )
-        .bind(&id)
-        .bind(user_id)
-        .bind(token_hash)
-        .bind(expires_at.to_rfc3339())
-        .bind(now.to_rfc3339())
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(row.into())
-    }
-
-    pub async fn get_valid_session(&self, token_hash: &str) -> AppResult<Option<Session>> {
-        let row: Option<SessionRow> = sqlx::query_as::<_, SessionRow>("SELECT * FROM sessions WHERE token_hash = ?").bind(token_hash).fetch_optional(&self.pool).await?;
-        match row {
-            Some(r) => {
-                let session: Session = r.into();
-                if session.expires_at < Utc::now() {
-                    let _ = sqlx::query("DELETE FROM sessions WHERE id = ?").bind(&session.id).execute(&self.pool).await;
-                    Ok(None)
-                } else {
-                    Ok(Some(session))
-                }
-            }
-            None => Ok(None),
-        }
-    }
-
-    pub async fn delete_session(&self, token_hash: &str) -> AppResult<()> {
-        sqlx::query("DELETE FROM sessions WHERE token_hash = ?").bind(token_hash).execute(&self.pool).await?;
         Ok(())
     }
 
-    pub async fn cleanup_expired_sessions(&self) -> AppResult<u64> {
+    // ── Failed login tracking ───────────────────────────────────────────
+
+    /// Record a failed login attempt and return the new attempt count.
+    pub async fn record_failed_login(&self, user_id: &str) -> AppResult<i64> {
+        sqlx::query(
+            "UPDATE users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?",
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+
+        let row: (i64,) =
+            sqlx::query_as("SELECT failed_login_attempts FROM users WHERE id = ?")
+                .bind(user_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(AppError::from)?;
+        Ok(row.0)
+    }
+
+    /// Lock a user account until a specified time.
+    pub async fn lock_user_until(
+        &self,
+        user_id: &str,
+        until: DateTime<Utc>,
+    ) -> AppResult<()> {
+        sqlx::query("UPDATE users SET locked_until = ? WHERE id = ?")
+            .bind(until.to_rfc3339())
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Clear failed login attempts and unlock the account after successful login.
+    pub async fn clear_failed_logins(&self, user_id: &str) -> AppResult<()> {
+        sqlx::query(
+            "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?",
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Check if a user is currently locked out. Returns `Some(locked_until)` if
+    /// locked, `None` if not.
+    pub async fn get_lockout_status(
+        &self,
+        user_id: &str,
+    ) -> AppResult<Option<DateTime<Utc>>> {
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT locked_until FROM users WHERE id = ?")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(AppError::from)?;
+
+        if let Some((Some(locked_until_str),)) = row {
+            let locked_until = parse_rfc3339_utc(&locked_until_str);
+            if locked_until > Utc::now() {
+                return Ok(Some(locked_until));
+            }
+        }
+        Ok(None)
+    }
+
+    // ── Audit logging ───────────────────────────────────────────────────
+
+    /// Record an audit log entry for a security-relevant event.
+    pub async fn write_audit_log(
+        &self,
+        user_id: Option<&str>,
+        username: Option<&str>,
+        event_type: &str,
+        detail: Option<&str>,
+        ip_address: Option<&str>,
+        success: bool,
+    ) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
-        let result = sqlx::query("DELETE FROM sessions WHERE expires_at < ?").bind(&now).execute(&self.pool).await?;
+        sqlx::query(
+            r#"
+            INSERT INTO audit_log (timestamp, user_id, username, event_type, detail, ip_address, success)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&now)
+        .bind(user_id)
+        .bind(username)
+        .bind(event_type)
+        .bind(detail)
+        .bind(ip_address)
+        .bind(if success { 1_i64 } else { 0_i64 })
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get recent audit log entries (newest first), with an optional limit.
+    pub async fn get_audit_log(
+        &self,
+        limit: Option<i64>,
+    ) -> AppResult<Vec<AuditLogEntry>> {
+        let limit = limit.unwrap_or(100).min(1000);
+        let rows = sqlx::query_as::<_, (i64, String, Option<String>, Option<String>, String, Option<String>, Option<String>, i64)>(
+            "SELECT id, timestamp, user_id, username, event_type, detail, ip_address, success FROM audit_log ORDER BY id DESC LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, timestamp, user_id, username, event_type, detail, ip_address, success)| {
+                    AuditLogEntry {
+                        id,
+                        timestamp: parse_rfc3339_utc(&timestamp),
+                        user_id,
+                        username,
+                        event_type,
+                        detail,
+                        ip_address,
+                        success: success != 0,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    // ── Session management ──────────────────────────────────────────────
+
+    /// Record a new token session for revocation tracking.
+    pub async fn create_session(
+        &self,
+        token_id: &str,
+        user_id: &str,
+        expires_at: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO sessions (token_id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(token_id)
+        .bind(user_id)
+        .bind(&now)
+        .bind(expires_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Check whether a session has been revoked.
+    pub async fn is_session_revoked(&self, token_id: &str) -> AppResult<bool> {
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT revoked FROM sessions WHERE token_id = ?")
+                .bind(token_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(AppError::from)?;
+        // If the session isn't tracked at all, treat it as valid (backwards compat).
+        Ok(row.map(|(v,)| v != 0).unwrap_or(false))
+    }
+
+    /// Revoke a specific session.
+    pub async fn revoke_session(&self, token_id: &str) -> AppResult<()> {
+        sqlx::query("UPDATE sessions SET revoked = 1 WHERE token_id = ?")
+            .bind(token_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Revoke all active sessions for a user (log out everywhere).
+    pub async fn revoke_all_sessions(&self, user_id: &str) -> AppResult<u64> {
+        let result = sqlx::query(
+            "UPDATE sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0",
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected())
     }
 
-    pub async fn store_oidc_state(&self, csrf_token: &str, nonce: &str, pkce_verifier: &str) -> AppResult<()> {
+    /// List active (non-revoked, non-expired) sessions for a user.
+    pub async fn list_active_sessions(
+        &self,
+        user_id: &str,
+    ) -> AppResult<Vec<SessionInfo>> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query("INSERT INTO oidc_states (csrf_token, nonce, pkce_verifier, created_at) VALUES (?, ?, ?, ?)")
-            .bind(csrf_token).bind(nonce).bind(pkce_verifier).bind(&now).execute(&self.pool).await?;
+        let rows = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT token_id, created_at, expires_at FROM sessions WHERE user_id = ? AND revoked = 0 AND expires_at > ? ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .bind(&now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(token_id, created_at, expires_at)| SessionInfo {
+                token_id,
+                created_at: parse_rfc3339_utc(&created_at),
+                expires_at: parse_rfc3339_utc(&expires_at),
+            })
+            .collect())
+    }
+
+    /// Clean up expired sessions (housekeeping).
+    pub async fn purge_expired_sessions(&self) -> AppResult<u64> {
+        let now = Utc::now().to_rfc3339();
+        let result = sqlx::query("DELETE FROM sessions WHERE expires_at < ?")
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    // ── API keys ────────────────────────────────────────────────────────
+
+    /// Store a new API key record (the hash, not the raw key).
+    pub async fn create_api_key(
+        &self,
+        id: &str,
+        name: &str,
+        prefix: &str,
+        key_hash: &str,
+        user_id: &str,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> AppResult<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"
+            INSERT INTO api_keys (id, name, prefix, key_hash, user_id, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(id)
+        .bind(name)
+        .bind(prefix)
+        .bind(key_hash)
+        .bind(user_id)
+        .bind(&now)
+        .bind(expires_at.map(|t| t.to_rfc3339()))
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
-    pub async fn consume_oidc_state(&self, csrf_token: &str) -> AppResult<Option<(String, String)>> {
-        let row: Option<(String, String)> = sqlx::query_as("SELECT nonce, pkce_verifier FROM oidc_states WHERE csrf_token = ?").bind(csrf_token).fetch_optional(&self.pool).await?;
-        if row.is_some() {
-            sqlx::query("DELETE FROM oidc_states WHERE csrf_token = ?").bind(csrf_token).execute(&self.pool).await?;
-            let cutoff = (Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
-            let _ = sqlx::query("DELETE FROM oidc_states WHERE created_at < ?").bind(&cutoff).execute(&self.pool).await;
-        }
-        Ok(row)
+    /// Look up an API key by its prefix, returning (id, key_hash, user_id, expires_at, revoked).
+    pub async fn get_api_key_by_prefix(
+        &self,
+        prefix: &str,
+    ) -> AppResult<Option<(String, String, String, Option<String>, bool)>> {
+        let row: Option<(String, String, String, Option<String>, i64)> = sqlx::query_as(
+            "SELECT id, key_hash, user_id, expires_at, revoked FROM api_keys WHERE prefix = ?",
+        )
+        .bind(prefix)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+        Ok(row.map(|(id, hash, uid, exp, rev)| (id, hash, uid, exp, rev != 0)))
     }
 
-    pub async fn get_auth_user_by_id(&self, id: &str) -> AppResult<User> {
-        let row: UserRow = sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE id = ?").bind(id).fetch_one(&self.pool).await.map_err(|e| match e {
-            sqlx::Error::RowNotFound => AppError::NotFound(format!("User {} not found", id)),
-            _ => AppError::from(e),
-        })?;
-        Ok(row.into())
+    /// List all API keys for a user (without hashes).
+    pub async fn list_api_keys(&self, user_id: &str) -> AppResult<Vec<ApiKeyInfo>> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, i64)>(
+            "SELECT id, name, prefix, user_id, created_at, expires_at, revoked FROM api_keys WHERE user_id = ? ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, prefix, user_id, created_at, expires_at, revoked)| ApiKeyInfo {
+                id,
+                name,
+                prefix,
+                user_id,
+                created_at: parse_rfc3339_utc(&created_at),
+                expires_at: expires_at.map(|s| parse_rfc3339_utc(&s)),
+                revoked: revoked != 0,
+            })
+            .collect())
+    }
+
+    /// Revoke an API key.
+    pub async fn revoke_api_key(&self, key_id: &str, user_id: &str) -> AppResult<()> {
+        let result = sqlx::query(
+            "UPDATE api_keys SET revoked = 1 WHERE id = ? AND user_id = ?",
+        )
+        .bind(key_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound("API key not found".to_string()));
+        }
+        Ok(())
+    }
+
+    // ── Vault visibility / ownership transfer ───────────────────────────
+
+    /// Set vault visibility to 'public' or 'private'.
+    pub async fn set_vault_visibility(
+        &self,
+        vault_id: &str,
+        visibility: &str,
+    ) -> AppResult<()> {
+        let result = sqlx::query("UPDATE vaults SET visibility = ? WHERE id = ?")
+            .bind(visibility)
+            .bind(vault_id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound("Vault not found".to_string()));
+        }
+        Ok(())
+    }
+
+    /// Get vault visibility ('public' or 'private').
+    pub async fn get_vault_visibility(&self, vault_id: &str) -> AppResult<String> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT visibility FROM vaults WHERE id = ?")
+                .bind(vault_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(AppError::from)?;
+        Ok(row.map(|(v,)| v).unwrap_or_else(|| "private".to_string()))
+    }
+
+    /// Transfer vault ownership to a new user.
+    pub async fn transfer_vault_ownership(
+        &self,
+        vault_id: &str,
+        new_owner_id: &str,
+    ) -> AppResult<()> {
+        // Set the new owner.
+        sqlx::query("UPDATE vaults SET owner_user_id = ? WHERE id = ?")
+            .bind(new_owner_id)
+            .bind(vault_id)
+            .execute(&self.pool)
+            .await?;
+
+        // Ensure the new owner has an 'owner' share entry.
+        sqlx::query(
+            r#"
+            INSERT INTO vault_user_shares (vault_id, user_id, role, created_at)
+            VALUES (?, ?, 'owner', ?)
+            ON CONFLICT (vault_id, user_id) DO UPDATE SET role = 'owner'
+            "#,
+        )
+        .bind(vault_id)
+        .bind(new_owner_id)
+        .bind(Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    // ── TOTP 2FA ────────────────────────────────────────────────────────
+
+    /// Store a TOTP secret for a user (enrollment step).
+    pub async fn set_totp_secret(
+        &self,
+        user_id: &str,
+        secret: &str,
+        backup_codes: &[String],
+    ) -> AppResult<()> {
+        let codes_json = serde_json::to_string(backup_codes)
+            .map_err(|e| AppError::InternalError(format!("Failed to serialize backup codes: {e}")))?;
+        sqlx::query(
+            "UPDATE users SET totp_secret = ?, totp_backup_codes = ? WHERE id = ?",
+        )
+        .bind(secret)
+        .bind(&codes_json)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Enable TOTP after successful verification.
+    pub async fn enable_totp(&self, user_id: &str) -> AppResult<()> {
+        sqlx::query("UPDATE users SET totp_enabled = 1 WHERE id = ?")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Disable TOTP and clear the secret.
+    pub async fn disable_totp(&self, user_id: &str) -> AppResult<()> {
+        sqlx::query(
+            "UPDATE users SET totp_enabled = 0, totp_secret = NULL, totp_backup_codes = NULL WHERE id = ?",
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get TOTP state for a user: (totp_enabled, totp_secret, backup_codes_json).
+    pub async fn get_totp_state(
+        &self,
+        user_id: &str,
+    ) -> AppResult<(bool, Option<String>, Option<String>)> {
+        let row: Option<(i64, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT totp_enabled, totp_secret, totp_backup_codes FROM users WHERE id = ?",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        match row {
+            Some((enabled, secret, codes)) => Ok((enabled != 0, secret, codes)),
+            None => Err(AppError::NotFound("User not found".to_string())),
+        }
+    }
+
+    /// Consume a backup code (marks it as used by removing from the list).
+    pub async fn consume_backup_code(
+        &self,
+        user_id: &str,
+        code: &str,
+    ) -> AppResult<bool> {
+        let (_, _, codes_json) = self.get_totp_state(user_id).await?;
+        let Some(codes_json) = codes_json else {
+            return Ok(false);
+        };
+        let mut codes: Vec<String> = serde_json::from_str(&codes_json).unwrap_or_default();
+        if let Some(pos) = codes.iter().position(|c| c == code) {
+            codes.remove(pos);
+            let updated = serde_json::to_string(&codes)
+                .map_err(|e| AppError::InternalError(e.to_string()))?;
+            sqlx::query("UPDATE users SET totp_backup_codes = ? WHERE id = ?")
+                .bind(&updated)
+                .bind(user_id)
+                .execute(&self.pool)
+                .await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    // ── Invitations ─────────────────────────────────────────────────────
+
+    /// Create an invitation.
+    pub async fn create_invitation(
+        &self,
+        id: &str,
+        token: &str,
+        role: &str,
+        vault_id: Option<&str>,
+        created_by: &str,
+        expires_at: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"
+            INSERT INTO invitations (id, token, role, vault_id, created_by_user_id, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(id)
+        .bind(token)
+        .bind(role)
+        .bind(vault_id)
+        .bind(created_by)
+        .bind(&now)
+        .bind(expires_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Look up an invitation by token.
+    pub async fn get_invitation_by_token(
+        &self,
+        token: &str,
+    ) -> AppResult<Option<(String, String, Option<String>, String, String, String, bool, Option<String>)>> {
+        let row = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, i64, Option<String>)>(
+            "SELECT id, role, vault_id, created_by_user_id, created_at, expires_at, accepted, accepted_by_user_id FROM invitations WHERE token = ?",
+        )
+        .bind(token)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        Ok(row.map(|(id, role, vid, cby, cat, eat, acc, aby)| {
+            (id, role, vid, cby, cat, eat, acc != 0, aby)
+        }))
+    }
+
+    /// Mark an invitation as accepted.
+    pub async fn accept_invitation(
+        &self,
+        invite_id: &str,
+        accepted_by_user_id: &str,
+    ) -> AppResult<()> {
+        sqlx::query(
+            "UPDATE invitations SET accepted = 1, accepted_by_user_id = ? WHERE id = ?",
+        )
+        .bind(accepted_by_user_id)
+        .bind(invite_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// List all invitations created by a user.
+    pub async fn list_invitations_by_creator(
+        &self,
+        user_id: &str,
+    ) -> AppResult<Vec<crate::models::InviteInfo>> {
+        let rows = sqlx::query_as::<_, (String, String, String, Option<String>, String, String, String, i64, Option<String>)>(
+            "SELECT id, token, role, vault_id, created_by_user_id, created_at, expires_at, accepted, accepted_by_user_id FROM invitations WHERE created_by_user_id = ? ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, token, role, vault_id, created_by, created_at, expires_at, accepted, accepted_by)| {
+                crate::models::InviteInfo {
+                    id,
+                    token,
+                    role,
+                    vault_id,
+                    created_by,
+                    created_at: parse_rfc3339_utc(&created_at),
+                    expires_at: parse_rfc3339_utc(&expires_at),
+                    accepted: accepted != 0,
+                    accepted_by,
+                }
+            })
+            .collect())
     }
 }

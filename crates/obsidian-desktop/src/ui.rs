@@ -3,8 +3,8 @@ use iced::{ContentFit, Element, Length, Theme};
 use std::collections::BTreeSet;
 
 use crate::state::{
-    file_kind_label, is_media_file_kind, DesktopApp, DesktopMode, EditorMode, FileKind,
-    TemplateInsertMode, ToolbarAction,
+    file_kind_label, is_media_file_kind, CollapsedSections, DesktopApp, DesktopMode, EditorMode,
+    FileKind, TemplateInsertMode, ToolbarAction,
 };
 use crate::Message;
 
@@ -43,6 +43,9 @@ pub(crate) fn view(state: &DesktopApp) -> Element<'_, Message> {
             button("Preferences").on_press(Message::PreferencesPressed),
             button("Plugins").on_press(Message::PluginManagerPressed),
             button("Import/Export").on_press(Message::ImportExportPressed),
+            button(if state.admin_panel_visible { "● Admin" } else { "Admin" })
+                .on_press(Message::AdminPanelToggled),
+            button(text(format!("Theme: {}", state.preferences_theme))).on_press(Message::CycleTheme),
             button(if state.feature_flags.diagnostics_panel {
                 "● Diag"
             } else {
@@ -96,6 +99,12 @@ pub(crate) fn view(state: &DesktopApp) -> Element<'_, Message> {
         container(column![])
     };
 
+    let admin_panel = if state.admin_panel_visible {
+        container(view_admin_panel(state)).padding(8)
+    } else {
+        container(column![])
+    };
+
     let diagnostics_panel = if state.feature_flags.diagnostics_panel {
         container(view_diagnostics_panel(state)).padding(8)
     } else {
@@ -119,6 +128,7 @@ pub(crate) fn view(state: &DesktopApp) -> Element<'_, Message> {
             preferences_panel,
             plugin_panel,
             import_export_panel,
+            admin_panel,
             diagnostics_panel,
             body,
             view_status_footer(state)
@@ -155,29 +165,42 @@ fn view_sidebar(state: &DesktopApp) -> Element<'_, Message> {
         )
         .push(button("Refresh Tree").on_press(Message::LoadTreePressed));
 
-    let tree_panel = scrollable(state.tree_entries.iter().fold(
-        column![text("Vault Tree")].spacing(4),
-        |col, entry| {
-            let prefix = if state.selected_tree_path.as_deref() == Some(entry.path.as_str()) {
-                "• "
-            } else {
-                ""
-            };
+    let tree_header = row![
+        text("Vault Tree"),
+        button(if state.tree_sort_ascending { "A→Z" } else { "Z→A" })
+            .on_press(Message::ToggleTreeSort),
+        button(if state.collapsed_sections.file_tree { "▶" } else { "▼" })
+            .on_press(Message::ToggleSidebarSection("file_tree".to_string())),
+    ]
+    .spacing(6);
 
-            let label = if entry.is_directory {
-                format!("{prefix}📁 {}", entry.display)
-            } else {
-                format!("{prefix}📄 {}", entry.display)
-            };
+    let tree_panel = if state.collapsed_sections.file_tree {
+        scrollable(column![tree_header].spacing(4)).height(40)
+    } else {
+        scrollable(state.tree_entries.iter().fold(
+            column![tree_header].spacing(4),
+            |col, entry| {
+                let prefix = if state.selected_tree_path.as_deref() == Some(entry.path.as_str()) {
+                    "• "
+                } else {
+                    ""
+                };
 
-            col.push(
-                button(text(label))
-                    .width(Length::Fill)
-                    .on_press(Message::TreeEntrySelected(entry.path.clone())),
-            )
-        },
-    ))
-    .height(Length::Fill);
+                let label = if entry.is_directory {
+                    format!("{prefix}📁 {}", entry.display)
+                } else {
+                    format!("{prefix}📄 {}", entry.display)
+                };
+
+                col.push(
+                    button(text(label))
+                        .width(Length::Fill)
+                        .on_press(Message::TreeEntrySelected(entry.path.clone())),
+                )
+            },
+        ))
+        .height(Length::Fill)
+    };
 
     let quick_create = column![
         text("Quick Actions"),
@@ -279,14 +302,11 @@ fn view_sidebar(state: &DesktopApp) -> Element<'_, Message> {
         .spacing(4);
 
         for tag in state.tag_entries.iter().take(12) {
-            panel = panel.push(text(format!("#{} ({})", tag.tag, tag.count)).size(12));
-            if let Some(first_file) = tag.files.first() {
-                panel = panel.push(
-                    button(text(format!("↳ {}", first_file)))
-                        .width(Length::Fill)
-                        .on_press(Message::QuickReopenPressed(first_file.clone())),
-                );
-            }
+            panel = panel.push(
+                button(text(format!("#{} ({})", tag.tag, tag.count)).size(12))
+                    .width(Length::Fill)
+                    .on_press(Message::TagSearchPressed(tag.tag.clone())),
+            );
         }
 
         panel
@@ -456,6 +476,12 @@ fn view_editor_workspace(state: &DesktopApp) -> Element<'_, Message> {
         button("Save").on_press(Message::SaveNotePressed),
         button("Force Save").on_press(Message::SaveNoteForcePressed),
         button("Bookmark").on_press(Message::ToggleBookmarkPressed),
+        button(if state.split_pane_enabled {
+            "Close Split"
+        } else {
+            "Split Pane"
+        })
+        .on_press(Message::ToggleSplitPane),
     ]
     .spacing(8);
 
@@ -806,7 +832,7 @@ fn view_editor_workspace(state: &DesktopApp) -> Element<'_, Message> {
     )
     .height(Length::Fill);
 
-    let workspace_body: Element<'_, Message> = match state.editor_mode {
+    let primary_pane: Element<'_, Message> = match state.editor_mode {
         EditorMode::Raw => container(editor).into(),
         EditorMode::Formatted => row![
             container(editor).width(Length::FillPortion(1)),
@@ -815,6 +841,71 @@ fn view_editor_workspace(state: &DesktopApp) -> Element<'_, Message> {
         .spacing(8)
         .into(),
         EditorMode::Preview => container(column![text("Preview"), preview].spacing(6)).into(),
+    };
+
+    // Build the workspace — either single pane or split.
+    let workspace_body: Element<'_, Message> = if state.split_pane_enabled {
+        // Build a tab selector for the right pane and a read-only preview of the selected tab.
+        let split_tab_choices = state.open_tabs.iter().filter(|tab| {
+            state.active_tab_path.as_deref() != Some(tab.path.as_str())
+        });
+        let split_tabs = split_tab_choices.fold(
+            column![text("Right Pane")].spacing(4),
+            |col, tab| {
+                let is_active = state.split_pane_active_tab.as_deref() == Some(tab.path.as_str());
+                let label = if is_active {
+                    format!("• {}", tab.title)
+                } else {
+                    tab.title.clone()
+                };
+                col.push(
+                    button(text(label))
+                        .width(Length::Fill)
+                        .on_press(Message::SplitPaneTabSelected(tab.path.clone())),
+                )
+            },
+        );
+
+        let split_content: Element<'_, Message> =
+            if let Some(split_tab) = state.split_pane_active_tab.as_deref().and_then(|path| {
+                state.open_tabs.iter().find(|t| t.path == path)
+            }) {
+                let content_preview = text_input("", &split_tab.content)
+                    .width(Length::Fill)
+                    .padding(10)
+                    .size(
+                        state
+                            .preferences_font_size_input
+                            .parse::<u16>()
+                            .unwrap_or(14),
+                    );
+
+                container(
+                    column![
+                        text(format!("Split: {}", split_tab.title)).size(14),
+                        content_preview,
+                    ]
+                    .spacing(6),
+                )
+                .padding(8)
+                .height(Length::Fill)
+                .into()
+            } else {
+                container(text("Select a tab for the right pane"))
+                    .padding(12)
+                    .into()
+            };
+
+        row![
+            container(primary_pane).width(Length::FillPortion(1)),
+            container(column![split_tabs, split_content].spacing(6))
+                .width(Length::FillPortion(1))
+                .padding(4),
+        ]
+        .spacing(8)
+        .into()
+    } else {
+        primary_pane
     };
 
     column![
@@ -1032,12 +1123,20 @@ fn view_status_footer(state: &DesktopApp) -> Element<'_, Message> {
         "Disconnected"
     };
 
+    let word_count = if state.note_content.is_empty() {
+        0
+    } else {
+        state.note_content.split_whitespace().count()
+    };
+    let char_count = state.note_content.len();
+
     container(
         row![
             text(format!("Vault: {active_vault}")),
             text(format!("Tabs: {}", state.open_tabs.len())),
             text(format!("Active: {active_tab}")),
             text(save_state),
+            text(format!("{word_count} words · {char_count} chars")),
             text(format!("Sync: {sync_state}")),
             text(format!("Sync detail: {}", state.event_sync_last_message)),
             text(format!("Status: {}", state.status)),
@@ -1221,21 +1320,49 @@ fn view_media_workspace(state: &DesktopApp) -> Element<'_, Message> {
                 container(text("Image preview is still loading or unavailable.")).into()
             }
         }
-        FileKind::Pdf => container(text(
-            "PDF files can be opened in your default browser or system PDF viewer from here.",
-        ))
+        FileKind::Pdf => container(
+            column![
+                text("PDF Document").size(16),
+                text("Use \"Open Externally\" to view in your system PDF reader.").size(13),
+                text(format!("File: {}", state.note_path)).size(12),
+                button("Open in System PDF Viewer").on_press(Message::OpenMediaExternallyPressed),
+            ]
+            .spacing(8),
+        )
+        .padding(16)
         .into(),
-        FileKind::Audio => container(text(
-            "Audio playback is delegated to your default system player for now.",
-        ))
+        FileKind::Audio => container(
+            column![
+                text("Audio File").size(16),
+                text("Use \"Open Externally\" to play in your system audio player.").size(13),
+                text(format!("File: {}", state.note_path)).size(12),
+                button("Play in System Audio Player").on_press(Message::OpenMediaExternallyPressed),
+            ]
+            .spacing(8),
+        )
+        .padding(16)
         .into(),
-        FileKind::Video => container(text(
-            "Video playback is delegated to your default system player for now.",
-        ))
+        FileKind::Video => container(
+            column![
+                text("Video File").size(16),
+                text("Use \"Open Externally\" to play in your system video player.").size(13),
+                text(format!("File: {}", state.note_path)).size(12),
+                button("Play in System Video Player").on_press(Message::OpenMediaExternallyPressed),
+            ]
+            .spacing(8),
+        )
+        .padding(16)
         .into(),
-        FileKind::Other => container(text(
-            "This binary file type does not have an embedded desktop preview yet, but it can be opened externally.",
-        ))
+        FileKind::Other => container(
+            column![
+                text("Binary File").size(16),
+                text("This file type cannot be previewed. Use \"Open Externally\" to view it.").size(13),
+                text(format!("File: {}", state.note_path)).size(12),
+                button("Open Externally").on_press(Message::OpenMediaExternallyPressed),
+            ]
+            .spacing(8),
+        )
+        .padding(16)
         .into(),
         FileKind::Markdown | FileKind::Text => container(text("Not a media file.")).into(),
     };
@@ -1256,6 +1383,100 @@ fn view_media_workspace(state: &DesktopApp) -> Element<'_, Message> {
     )
     .padding(10)
     .height(Length::Fill)
+    .width(Length::Fill)
+    .into()
+}
+
+fn view_admin_panel(state: &DesktopApp) -> Element<'_, Message> {
+    let user_list: Element<'_, Message> = if state.admin_users.is_empty() {
+        column![text(state.admin_status.as_str()).size(12)]
+            .spacing(4)
+            .into()
+    } else {
+        let list = state
+            .admin_users
+            .iter()
+            .fold(column![].spacing(4), |col, user| {
+                let status_badge = if user.is_active { "active" } else { "inactive" };
+                let admin_badge = if user.is_admin { " [admin]" } else { "" };
+                let toggle_btn = if user.is_active {
+                    button("Deactivate")
+                        .on_press(Message::AdminDeactivateUser(user.id.clone()))
+                } else {
+                    button("Reactivate")
+                        .on_press(Message::AdminReactivateUser(user.id.clone()))
+                };
+
+                col.push(
+                    row![
+                        text(format!(
+                            "{}{} ({})",
+                            user.username, admin_badge, status_badge
+                        )),
+                        toggle_btn,
+                        button("Delete")
+                            .on_press(Message::AdminDeleteUser(user.id.clone())),
+                    ]
+                    .spacing(8),
+                )
+            });
+
+        scrollable(list).height(200).into()
+    };
+
+    let create_form = column![
+        text("Create User").size(14),
+        row![
+            text_input("Username", &state.admin_new_username)
+                .on_input(Message::AdminNewUsernameChanged)
+                .width(Length::FillPortion(2)),
+            text_input("Password (auto if empty)", &state.admin_new_password)
+                .on_input(Message::AdminNewPasswordChanged)
+                .width(Length::FillPortion(2)),
+            button(if state.admin_new_is_admin {
+                "● Admin"
+            } else {
+                "Admin"
+            })
+            .on_press(Message::AdminNewIsAdminToggled),
+            button("Create").on_press(Message::AdminCreateUserPressed),
+        ]
+        .spacing(6),
+    ]
+    .spacing(6);
+
+    // Selective sync: show vault list with sync toggle.
+    let sync_controls = state.vaults.iter().fold(
+        column![text("Selective Sync").size(14)].spacing(4),
+        |col, vault| {
+            let excluded = state.sync_excluded_vaults.contains(&vault.id);
+            col.push(
+                row![
+                    text(vault.name.as_str()),
+                    button(if excluded { "Sync: OFF" } else { "Sync: ON" })
+                        .on_press(Message::ToggleVaultSync(vault.id.clone())),
+                ]
+                .spacing(8),
+            )
+        },
+    );
+
+    container(
+        column![
+            row![
+                text("Admin Panel").size(18),
+                button("Refresh").on_press(Message::AdminRefreshUsers),
+                button("Close").on_press(Message::AdminPanelToggled),
+            ]
+            .spacing(8),
+            text(state.admin_status.as_str()).size(12),
+            user_list,
+            create_form,
+            sync_controls,
+        ]
+        .spacing(8),
+    )
+    .padding(8)
     .width(Length::Fill)
     .into()
 }
