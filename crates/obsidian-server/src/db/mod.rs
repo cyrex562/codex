@@ -1,4 +1,5 @@
 use crate::error::{AppError, AppResult};
+use crate::auth::models::{Session, SessionRow, User, UserRole, UserRow};
 use crate::models::{
     AdminUser, EditorMode, GroupInfo, GroupMember, MlUndoReceipt, ReverseAction, UserPreferences,
     Vault, VaultRole, VaultRow, VaultShareEntry, VaultShareList,
@@ -163,25 +164,60 @@ impl Database {
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
+                password_hash TEXT,
                 is_admin INTEGER NOT NULL DEFAULT 0,
                 must_change_password INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL
+                email TEXT,
+                name TEXT,
+                picture TEXT,
+                role TEXT,
+                oidc_subject TEXT,
+                oidc_issuer TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             "#,
         )
         .execute(&self.pool)
         .await?;
 
-        let _ = sqlx::query("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
-            .execute(&self.pool)
-            .await;
+        let _ = sqlx::query("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0").execute(&self.pool).await;
+        let _ = sqlx::query("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0").execute(&self.pool).await;
+        let _ = sqlx::query("ALTER TABLE users ADD COLUMN email TEXT").execute(&self.pool).await;
+        let _ = sqlx::query("ALTER TABLE users ADD COLUMN name TEXT").execute(&self.pool).await;
+        let _ = sqlx::query("ALTER TABLE users ADD COLUMN picture TEXT").execute(&self.pool).await;
+        let _ = sqlx::query("ALTER TABLE users ADD COLUMN role TEXT").execute(&self.pool).await;
+        let _ = sqlx::query("ALTER TABLE users ADD COLUMN oidc_subject TEXT").execute(&self.pool).await;
+        let _ = sqlx::query("ALTER TABLE users ADD COLUMN oidc_issuer TEXT").execute(&self.pool).await;
+        let _ = sqlx::query("ALTER TABLE users ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP").execute(&self.pool).await;
 
-        let _ = sqlx::query(
-            "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0",
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                token_hash TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            "#,
         )
         .execute(&self.pool)
-        .await;
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS oidc_states (
+                csrf_token TEXT PRIMARY KEY,
+                nonce TEXT NOT NULL,
+                pkce_verifier TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
 
         sqlx::query(
             r#"
@@ -1579,5 +1615,158 @@ impl Database {
         }
 
         Ok(events)
+    }
+
+    // =========================================================================
+    // Auth: Session & OIDC operations
+    // =========================================================================
+
+    pub async fn upsert_user_from_oidc(
+        &self,
+        email: &str,
+        name: &str,
+        picture: Option<&str>,
+        oidc_subject: &str,
+        oidc_issuer: &str,
+    ) -> AppResult<User> {
+        let existing = sqlx::query_as::<_, UserRow>(
+            "SELECT * FROM users WHERE oidc_subject = ? AND oidc_issuer = ?",
+        )
+        .bind(oidc_subject)
+        .bind(oidc_issuer)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = existing {
+            let now = Utc::now().to_rfc3339();
+            sqlx::query(
+                "UPDATE users SET email = ?, name = ?, picture = ?, updated_at = ? WHERE id = ?",
+            )
+            .bind(email)
+            .bind(name)
+            .bind(picture)
+            .bind(&now)
+            .bind(&row.id)
+            .execute(&self.pool)
+            .await?;
+
+            let mut user: User = row.into();
+            user.email = Some(email.to_string());
+            user.name = Some(name.to_string());
+            user.picture = picture.map(|s| s.to_string());
+            return Ok(user);
+        }
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+            .fetch_one(&self.pool)
+            .await?;
+
+        let role = if count.0 == 0 { UserRole::Admin } else { UserRole::Pending };
+        let is_admin = if count.0 == 0 { 1_i64 } else { 0_i64 };
+        
+        // Ensure unique username
+        let base_username = email.split('@').next().unwrap_or("user");
+        let mut final_username = base_username.to_string();
+        let mut idx = 1;
+        while sqlx::query("SELECT id FROM users WHERE username = ?").bind(&final_username).fetch_optional(&self.pool).await?.is_some() {
+            final_username = format!("{}_{}", base_username, idx);
+            idx += 1;
+        }
+
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+
+        let row: UserRow = sqlx::query_as::<_, UserRow>(
+            r#"
+            INSERT INTO users (id, username, email, name, picture, role, is_admin, oidc_subject, oidc_issuer, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING *
+            "#,
+        )
+        .bind(&id)
+        .bind(&final_username)
+        .bind(email)
+        .bind(name)
+        .bind(picture)
+        .bind(role.as_str())
+        .bind(is_admin)
+        .bind(oidc_subject)
+        .bind(oidc_issuer)
+        .bind(&now)
+        .bind(&now)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.into())
+    }
+
+    pub async fn create_session(&self, user_id: &str, token_hash: &str, duration_hours: i64) -> AppResult<Session> {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now();
+        let expires_at = now + chrono::Duration::hours(duration_hours);
+
+        let row: SessionRow = sqlx::query_as::<_, SessionRow>(
+            "INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?) RETURNING *"
+        )
+        .bind(&id)
+        .bind(user_id)
+        .bind(token_hash)
+        .bind(expires_at.to_rfc3339())
+        .bind(now.to_rfc3339())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.into())
+    }
+
+    pub async fn get_valid_session(&self, token_hash: &str) -> AppResult<Option<Session>> {
+        let row: Option<SessionRow> = sqlx::query_as::<_, SessionRow>("SELECT * FROM sessions WHERE token_hash = ?").bind(token_hash).fetch_optional(&self.pool).await?;
+        match row {
+            Some(r) => {
+                let session: Session = r.into();
+                if session.expires_at < Utc::now() {
+                    let _ = sqlx::query("DELETE FROM sessions WHERE id = ?").bind(&session.id).execute(&self.pool).await;
+                    Ok(None)
+                } else {
+                    Ok(Some(session))
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub async fn delete_session(&self, token_hash: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM sessions WHERE token_hash = ?").bind(token_hash).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn cleanup_expired_sessions(&self) -> AppResult<u64> {
+        let now = Utc::now().to_rfc3339();
+        let result = sqlx::query("DELETE FROM sessions WHERE expires_at < ?").bind(&now).execute(&self.pool).await?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn store_oidc_state(&self, csrf_token: &str, nonce: &str, pkce_verifier: &str) -> AppResult<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("INSERT INTO oidc_states (csrf_token, nonce, pkce_verifier, created_at) VALUES (?, ?, ?, ?)")
+            .bind(csrf_token).bind(nonce).bind(pkce_verifier).bind(&now).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn consume_oidc_state(&self, csrf_token: &str) -> AppResult<Option<(String, String)>> {
+        let row: Option<(String, String)> = sqlx::query_as("SELECT nonce, pkce_verifier FROM oidc_states WHERE csrf_token = ?").bind(csrf_token).fetch_optional(&self.pool).await?;
+        if row.is_some() {
+            sqlx::query("DELETE FROM oidc_states WHERE csrf_token = ?").bind(csrf_token).execute(&self.pool).await?;
+            let cutoff = (Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
+            let _ = sqlx::query("DELETE FROM oidc_states WHERE created_at < ?").bind(&cutoff).execute(&self.pool).await;
+        }
+        Ok(row)
+    }
+
+    pub async fn get_auth_user_by_id(&self, id: &str) -> AppResult<User> {
+        let row: UserRow = sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE id = ?").bind(id).fetch_one(&self.pool).await.map_err(|e| match e {
+            sqlx::Error::RowNotFound => AppError::NotFound(format!("User {} not found", id)),
+            _ => AppError::from(e),
+        })?;
+        Ok(row.into())
     }
 }

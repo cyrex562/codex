@@ -1,5 +1,4 @@
 pub mod admin;
-pub mod auth;
 pub mod files;
 pub mod groups;
 pub mod markdown;

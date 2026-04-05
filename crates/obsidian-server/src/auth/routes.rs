@@ -3,7 +3,7 @@ use crate::error::{AppError, AppResult};
 use crate::middleware::AuthenticatedUser;
 use crate::models::AuthenticatedUserProfile;
 use crate::models::ChangePasswordRequest;
-use crate::routes::vaults::AppState;
+use crate::routes::AppState;
 use crate::services::authenticate_username_password;
 use actix_web::{get, post, web, HttpMessage, HttpRequest, HttpResponse};
 use argon2::{
@@ -13,6 +13,9 @@ use argon2::{
 use chrono::Utc;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
+use tracing::info;
+
+const SESSION_COOKIE_NAME: &str = "obsidian_session";
 
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
@@ -47,8 +50,14 @@ struct Claims {
     iat: i64,
 }
 
+#[derive(Deserialize)]
+pub struct CallbackQuery {
+    pub code: String,
+    pub state: String,
+}
+
 #[post("/api/auth/login")]
-async fn login(
+async fn password_login(
     state: web::Data<AppState>,
     config: web::Data<AppConfig>,
     req: web::Json<LoginRequest>,
@@ -95,9 +104,18 @@ async fn refresh_access_token(
 }
 
 #[post("/api/auth/logout")]
-async fn logout() -> AppResult<HttpResponse> {
-    // Short-lived JWT strategy for now (no server-side token revocation table yet).
-    Ok(HttpResponse::Ok().json(LogoutResponse { success: true }))
+async fn logout(req: HttpRequest, state: web::Data<AppState>) -> AppResult<HttpResponse> {
+    if let Some(cookie) = req.cookie(SESSION_COOKIE_NAME) {
+        if let Some(auth) = &state.auth_service {
+            let _ = auth.logout(&state.db, cookie.value()).await;
+        }
+    }
+
+    let clear_cookie = format!("{}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax", SESSION_COOKIE_NAME);
+
+    Ok(HttpResponse::Ok()
+        .append_header(("Set-Cookie", clear_cookie))
+        .json(LogoutResponse { success: true }))
 }
 
 #[get("/api/auth/me")]
@@ -179,6 +197,94 @@ async fn change_password(
     Ok(HttpResponse::Ok().json(serde_json::json!({ "success": true })))
 }
 
+#[get("/api/auth/google")]
+async fn google_login(state: web::Data<AppState>) -> AppResult<HttpResponse> {
+    let auth = state.auth_service.as_ref().ok_or_else(|| {
+        AppError::InternalError("Auth is not enabled".into())
+    })?;
+
+    let (auth_url, csrf_token, nonce, pkce_verifier) = auth.generate_auth_url()?;
+
+    state
+        .db
+        .store_oidc_state(&csrf_token, &nonce, &pkce_verifier)
+        .await?;
+
+    Ok(HttpResponse::Found()
+        .append_header(("Location", auth_url))
+        .finish())
+}
+
+#[get("/api/auth/google/callback")]
+async fn google_callback(
+    state: web::Data<AppState>,
+    query: web::Query<CallbackQuery>,
+) -> AppResult<HttpResponse> {
+    let auth = state.auth_service.as_ref().ok_or_else(|| {
+        AppError::InternalError("Auth is not enabled".into())
+    })?;
+
+    let (nonce, pkce_verifier) = state
+        .db
+        .consume_oidc_state(&query.state)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("Invalid or expired CSRF state".into()))?;
+
+    let (email, name, picture, subject, issuer) = auth
+        .exchange_code(&query.code, &nonce, &pkce_verifier)
+        .await?;
+
+    info!("OIDC login successful for {}", email);
+
+    let user = state
+        .db
+        .upsert_user_from_oidc(&email, &name, picture.as_deref(), &subject, &issuer)
+        .await?;
+
+    info!("User {:?} ({}) logged in", user.email, user.id);
+
+    let token = auth.create_session(&state.db, &user.id).await?;
+    let cookie = build_session_cookie(
+        &token,
+        auth.session_duration_hours(),
+        auth.external_url(),
+        state.force_secure_cookies,
+    );
+
+    let redirect_url = "/";
+
+    Ok(HttpResponse::Found()
+        .append_header(("Location", redirect_url))
+        .append_header(("Set-Cookie", cookie))
+        .finish())
+}
+
+#[get("/api/auth/status")]
+async fn auth_status(state: web::Data<AppState>) -> HttpResponse {
+    let enabled = state.auth_service.is_some();
+    HttpResponse::Ok().json(serde_json::json!({
+        "auth_enabled": enabled
+    }))
+}
+
+// Helpers
+
+fn build_session_cookie(
+    token: &str,
+    duration_hours: i64,
+    external_url: &str,
+    force_secure: bool,
+) -> String {
+    let max_age = duration_hours * 3600;
+    let secure = force_secure || external_url.starts_with("https://");
+    let secure_flag = if secure { "; Secure" } else { "" };
+
+    format!(
+        "{}={}; Path=/; Max-Age={}; HttpOnly; SameSite=Lax{}",
+        SESSION_COOKIE_NAME, token, max_age, secure_flag
+    )
+}
+
 fn issue_tokens(
     user_id: &str,
     username: &str,
@@ -256,9 +362,12 @@ fn effective_jwt_secret(auth_cfg: &crate::config::AuthConfig) -> String {
 }
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
-    cfg.service(login)
+    cfg.service(password_login)
         .service(me)
-    .service(change_password)
+        .service(change_password)
         .service(refresh_access_token)
+        .service(google_login)
+        .service(google_callback)
+        .service(auth_status)
         .service(logout);
 }

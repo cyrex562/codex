@@ -23,6 +23,8 @@ pub struct AppState {
     pub event_broadcaster: broadcast::Sender<FileChangeEvent>,
     pub change_log_retention_days: u64,
     pub ml_undo_store: Arc<Mutex<HashMap<String, MlUndoReceipt>>>,
+    pub auth_service: Option<std::sync::Arc<crate::auth::oidc_service::AuthService>>,
+    pub force_secure_cookies: bool,
 }
 
 fn require_authenticated_user(req: &HttpRequest) -> AppResult<AuthenticatedUser> {

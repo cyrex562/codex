@@ -90,55 +90,66 @@ where
             return Box::pin(async move { Ok(fut.await?.map_into_left_body()) });
         }
 
-        let bearer = match extract_access_token(&req) {
-            Some(token) => token,
-            None => {
-                let response = HttpResponse::Unauthorized().json(serde_json::json!({
-                    "error": "UNAUTHORIZED",
-                    "message": "Missing or invalid Authorization header"
-                }));
-                return Box::pin(
-                    async move { Ok(req.into_response(response).map_into_right_body()) },
-                );
-            }
-        };
-
-        let secret = effective_jwt_secret(&app_cfg);
-        let claims = match decode::<Claims>(
-            &bearer,
-            &DecodingKey::from_secret(secret.as_bytes()),
-            &Validation::default(),
-        ) {
-            Ok(data) => data.claims,
-            Err(_) => {
-                let response = HttpResponse::Unauthorized().json(serde_json::json!({
-                    "error": "UNAUTHORIZED",
-                    "message": "Invalid or expired token"
-                }));
-                return Box::pin(
-                    async move { Ok(req.into_response(response).map_into_right_body()) },
-                );
-            }
-        };
-
-        if claims.token_type != "access" {
-            let response = HttpResponse::Unauthorized().json(serde_json::json!({
-                "error": "UNAUTHORIZED",
-                "message": "Access token required"
-            }));
-            return Box::pin(async move { Ok(req.into_response(response).map_into_right_body()) });
-        }
-
-        let user = AuthenticatedUser {
-            user_id: claims.sub.clone(),
-            username: claims.username.clone(),
-        };
-
         let state = req.app_data::<actix_web::web::Data<AppState>>().cloned();
         let required_vault_role = required_vault_role(&req);
 
+        let access_token = extract_access_token(&req);
+        let session_token = extract_session_cookie(&req);
+
+        let service = Rc::clone(&self.service);
+
         Box::pin(async move {
             let req = req;
+            
+            let mut auth_user = None;
+
+            if let Some(token) = session_token {
+                if let Some(state_data) = &state {
+                    // Hash token inline for quick DB lookup
+                    use sha2::{Digest, Sha256};
+                    let mut hasher = Sha256::new();
+                    hasher.update(token.as_bytes());
+                    let token_hash = hex::encode(hasher.finalize());
+
+                    if let Ok(Some(session)) = state_data.db.get_valid_session(&token_hash).await {
+                        if let Ok(user_model) = state_data.db.get_auth_user_by_id(&session.user_id).await {
+                            auth_user = Some(AuthenticatedUser {
+                                user_id: user_model.id,
+                                username: user_model.username,
+                            });
+                        }
+                    }
+                }
+            }
+
+            if auth_user.is_none() {
+                if let Some(bearer) = access_token {
+                    let secret = effective_jwt_secret(&app_cfg);
+                    if let Ok(data) = decode::<Claims>(
+                        &bearer,
+                        &DecodingKey::from_secret(secret.as_bytes()),
+                        &Validation::default(),
+                    ) {
+                        if data.claims.token_type == "access" {
+                            auth_user = Some(AuthenticatedUser {
+                                user_id: data.claims.sub.clone(),
+                                username: data.claims.username.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+
+            let user = match auth_user {
+                Some(u) => u,
+                None => {
+                    let response = HttpResponse::Unauthorized().json(serde_json::json!({
+                        "error": "UNAUTHORIZED",
+                        "message": "Missing, invalid or expired token"
+                    }));
+                    return Ok(req.into_response(response).map_into_right_body());
+                }
+            };
 
             if let Some(state) = state.as_ref() {
                 if !is_password_change_exempt_path(req.path()) {
@@ -253,6 +264,10 @@ fn extract_access_token(req: &ServiceRequest) -> Option<String> {
     }
 
     None
+}
+
+fn extract_session_cookie(req: &ServiceRequest) -> Option<String> {
+    req.cookie("obsidian_session").map(|c| c.value().to_string())
 }
 
 fn effective_jwt_secret(app_cfg: &AppConfig) -> String {

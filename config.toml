@@ -29,6 +29,12 @@ jwt_secret = ""
 access_token_ttl = 3600
 refresh_token_ttl = 604800
 
+# OIDC (Google Auth) settings
+google_client_id = ""
+google_client_secret = ""
+external_url = "http://localhost:8080"
+session_duration_hours = 168
+
 # Step 35 bootstrap admin (used only when users table is empty)
 # Set these before first run to create the initial admin account.
 bootstrap_admin_username = ""

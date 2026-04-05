@@ -60,6 +60,14 @@ pub struct AuthConfig {
     pub bootstrap_admin_username: Option<String>,
     #[serde(default)]
     pub bootstrap_admin_password: Option<String>,
+    #[serde(default)]
+    pub google_client_id: String,
+    #[serde(default)]
+    pub google_client_secret: String,
+    #[serde(default = "default_external_url")]
+    pub external_url: String,
+    #[serde(default = "default_session_duration_hours")]
+    pub session_duration_hours: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +151,14 @@ fn default_refresh_token_ttl() -> u64 {
     604800
 }
 
+fn default_session_duration_hours() -> i64 {
+    168 // 7 days
+}
+
+fn default_external_url() -> String {
+    "http://localhost:8080".to_string()
+}
+
 fn default_change_log_retention_days() -> u64 {
     7
 }
@@ -181,6 +197,10 @@ impl Default for AppConfig {
                 refresh_token_ttl: default_refresh_token_ttl(),
                 bootstrap_admin_username: None,
                 bootstrap_admin_password: None,
+                google_client_id: "".to_string(),
+                google_client_secret: "".to_string(),
+                external_url: default_external_url(),
+                session_duration_hours: default_session_duration_hours(),
             },
             sync: SyncConfig {
                 change_log_retention_days: default_change_log_retention_days(),
@@ -232,6 +252,10 @@ impl Default for AuthConfig {
             refresh_token_ttl: default_refresh_token_ttl(),
             bootstrap_admin_username: None,
             bootstrap_admin_password: None,
+            google_client_id: "".to_string(),
+            google_client_secret: "".to_string(),
+            external_url: default_external_url(),
+            session_duration_hours: default_session_duration_hours(),
         }
     }
 }

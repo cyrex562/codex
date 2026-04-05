@@ -281,6 +281,16 @@ async fn main() -> std::io::Result<()> {
         }
     }
 
+    let auth_service = if config.auth.enabled && config.auth.provider == "oidc" {
+        Some(Arc::new(
+            obsidian_host::auth::oidc_service::AuthService::new(config.auth.clone())
+                .await
+                .expect("Failed to initialize OIDC auth service")
+        ))
+    } else {
+        None
+    };
+
     // Create app state
     let app_state = web::Data::new(AppState {
         db,
@@ -290,6 +300,8 @@ async fn main() -> std::io::Result<()> {
         event_broadcaster: event_tx,
         change_log_retention_days: config.sync.change_log_retention_days,
         ml_undo_store: Arc::new(Mutex::new(HashMap::new())),
+        auth_service,
+        force_secure_cookies: false,
     });
     let app_config = web::Data::new(config.clone());
 
@@ -321,7 +333,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(obsidian_host::middleware::RequestLogging)
             .wrap(obsidian_host::middleware::AuthMiddleware)
             .wrap(middleware::Compress::default())
-            .configure(obsidian_host::routes::auth::configure)
+            .configure(obsidian_host::auth::routes::configure)
             .configure(obsidian_host::routes::admin::configure)
             .configure(obsidian_host::routes::groups::configure)
             .configure(obsidian_host::routes::vaults::configure)
