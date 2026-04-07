@@ -27,7 +27,7 @@ async fn get_file_tree(
     let vault_id = path.into_inner();
     let vault = state.db.get_vault(&vault_id).await?;
 
-    let tree = FileService::get_file_tree(&vault.path)?;
+    let tree = state.storage.get_file_tree(&vault.path)?;
     Ok(HttpResponse::Ok().json(tree))
 }
 
@@ -40,7 +40,7 @@ async fn read_file(
     let (vault_id, file_path) = path.into_inner();
     let vault = state.db.get_vault(&vault_id).await?;
 
-    let content = FileService::read_file(&vault.path, &file_path)?;
+    let content = state.storage.read_file(&vault.path, &file_path)?;
     let etag = build_file_etag(&content);
 
     if if_none_match_matches(req.headers().get(IF_NONE_MATCH), &etag) {
@@ -445,7 +445,7 @@ async fn delete_file(
     let (vault_id, file_path) = path.into_inner();
     let vault = state.db.get_vault(&vault_id).await?;
 
-    FileService::delete_file(&vault.path, &file_path)?;
+    state.storage.delete_file(&vault.path, &file_path)?;
 
     state
         .db
@@ -474,7 +474,7 @@ async fn create_directory(
     let vault_id = vault_id.into_inner();
     let vault = state.db.get_vault(&vault_id).await?;
 
-    FileService::create_directory(&vault.path, &req.path)?;
+    state.storage.create_directory(&vault.path, &req.path)?;
 
     Ok(HttpResponse::Created().json(serde_json::json!({
         "path": req.path,
@@ -508,7 +508,7 @@ async fn rename_file(
         _ => crate::services::RenameStrategy::Fail,
     };
 
-    let new_path = FileService::rename(&vault.path, from, to, strategy)?;
+    let new_path = state.storage.rename_file(&vault.path, from, to, strategy)?;
 
     state
         .db
@@ -527,7 +527,7 @@ async fn rename_file(
         state.search_index.remove_file(&vault_id, from)?;
     }
     if new_path.ends_with(".md") {
-        if let Ok(content) = FileService::read_file(&vault.path, &new_path) {
+        if let Ok(content) = state.storage.read_file(&vault.path, &new_path) {
             state
                 .search_index
                 .update_file(&vault_id, &new_path, content.content)?;

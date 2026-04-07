@@ -211,6 +211,23 @@ impl SearchIndex {
         Ok(())
     }
 
+    /// Index all markdown files provided externally (used for non-local-FS backends like S3).
+    pub fn index_vault_with_files(
+        &self,
+        vault_id: &str,
+        files: Vec<(String, String)>,
+    ) -> AppResult<usize> {
+        use std::collections::HashMap;
+        let count = files.len();
+        let index: HashMap<String, String> = files.into_iter().collect();
+        let mut indices = self
+            .indices
+            .write()
+            .map_err(|_| AppError::InternalError("Failed to acquire write lock".to_string()))?;
+        indices.insert(vault_id.to_string(), index);
+        Ok(count)
+    }
+
     /// Get a random markdown file from the vault
     pub fn get_random_file(&self, vault_id: &str) -> AppResult<Option<String>> {
         let indices = self

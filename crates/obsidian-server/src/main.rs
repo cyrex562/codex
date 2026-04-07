@@ -245,6 +245,7 @@ async fn main() -> std::io::Result<()> {
     });
 
     // Load existing vaults and start watching
+    let storage = build_storage_backend(&config.storage).expect("Failed to initialize storage backend");
     let vaults = db.list_vaults().await.expect("Failed to list vaults");
     for vault in vaults {
         info!("Loading vault: {} at {}", vault.name, vault.path);
@@ -275,7 +276,15 @@ async fn main() -> std::io::Result<()> {
         drop(w);
 
         // Index vault
-        match search_index.index_vault(&vault.id, &vault.path) {
+        let index_result = if config.storage.backend.trim().to_ascii_lowercase() == "s3" {
+            match storage.list_markdown_files(&vault.path) {
+                Ok(files) => search_index.index_vault_with_files(&vault.id, files),
+                Err(e) => Err(e),
+            }
+        } else {
+            search_index.index_vault(&vault.id, &vault.path)
+        };
+        match index_result {
             Ok(count) => info!("Indexed {} files in vault {}", count, vault.name),
             Err(e) => error!("Failed to index vault {}: {}", vault.id, e),
         }
@@ -290,7 +299,7 @@ async fn main() -> std::io::Result<()> {
     let app_state = web::Data::new(AppState {
         db,
         search_index,
-        storage: build_storage_backend(&config.storage),
+        storage,
         watcher,
         event_broadcaster: event_tx,
         change_log_retention_days: config.sync.change_log_retention_days,
