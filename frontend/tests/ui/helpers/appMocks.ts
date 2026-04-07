@@ -17,6 +17,14 @@ type MockOptions = {
     fileFrontmatterByVaultId?: Record<string, Record<string, Record<string, unknown>>>;
     plugins?: Array<{ id: string; name: string; description: string; enabled: boolean }>;
     searchResults?: Array<{ path: string; title: string; matches: Array<{ line_number: number; line_text: string; match_start: number; match_end: number }>; score: number }>;
+    /** Bookmarks keyed by vault id */
+    bookmarksByVaultId?: Record<string, Array<{ id: string; path: string; title: string }>>;
+    /** Tags keyed by vault id */
+    tagsByVaultId?: Record<string, Array<{ tag: string; count: number }>>;
+    /** Backlinks keyed by vault id, then by file path */
+    backlinksByVaultId?: Record<string, Array<{ path: string; title: string }>>;
+    /** Generate-outline mock result */
+    outlineResult?: { summary: string; sections: Array<{ line_number: number; level: number; title: string; summary: string }> };
 };
 
 export const defaultProfile: UserProfile = {
@@ -62,6 +70,12 @@ export async function installCommonAppMocks(page: Page, options: MockOptions = {
     const fileFrontmatterByVaultId = options.fileFrontmatterByVaultId ?? {};
     const plugins = options.plugins ?? [];
     const searchResults = options.searchResults ?? [];
+    const bookmarksByVaultId: Record<string, Array<{ id: string; path: string; title: string }>> = {};
+    for (const [vid, bms] of Object.entries(options.bookmarksByVaultId ?? {})) {
+        bookmarksByVaultId[vid] = [...bms];
+    }
+    const tagsByVaultId = options.tagsByVaultId ?? {};
+    const backlinksByVaultId = options.backlinksByVaultId ?? {};
     const uploadSessions = new Map<string, { filename: string; path: string; uploadedBytes: number; totalSize: number }>();
 
     function ensureDirectoryNode(vaultId: string, path: string) {
@@ -552,5 +566,61 @@ export async function installCommonAppMocks(page: Page, options: MockOptions = {
                 window_layout: null,
             }),
         });
+    });
+
+    // ── Bookmarks ──────────────────────────────────────────────────────────────
+    await page.route(/.*\/api\/vaults\/([^/]+)\/bookmarks$/, async (route) => {
+        const vaultId = route.request().url().match(/\/vaults\/([^/]+)\/bookmarks/)![1];
+        const method = route.request().method();
+        if (method === 'GET') {
+            await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(bookmarksByVaultId[vaultId] ?? []) });
+            return;
+        }
+        if (method === 'POST') {
+            const payload = route.request().postDataJSON() as { path: string; title: string };
+            const created = { id: `bm-${Date.now()}`, path: payload.path, title: payload.title };
+            (bookmarksByVaultId[vaultId] ??= []).push(created);
+            await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(created) });
+            return;
+        }
+        await route.fallback();
+    });
+
+    await page.route(/.*\/api\/vaults\/[^/]+\/bookmarks\/[^/]+$/, async (route) => {
+        const url = route.request().url();
+        const m = url.match(/\/vaults\/([^/]+)\/bookmarks\/([^/]+)$/);
+        if (!m) { await route.fallback(); return; }
+        const [, vaultId, bookmarkId] = m;
+        if (route.request().method() === 'DELETE') {
+            bookmarksByVaultId[vaultId] = (bookmarksByVaultId[vaultId] ?? []).filter((b) => b.id !== bookmarkId);
+            await route.fulfill({ status: 204, body: '' });
+            return;
+        }
+        await route.fallback();
+    });
+
+    // ── Tags ───────────────────────────────────────────────────────────────────
+    await page.route(/.*\/api\/vaults\/([^/]+)\/tags$/, async (route) => {
+        const vaultId = route.request().url().match(/\/vaults\/([^/]+)\/tags/)![1];
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(tagsByVaultId[vaultId] ?? []) });
+    });
+
+    // ── Backlinks ──────────────────────────────────────────────────────────────
+    await page.route(/.*\/api\/vaults\/[^/]+\/backlinks.*/, async (route) => {
+        const url = route.request().url();
+        const vaultId = url.match(/\/vaults\/([^/]+)\/backlinks/)![1];
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(backlinksByVaultId[vaultId] ?? []) });
+    });
+
+    // ── AI outline / suggestions ───────────────────────────────────────────────
+    const outlineResult = options.outlineResult ?? {
+        summary: 'Test outline summary',
+        sections: [{ line_number: 1, level: 1, title: 'Section One', summary: 'intro' }],
+    };
+    await page.route(/.*\/api\/vaults\/[^/]+\/generate-outline$/, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(outlineResult) });
+    });
+    await page.route(/.*\/api\/vaults\/[^/]+\/suggest-organization$/, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ suggestions: ['Move to subfolder', 'Add tags'] }) });
     });
 }
