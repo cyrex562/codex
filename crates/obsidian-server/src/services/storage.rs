@@ -264,6 +264,11 @@ impl S3StorageBackend {
         if config.path_style {
             builder = builder.with_virtual_hosted_style_request(false);
         }
+        // Allow plain HTTP endpoints (SeaweedFS, MinIO, local dev, etc.).
+        // object_store rejects http:// URLs by default unless this flag is set.
+        if config.endpoint.as_deref().map(|e| e.starts_with("http://")).unwrap_or(false) {
+            builder = builder.with_allow_http(true);
+        }
 
         let store = builder
             .build()
