@@ -69,7 +69,7 @@ fn main() -> iced::Result {
 }
 
 #[derive(Debug, Clone)]
-enum Message {
+pub(crate) enum Message {
     LoadLocalSessionPressed,
     LocalSessionLoaded(Result<Option<state::PersistedSessionState>, String>),
     WindowEventOccurred(Event),
@@ -269,7 +269,7 @@ enum Message {
     ShortcutsHelpClosed,
 }
 
-fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
+pub(crate) fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
     match message {
         Message::LoadLocalSessionPressed => Task::perform(
             async move { load_persisted_session() },
@@ -3259,4 +3259,594 @@ fn parse_outgoing_links(content: &str, current_path: &str) -> Vec<String> {
         .into_iter()
         .filter(|link| link.to_ascii_lowercase() != current)
         .collect()
+}
+
+// ── TEA message-dispatch tests ────────────────────────────────────────────────
+//
+// These tests call `update()` directly with crafted Messages and assert the
+// resulting state mutations.  Only messages that do pure state mutations (no
+// real HTTP calls) are exercised here — async tasks are returned but never
+// awaited, so the test merely verifies the state side-effect.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use obsidian_types::EditorMode as PreferenceEditorMode;
+
+    fn fresh() -> DesktopApp {
+        DesktopApp::default()
+    }
+
+    // ── login-form field messages ─────────────────────────────────────────────
+
+    #[test]
+    fn base_url_changed_updates_state() {
+        let mut s = fresh();
+        update(&mut s, Message::BaseUrlChanged("http://localhost:9000".into()));
+        assert_eq!(s.base_url, "http://localhost:9000");
+    }
+
+    #[test]
+    fn username_changed_updates_state() {
+        let mut s = fresh();
+        update(&mut s, Message::UsernameChanged("alice".into()));
+        assert_eq!(s.username, "alice");
+    }
+
+    #[test]
+    fn password_changed_updates_state() {
+        let mut s = fresh();
+        update(&mut s, Message::PasswordChanged("s3cr3t".into()));
+        assert_eq!(s.password, "s3cr3t");
+    }
+
+    // ── preferences messages ──────────────────────────────────────────────────
+
+    #[test]
+    fn preferences_closed_hides_panel() {
+        let mut s = fresh();
+        s.preferences_visible = true;
+        update(&mut s, Message::PreferencesClosed);
+        assert!(!s.preferences_visible);
+    }
+
+    #[test]
+    fn preferences_theme_changed() {
+        let mut s = fresh();
+        update(&mut s, Message::PreferencesThemeChanged("dracula".into()));
+        assert_eq!(s.preferences_theme, "dracula");
+    }
+
+    #[test]
+    fn preferences_font_size_changed() {
+        let mut s = fresh();
+        update(&mut s, Message::PreferencesFontSizeChanged("18".into()));
+        assert_eq!(s.preferences_font_size_input, "18");
+    }
+
+    #[test]
+    fn preferences_editor_mode_raw_sets_editor_mode() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::PreferencesEditorModeSelected(PreferenceEditorMode::Raw),
+        );
+        assert_eq!(s.editor_mode, EditorMode::Raw);
+    }
+
+    #[test]
+    fn preferences_editor_mode_fully_rendered_sets_preview() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::PreferencesEditorModeSelected(PreferenceEditorMode::FullyRendered),
+        );
+        assert_eq!(s.editor_mode, EditorMode::Preview);
+    }
+
+    #[test]
+    fn preferences_editor_mode_side_by_side_sets_formatted() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::PreferencesEditorModeSelected(PreferenceEditorMode::SideBySide),
+        );
+        assert_eq!(s.editor_mode, EditorMode::Formatted);
+    }
+
+    // ── vaults messages ───────────────────────────────────────────────────────
+
+    #[test]
+    fn vaults_loaded_ok_populates_vault_list() {
+        let mut s = fresh();
+        let vaults = vec![
+            obsidian_types::Vault {
+                id: "v1".into(),
+                name: "Notes".into(),
+                path: "/vaults/notes".into(),
+                path_exists: true,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+            obsidian_types::Vault {
+                id: "v2".into(),
+                name: "Work".into(),
+                path: "/vaults/work".into(),
+                path_exists: true,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+        ];
+        update(&mut s, Message::VaultsLoaded(Ok(vaults)));
+        assert_eq!(s.vaults.len(), 2);
+        // First vault is auto-selected when none was previously selected.
+        assert_eq!(s.selected_vault_id.as_deref(), Some("v1"));
+    }
+
+    #[test]
+    fn vaults_loaded_err_sets_status() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::VaultsLoaded(Err("network error".into())),
+        );
+        assert_eq!(s.status, "network error");
+    }
+
+    // ── vault selection messages ──────────────────────────────────────────────
+
+    #[test]
+    fn vault_selected_clears_per_vault_state() {
+        let mut s = fresh();
+        s.open_tabs.push(state::OpenTab {
+            path: "old.md".into(),
+            title: "old.md".into(),
+            content: String::new(),
+            frontmatter_raw: String::new(),
+            frontmatter_summary: String::new(),
+            is_dirty: false,
+            modified: None,
+            file_kind: FileKind::Markdown,
+            media_source_url: String::new(),
+            media_image: None,
+        });
+        s.recent_files.push("old.md".into());
+        s.search_results.push(obsidian_types::SearchResult {
+            path: "a.md".into(),
+            title: "a".into(),
+            matches: vec![],
+            score: 1.0,
+        });
+
+        update(&mut s, Message::VaultSelected("vault-2".into()));
+
+        assert_eq!(s.selected_vault_id.as_deref(), Some("vault-2"));
+        assert!(s.open_tabs.is_empty(), "open tabs should be cleared");
+        assert!(s.recent_files.is_empty(), "recent files should be cleared");
+        assert!(s.search_results.is_empty(), "search results should be cleared");
+    }
+
+    // ── search messages ───────────────────────────────────────────────────────
+
+    #[test]
+    fn search_query_changed_updates_state() {
+        let mut s = fresh();
+        update(&mut s, Message::SearchQueryChanged("rust".into()));
+        assert_eq!(s.search_query, "rust");
+    }
+
+    #[test]
+    fn quick_switcher_query_changed_updates_state() {
+        let mut s = fresh();
+        update(&mut s, Message::QuickSwitcherQueryChanged("todo".into()));
+        assert_eq!(s.quick_switcher_query, "todo");
+    }
+
+    // ── editor / file path messages ───────────────────────────────────────────
+
+    #[test]
+    fn note_path_changed_updates_state() {
+        let mut s = fresh();
+        update(&mut s, Message::NotePathChanged("vault/new.md".into()));
+        assert_eq!(s.note_path, "vault/new.md");
+    }
+
+    #[test]
+    fn editor_mode_selected_raw() {
+        let mut s = fresh();
+        update(&mut s, Message::EditorModeSelected(EditorMode::Raw));
+        assert_eq!(s.editor_mode, EditorMode::Raw);
+    }
+
+    #[test]
+    fn editor_mode_selected_preview() {
+        let mut s = fresh();
+        update(&mut s, Message::EditorModeSelected(EditorMode::Preview));
+        assert_eq!(s.editor_mode, EditorMode::Preview);
+    }
+
+    #[test]
+    fn editor_changed_marks_dirty_and_updates_content() {
+        let mut s = fresh();
+        update(&mut s, Message::EditorChanged("# Hello".into()));
+        assert_eq!(s.note_content, "# Hello");
+        assert!(s.note_is_dirty);
+    }
+
+    #[test]
+    fn frontmatter_changed_updates_raw() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::FrontmatterChanged(r#"{"tags":["rust"]}"#.into()),
+        );
+        assert_eq!(s.note_frontmatter_raw, r#"{"tags":["rust"]}"#);
+        assert!(s.note_is_dirty);
+    }
+
+    // ── file operations ───────────────────────────────────────────────────────
+
+    #[test]
+    fn new_file_path_changed_updates_state() {
+        let mut s = fresh();
+        update(&mut s, Message::NewFilePathChanged("notes/new.md".into()));
+        assert_eq!(s.new_file_path, "notes/new.md");
+    }
+
+    #[test]
+    fn new_folder_path_changed_updates_state() {
+        let mut s = fresh();
+        update(&mut s, Message::NewFolderPathChanged("notes/sub".into()));
+        assert_eq!(s.new_folder_path, "notes/sub");
+    }
+
+    #[test]
+    fn rename_from_path_changed_updates_state() {
+        let mut s = fresh();
+        update(&mut s, Message::RenameFromPathChanged("old.md".into()));
+        assert_eq!(s.rename_from_path, "old.md");
+    }
+
+    #[test]
+    fn rename_to_path_changed_updates_state() {
+        let mut s = fresh();
+        update(&mut s, Message::RenameToPathChanged("new.md".into()));
+        assert_eq!(s.rename_to_path, "new.md");
+    }
+
+    #[test]
+    fn arm_delete_sets_confirmation_armed() {
+        let mut s = fresh();
+        s.delete_target_path = "gone.md".into();
+        update(&mut s, Message::ArmDeletePressed);
+        assert!(s.delete_confirmation_armed);
+    }
+
+    #[test]
+    fn delete_canceled_clears_arm_flag() {
+        let mut s = fresh();
+        s.delete_confirmation_armed = true;
+        update(&mut s, Message::DeleteCanceled);
+        assert!(!s.delete_confirmation_armed);
+    }
+
+    // ── tab management ────────────────────────────────────────────────────────
+
+    #[test]
+    fn tab_closed_removes_tab() {
+        let mut s = fresh();
+        s.open_tabs.push(state::OpenTab {
+            path: "a.md".into(),
+            title: "a.md".into(),
+            content: String::new(),
+            frontmatter_raw: String::new(),
+            frontmatter_summary: String::new(),
+            is_dirty: false,
+            modified: None,
+            file_kind: FileKind::Markdown,
+            media_source_url: String::new(),
+            media_image: None,
+        });
+        s.open_tabs.push(state::OpenTab {
+            path: "b.md".into(),
+            title: "b.md".into(),
+            content: String::new(),
+            frontmatter_raw: String::new(),
+            frontmatter_summary: String::new(),
+            is_dirty: false,
+            modified: None,
+            file_kind: FileKind::Markdown,
+            media_source_url: String::new(),
+            media_image: None,
+        });
+        update(&mut s, Message::TabClosed("a.md".into()));
+        assert_eq!(s.open_tabs.len(), 1);
+        assert_eq!(s.open_tabs[0].path, "b.md");
+    }
+
+    // ── bookmark messages ─────────────────────────────────────────────────────
+
+    #[test]
+    fn toggle_bookmark_adds_when_absent() {
+        let mut s = fresh();
+        s.note_path = "notes/todo.md".into();
+        update(&mut s, Message::ToggleBookmarkPressed);
+        assert!(s.bookmarks.contains(&"notes/todo.md".to_string()));
+    }
+
+    #[test]
+    fn toggle_bookmark_removes_when_present() {
+        let mut s = fresh();
+        s.note_path = "notes/todo.md".into();
+        s.bookmarks.push("notes/todo.md".into());
+        update(&mut s, Message::ToggleBookmarkPressed);
+        assert!(!s.bookmarks.contains(&"notes/todo.md".to_string()));
+    }
+
+    #[test]
+    fn toggle_bookmark_no_path_sets_status() {
+        let mut s = fresh();
+        s.note_path = "  ".into();
+        update(&mut s, Message::ToggleBookmarkPressed);
+        assert!(s.status.contains("Load a note"));
+    }
+
+    // ── shortcuts help overlay ────────────────────────────────────────────────
+
+    #[test]
+    fn shortcuts_help_toggled_shows_panel() {
+        let mut s = fresh();
+        assert!(!s.shortcuts_help_visible);
+        update(&mut s, Message::ShortcutsHelpToggled);
+        assert!(s.shortcuts_help_visible);
+    }
+
+    #[test]
+    fn shortcuts_help_toggled_twice_hides_panel() {
+        let mut s = fresh();
+        update(&mut s, Message::ShortcutsHelpToggled);
+        update(&mut s, Message::ShortcutsHelpToggled);
+        assert!(!s.shortcuts_help_visible);
+    }
+
+    #[test]
+    fn shortcuts_help_closed_hides_panel() {
+        let mut s = fresh();
+        s.shortcuts_help_visible = true;
+        update(&mut s, Message::ShortcutsHelpClosed);
+        assert!(!s.shortcuts_help_visible);
+    }
+
+    // ── feature flags ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn feature_flag_ml_changed_to_false() {
+        let mut s = fresh();
+        s.feature_flags.ml_features = true;
+        update(&mut s, Message::FeatureFlagMlChanged(false));
+        assert!(!s.feature_flags.ml_features);
+    }
+
+    #[test]
+    fn feature_flag_media_changed_to_false() {
+        let mut s = fresh();
+        s.feature_flags.media_preview = true;
+        update(&mut s, Message::FeatureFlagMediaChanged(false));
+        assert!(!s.feature_flags.media_preview);
+    }
+
+    #[test]
+    fn feature_flag_sync_changed_to_true() {
+        let mut s = fresh();
+        s.feature_flags.event_sync = false;
+        update(&mut s, Message::FeatureFlagSyncChanged(true));
+        assert!(s.feature_flags.event_sync);
+    }
+
+    // ── tree sort ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn toggle_tree_sort_flips_direction() {
+        let mut s = fresh();
+        let original = s.tree_sort_ascending;
+        update(&mut s, Message::ToggleTreeSort);
+        assert_eq!(s.tree_sort_ascending, !original);
+    }
+
+    // ── conflict messages ─────────────────────────────────────────────────────
+
+    #[test]
+    fn conflict_dismissed_clears_conflict_flag() {
+        let mut s = fresh();
+        s.conflict_active = true;
+        s.conflict_message = "Conflict!".into();
+        update(&mut s, Message::ConflictDismissed);
+        assert!(!s.conflict_active);
+        assert!(s.conflict_message.is_empty());
+    }
+
+    // ── split pane ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn toggle_split_pane_enables_split_view() {
+        let mut s = fresh();
+        assert!(!s.split_pane_enabled);
+        update(&mut s, Message::ToggleSplitPane);
+        assert!(s.split_pane_enabled);
+    }
+
+    #[test]
+    fn toggle_split_pane_twice_disables_split_view() {
+        let mut s = fresh();
+        update(&mut s, Message::ToggleSplitPane);
+        update(&mut s, Message::ToggleSplitPane);
+        assert!(!s.split_pane_enabled);
+    }
+
+    // ── sidebar resize ────────────────────────────────────────────────────────
+
+    #[test]
+    fn resize_handle_pressed_sets_resizing_flag() {
+        let mut s = fresh();
+        update(&mut s, Message::ResizeHandlePressed);
+        assert!(s.is_resizing_sidebar);
+    }
+
+    #[test]
+    fn sidebar_resize_drag_updates_width() {
+        let mut s = fresh();
+        s.is_resizing_sidebar = true;
+        update(&mut s, Message::SidebarResizeDrag(320.0));
+        // Handler subtracts 10px layout padding: (320 - 10).clamp(150, 600) = 310
+        assert_eq!(s.sidebar_width, 310.0);
+    }
+
+    // ── backlinks loaded ──────────────────────────────────────────────────────
+
+    #[test]
+    fn backlinks_loaded_ok_populates_paths() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::BacklinksLoaded(Ok(vec!["a.md".into(), "b.md".into()])),
+        );
+        assert_eq!(s.backlink_paths, vec!["a.md", "b.md"]);
+    }
+
+    #[test]
+    fn backlinks_loaded_err_sets_status() {
+        let mut s = fresh();
+        update(&mut s, Message::BacklinksLoaded(Err("timeout".into())));
+        assert_eq!(s.status, "timeout");
+    }
+
+    // ── recent files ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn recent_files_loaded_populates_list() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::RecentFilesLoaded(Ok(vec!["a.md".into(), "b.md".into()])),
+        );
+        assert_eq!(s.recent_files, vec!["a.md", "b.md"]);
+    }
+
+    // ── template messages ─────────────────────────────────────────────────────
+
+    #[test]
+    fn template_path_changed_updates_state() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::TemplatePathChanged("Templates/daily.md".into()),
+        );
+        assert_eq!(s.template_path, "Templates/daily.md");
+    }
+
+    #[test]
+    fn template_mode_replace_selected() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::TemplateModeSelected(TemplateInsertMode::Replace),
+        );
+        assert_eq!(s.template_insert_mode, TemplateInsertMode::Replace);
+    }
+
+    #[test]
+    fn template_mode_append_selected() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::TemplateModeSelected(TemplateInsertMode::Append),
+        );
+        assert_eq!(s.template_insert_mode, TemplateInsertMode::Append);
+    }
+
+    // ── admin panel ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn admin_panel_toggled_opens_panel() {
+        let mut s = fresh();
+        assert!(!s.admin_panel_visible);
+        update(&mut s, Message::AdminPanelToggled);
+        assert!(s.admin_panel_visible);
+    }
+
+    #[test]
+    fn admin_new_username_changed() {
+        let mut s = fresh();
+        update(&mut s, Message::AdminNewUsernameChanged("bob".into()));
+        assert_eq!(s.admin_new_username, "bob");
+    }
+
+    #[test]
+    fn admin_new_password_changed() {
+        let mut s = fresh();
+        update(&mut s, Message::AdminNewPasswordChanged("pass123".into()));
+        assert_eq!(s.admin_new_password, "pass123");
+    }
+
+    #[test]
+    fn admin_new_is_admin_toggled() {
+        let mut s = fresh();
+        assert!(!s.admin_new_is_admin);
+        update(&mut s, Message::AdminNewIsAdminToggled);
+        assert!(s.admin_new_is_admin);
+    }
+
+    // ── deployment mode ───────────────────────────────────────────────────────
+
+    #[test]
+    fn deployment_mode_selected_cloud() {
+        let mut s = fresh();
+        update(&mut s, Message::DeploymentModeSelected(DesktopMode::Cloud));
+        assert_eq!(s.deployment_mode, DesktopMode::Cloud);
+    }
+
+    #[test]
+    fn local_base_url_changed() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::LocalBaseUrlChanged("http://192.168.1.10:8080".into()),
+        );
+        assert_eq!(s.local_base_url, "http://192.168.1.10:8080");
+    }
+
+    // ── import / export fields ────────────────────────────────────────────────
+
+    #[test]
+    fn import_local_path_changed() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::ImportLocalPathChanged("/home/user/import.md".into()),
+        );
+        assert_eq!(s.import_local_path, "/home/user/import.md");
+    }
+
+    #[test]
+    fn export_local_path_changed() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::ExportLocalPathChanged("/home/user/export.md".into()),
+        );
+        assert_eq!(s.export_local_path, "/home/user/export.md");
+    }
+
+    // ── outline section selected ──────────────────────────────────────────────
+
+    #[test]
+    fn outline_section_selected_updates_status() {
+        let mut s = fresh();
+        update(
+            &mut s,
+            Message::OutlineSectionSelected(5, "Introduction".into()),
+        );
+        assert!(s.status.contains("line 5"));
+        assert!(s.status.contains("Introduction"));
+    }
 }

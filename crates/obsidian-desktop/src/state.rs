@@ -1250,3 +1250,493 @@ fn session_state_file_path() -> Result<PathBuf, String> {
 
     Ok(base_dir.join("obsidian-host").join("desktop-session.json"))
 }
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use obsidian_types::FileNode;
+
+    // ── file_kind_from_path ───────────────────────────────────────────────────
+
+    #[test]
+    fn file_kind_markdown() {
+        assert_eq!(file_kind_from_path("notes/hello.md"), FileKind::Markdown);
+    }
+
+    #[test]
+    fn file_kind_image_variants() {
+        for ext in &["png", "jpg", "jpeg", "gif", "svg", "webp"] {
+            assert_eq!(
+                file_kind_from_path(&format!("img/photo.{ext}")),
+                FileKind::Image,
+                "expected Image for .{ext}"
+            );
+        }
+    }
+
+    #[test]
+    fn file_kind_audio_variants() {
+        for ext in &["mp3", "wav", "ogg"] {
+            assert_eq!(
+                file_kind_from_path(&format!("sound.{ext}")),
+                FileKind::Audio,
+                "expected Audio for .{ext}"
+            );
+        }
+    }
+
+    #[test]
+    fn file_kind_video_variants() {
+        for ext in &["mp4", "webm", "mov", "ogv"] {
+            assert_eq!(
+                file_kind_from_path(&format!("clip.{ext}")),
+                FileKind::Video,
+                "expected Video for .{ext}"
+            );
+        }
+    }
+
+    #[test]
+    fn file_kind_pdf() {
+        assert_eq!(file_kind_from_path("document.pdf"), FileKind::Pdf);
+    }
+
+    #[test]
+    fn file_kind_text_rs() {
+        assert_eq!(file_kind_from_path("src/main.rs"), FileKind::Text);
+    }
+
+    #[test]
+    fn file_kind_unknown_is_other() {
+        assert_eq!(file_kind_from_path("binary.exe"), FileKind::Other);
+    }
+
+    #[test]
+    fn file_kind_no_extension_is_other() {
+        assert_eq!(file_kind_from_path("Makefile"), FileKind::Other);
+    }
+
+    // ── file_kind_label ───────────────────────────────────────────────────────
+
+    #[test]
+    fn file_kind_label_values() {
+        assert_eq!(file_kind_label(FileKind::Markdown), "Markdown");
+        assert_eq!(file_kind_label(FileKind::Image), "Image");
+        assert_eq!(file_kind_label(FileKind::Pdf), "PDF");
+        assert_eq!(file_kind_label(FileKind::Text), "Text");
+        assert_eq!(file_kind_label(FileKind::Audio), "Audio");
+        assert_eq!(file_kind_label(FileKind::Video), "Video");
+        assert_eq!(file_kind_label(FileKind::Other), "Binary");
+    }
+
+    // ── is_media_file_kind ────────────────────────────────────────────────────
+
+    #[test]
+    fn is_media_for_non_text_kinds() {
+        assert!(is_media_file_kind(FileKind::Image));
+        assert!(is_media_file_kind(FileKind::Pdf));
+        assert!(is_media_file_kind(FileKind::Audio));
+        assert!(is_media_file_kind(FileKind::Video));
+        assert!(is_media_file_kind(FileKind::Other));
+    }
+
+    #[test]
+    fn is_not_media_for_markdown_and_text() {
+        assert!(!is_media_file_kind(FileKind::Markdown));
+        assert!(!is_media_file_kind(FileKind::Text));
+    }
+
+    // ── tab_title_from_path ───────────────────────────────────────────────────
+
+    #[test]
+    fn tab_title_extracts_filename() {
+        assert_eq!(tab_title_from_path("vault/notes/hello.md"), "hello.md");
+    }
+
+    #[test]
+    fn tab_title_no_slash_returns_whole_path() {
+        assert_eq!(tab_title_from_path("readme.md"), "readme.md");
+    }
+
+    // ── apply_toolbar_action ──────────────────────────────────────────────────
+
+    #[test]
+    fn toolbar_bold_appends_to_existing_content() {
+        let result = apply_toolbar_action("Some text", ToolbarAction::Bold);
+        assert_eq!(result, "Some text\n\n**bold text**");
+    }
+
+    #[test]
+    fn toolbar_italic_on_empty_returns_snippet_only() {
+        let result = apply_toolbar_action("", ToolbarAction::Italic);
+        assert_eq!(result, "*italic text*");
+    }
+
+    #[test]
+    fn toolbar_heading_appends() {
+        let result = apply_toolbar_action("intro", ToolbarAction::Heading);
+        assert_eq!(result, "intro\n\n# New heading");
+    }
+
+    #[test]
+    fn toolbar_code_fence_appends() {
+        let result = apply_toolbar_action("text", ToolbarAction::CodeFence);
+        assert_eq!(result, "text\n\n```\ncode\n```");
+    }
+
+    #[test]
+    fn toolbar_quote_on_whitespace_only_returns_snippet() {
+        let result = apply_toolbar_action("   ", ToolbarAction::Quote);
+        assert_eq!(result, "> quote");
+    }
+
+    #[test]
+    fn toolbar_bullet_list() {
+        let result = apply_toolbar_action("items:", ToolbarAction::BulletList);
+        assert_eq!(result, "items:\n\n- list item");
+    }
+
+    // ── parse_frontmatter ─────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_frontmatter_empty_returns_none() {
+        assert_eq!(parse_frontmatter(""), Ok(None));
+        assert_eq!(parse_frontmatter("   \n  "), Ok(None));
+    }
+
+    #[test]
+    fn parse_frontmatter_valid_object() {
+        let result = parse_frontmatter(r#"{"title":"hello","tags":["a","b"]}"#).unwrap();
+        let map = result.unwrap();
+        assert_eq!(map["title"], "hello");
+    }
+
+    #[test]
+    fn parse_frontmatter_rejects_array() {
+        let err = parse_frontmatter(r#"["a","b"]"#).unwrap_err();
+        assert!(err.contains("must be an object"));
+    }
+
+    #[test]
+    fn parse_frontmatter_rejects_invalid_json() {
+        let err = parse_frontmatter("{bad json}").unwrap_err();
+        assert!(err.contains("valid JSON"));
+    }
+
+    // ── summarize_frontmatter_value ───────────────────────────────────────────
+
+    #[test]
+    fn summarize_frontmatter_none_returns_none_string() {
+        assert_eq!(summarize_frontmatter_value(None), "Frontmatter: none");
+    }
+
+    #[test]
+    fn summarize_frontmatter_with_fields() {
+        let val: Value = serde_json::json!({"title": "x", "tags": []});
+        let result = summarize_frontmatter_value(Some(&val));
+        assert!(result.starts_with("Frontmatter fields:"));
+        assert!(result.contains("title"));
+        assert!(result.contains("tags"));
+    }
+
+    #[test]
+    fn summarize_frontmatter_empty_object() {
+        let val: Value = serde_json::json!({});
+        let result = summarize_frontmatter_value(Some(&val));
+        assert_eq!(result, "Frontmatter: present");
+    }
+
+    // ── flatten_tree ──────────────────────────────────────────────────────────
+
+    fn make_node(name: &str, path: &str, is_dir: bool, children: Option<Vec<FileNode>>) -> FileNode {
+        FileNode {
+            name: name.to_string(),
+            path: path.to_string(),
+            is_directory: is_dir,
+            children,
+            size: None,
+            modified: None,
+        }
+    }
+
+    #[test]
+    fn flatten_tree_single_file() {
+        let nodes = vec![make_node("note.md", "note.md", false, None)];
+        let entries = flatten_tree(&nodes, true);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "note.md");
+        assert!(!entries[0].is_directory);
+    }
+
+    #[test]
+    fn flatten_tree_dirs_before_files() {
+        let nodes = vec![
+            make_node("z-file.md", "z-file.md", false, None),
+            make_node("a-dir", "a-dir", true, Some(vec![])),
+        ];
+        let entries = flatten_tree(&nodes, true);
+        assert!(entries[0].is_directory, "directory should come first");
+        assert_eq!(entries[0].path, "a-dir");
+    }
+
+    #[test]
+    fn flatten_tree_ascending_sorts_files_alphabetically() {
+        let nodes = vec![
+            make_node("zebra.md", "zebra.md", false, None),
+            make_node("alpha.md", "alpha.md", false, None),
+        ];
+        let entries = flatten_tree(&nodes, true);
+        assert_eq!(entries[0].path, "alpha.md");
+        assert_eq!(entries[1].path, "zebra.md");
+    }
+
+    #[test]
+    fn flatten_tree_descending_sorts_files_reverse() {
+        let nodes = vec![
+            make_node("alpha.md", "alpha.md", false, None),
+            make_node("zebra.md", "zebra.md", false, None),
+        ];
+        let entries = flatten_tree(&nodes, false);
+        assert_eq!(entries[0].path, "zebra.md");
+        assert_eq!(entries[1].path, "alpha.md");
+    }
+
+    #[test]
+    fn flatten_tree_child_indented() {
+        let child = make_node("child.md", "dir/child.md", false, None);
+        let nodes = vec![make_node("dir", "dir", true, Some(vec![child]))];
+        let entries = flatten_tree(&nodes, true);
+        assert_eq!(entries.len(), 2);
+        assert!(entries[1].display.starts_with("  "), "child should be indented");
+    }
+
+    // ── add_recent_file ───────────────────────────────────────────────────────
+
+    #[test]
+    fn add_recent_file_prepends() {
+        let mut state = DesktopApp::default();
+        add_recent_file(&mut state, "a.md");
+        add_recent_file(&mut state, "b.md");
+        assert_eq!(state.recent_files[0], "b.md");
+        assert_eq!(state.recent_files[1], "a.md");
+    }
+
+    #[test]
+    fn add_recent_file_deduplicates() {
+        let mut state = DesktopApp::default();
+        add_recent_file(&mut state, "a.md");
+        add_recent_file(&mut state, "b.md");
+        add_recent_file(&mut state, "a.md");
+        assert_eq!(state.recent_files.len(), 2);
+        assert_eq!(state.recent_files[0], "a.md");
+    }
+
+    #[test]
+    fn add_recent_file_caps_at_ten() {
+        let mut state = DesktopApp::default();
+        for i in 0..15 {
+            add_recent_file(&mut state, &format!("file{i}.md"));
+        }
+        assert_eq!(state.recent_files.len(), 10);
+    }
+
+    // ── apply_rename_to_state ─────────────────────────────────────────────────
+
+    #[test]
+    fn apply_rename_updates_open_tabs() {
+        let mut state = DesktopApp::default();
+        state.open_tabs.push(crate::state::OpenTab {
+            path: "old/note.md".to_string(),
+            title: "note.md".to_string(),
+            content: String::new(),
+            frontmatter_raw: String::new(),
+            frontmatter_summary: String::new(),
+            is_dirty: false,
+            modified: None,
+            file_kind: FileKind::Markdown,
+            media_source_url: String::new(),
+            media_image: None,
+        });
+        apply_rename_to_state(&mut state, "old/note.md", "new/note.md");
+        assert_eq!(state.open_tabs[0].path, "new/note.md");
+        assert_eq!(state.open_tabs[0].title, "note.md");
+    }
+
+    #[test]
+    fn apply_rename_updates_selected_tree_path() {
+        let mut state = DesktopApp::default();
+        state.selected_tree_path = Some("folder/file.md".to_string());
+        apply_rename_to_state(&mut state, "folder/file.md", "folder/renamed.md");
+        assert_eq!(
+            state.selected_tree_path.as_deref(),
+            Some("folder/renamed.md")
+        );
+    }
+
+    #[test]
+    fn apply_rename_renames_directory_prefix() {
+        let mut state = DesktopApp::default();
+        state.open_tabs.push(crate::state::OpenTab {
+            path: "old-dir/deep/note.md".to_string(),
+            title: "note.md".to_string(),
+            content: String::new(),
+            frontmatter_raw: String::new(),
+            frontmatter_summary: String::new(),
+            is_dirty: false,
+            modified: None,
+            file_kind: FileKind::Markdown,
+            media_source_url: String::new(),
+            media_image: None,
+        });
+        apply_rename_to_state(&mut state, "old-dir", "new-dir");
+        assert_eq!(state.open_tabs[0].path, "new-dir/deep/note.md");
+    }
+
+    // ── apply_delete_to_state ─────────────────────────────────────────────────
+
+    #[test]
+    fn apply_delete_removes_tab() {
+        let mut state = DesktopApp::default();
+        state.open_tabs.push(crate::state::OpenTab {
+            path: "gone.md".to_string(),
+            title: "gone.md".to_string(),
+            content: String::new(),
+            frontmatter_raw: String::new(),
+            frontmatter_summary: String::new(),
+            is_dirty: false,
+            modified: None,
+            file_kind: FileKind::Markdown,
+            media_source_url: String::new(),
+            media_image: None,
+        });
+        apply_delete_to_state(&mut state, "gone.md");
+        assert!(state.open_tabs.is_empty());
+    }
+
+    #[test]
+    fn apply_delete_removes_from_recent_files() {
+        let mut state = DesktopApp::default();
+        state.recent_files = vec!["keep.md".to_string(), "gone.md".to_string()];
+        apply_delete_to_state(&mut state, "gone.md");
+        assert_eq!(state.recent_files, vec!["keep.md"]);
+    }
+
+    #[test]
+    fn apply_delete_clears_selected_path() {
+        let mut state = DesktopApp::default();
+        state.selected_tree_path = Some("gone.md".to_string());
+        apply_delete_to_state(&mut state, "gone.md");
+        assert!(state.selected_tree_path.is_none());
+    }
+
+    #[test]
+    fn apply_delete_directory_removes_children() {
+        let mut state = DesktopApp::default();
+        state.open_tabs.push(crate::state::OpenTab {
+            path: "docs/intro.md".to_string(),
+            title: "intro.md".to_string(),
+            content: String::new(),
+            frontmatter_raw: String::new(),
+            frontmatter_summary: String::new(),
+            is_dirty: false,
+            modified: None,
+            file_kind: FileKind::Markdown,
+            media_source_url: String::new(),
+            media_image: None,
+        });
+        apply_delete_to_state(&mut state, "docs");
+        assert!(state.open_tabs.is_empty());
+    }
+
+    // ── upsert_open_tab ───────────────────────────────────────────────────────
+
+    fn make_tab(path: &str) -> crate::state::OpenTab {
+        crate::state::OpenTab {
+            path: path.to_string(),
+            title: tab_title_from_path(path),
+            content: String::new(),
+            frontmatter_raw: String::new(),
+            frontmatter_summary: String::new(),
+            is_dirty: false,
+            modified: None,
+            file_kind: FileKind::Markdown,
+            media_source_url: String::new(),
+            media_image: None,
+        }
+    }
+
+    #[test]
+    fn upsert_open_tab_adds_new_tab() {
+        let mut state = DesktopApp::default();
+        upsert_open_tab(&mut state, make_tab("a.md"));
+        assert_eq!(state.open_tabs.len(), 1);
+    }
+
+    #[test]
+    fn upsert_open_tab_updates_existing() {
+        let mut state = DesktopApp::default();
+        upsert_open_tab(&mut state, make_tab("a.md"));
+        let mut updated = make_tab("a.md");
+        updated.is_dirty = true;
+        upsert_open_tab(&mut state, updated);
+        assert_eq!(state.open_tabs.len(), 1);
+        assert!(state.open_tabs[0].is_dirty);
+    }
+
+    // ── process_template_content ──────────────────────────────────────────────
+
+    #[test]
+    fn process_template_replaces_title() {
+        let result = process_template_content(
+            "# {{title}}",
+            "vault/My Note.md",
+            "",
+            TemplateInsertMode::Replace,
+        );
+        assert_eq!(result, "# My Note");
+    }
+
+    #[test]
+    fn process_template_append_mode_joins_content() {
+        let result = process_template_content(
+            "## Template section",
+            "note.md",
+            "Existing content",
+            TemplateInsertMode::Append,
+        );
+        assert!(result.starts_with("Existing content"));
+        assert!(result.contains("## Template section"));
+    }
+
+    #[test]
+    fn process_template_append_empty_existing_returns_template_only() {
+        let result = process_template_content(
+            "template body",
+            "note.md",
+            "",
+            TemplateInsertMode::Append,
+        );
+        assert_eq!(result, "template body");
+    }
+
+    #[test]
+    fn process_template_date_placeholder_replaced() {
+        let result = process_template_content("{{date}}", "note.md", "", TemplateInsertMode::Replace);
+        // Should be a YYYY-MM-DD date string, not the literal placeholder
+        assert!(!result.contains("{{date}}"));
+        assert!(result.len() == 10); // "2026-04-07"
+    }
+
+    // ── DiagnosticsState::push_log ────────────────────────────────────────────
+
+    #[test]
+    fn diagnostics_push_log_caps_at_max() {
+        let mut diag = DiagnosticsState::default();
+        for i in 0..210 {
+            diag.push_log(format!("line {i}"));
+        }
+        assert_eq!(diag.log_lines.len(), DiagnosticsState::MAX_LOG_LINES);
+    }
+}
