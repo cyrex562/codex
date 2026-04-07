@@ -78,12 +78,15 @@ allowed_origins = ["http://localhost:5173", "http://localhost:8080"]
 
 [storage]
 # Storage backend: "local" (default) or "s3"
+# Set to "s3" to use SeaweedFS, MinIO, or AWS S3.
 backend = "local"
 
+# S3-compatible storage settings (used when backend = "s3").
+# The example below targets the SeaweedFS test server at obsidian-host-s3.
 # [storage.s3]
-# endpoint = ""
-# bucket = ""
-# region = ""
-# access_key = ""
-# secret_key = ""
-# path_style = true
+# endpoint    = "http://100.77.47.96:8333"
+# bucket      = "obsidian"
+# region      = "us-east-1"
+# access_key  = "obsidian-access-key"
+# secret_key  = "obsidian-secret-key-change-me"
+# path_style  = true   # required for SeaweedFS / MinIO

@@ -1,4 +1,4 @@
-use chrono::{Local, Utc};
+use chrono::Local;
 use iced::futures::lock::Mutex as AsyncMutex;
 use iced::widget::{image, markdown};
 use obsidian_client::ObsidianClient;
@@ -427,6 +427,7 @@ pub(crate) struct OpenTab {
 pub(crate) struct TagPanelEntry {
     pub(crate) tag: String,
     pub(crate) count: usize,
+    #[allow(dead_code)]
     pub(crate) files: Vec<String>,
 }
 

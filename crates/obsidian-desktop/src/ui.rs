@@ -3,7 +3,7 @@ use iced::{ContentFit, Element, Length, Theme};
 use std::collections::BTreeSet;
 
 use crate::state::{
-    file_kind_label, is_media_file_kind, CollapsedSections, DesktopApp, DesktopMode, EditorMode,
+    file_kind_label, is_media_file_kind, DesktopApp, DesktopMode, EditorMode,
     FileKind, TemplateInsertMode, ToolbarAction,
 };
 use crate::Message;

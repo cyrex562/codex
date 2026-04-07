@@ -89,7 +89,15 @@ where
 
         // If AuthMiddleware has already run, prefer per-user bucketing.
         // Prefix keys so IP and user buckets never collide.
-        let (key, max) = if let Some(user_id) = req.extensions().get::<UserId>().cloned() {
+        //
+        // IMPORTANT: extract the UserId into an owned value BEFORE the if-let
+        // so the Ref<Extensions> borrow is dropped at the semicolon.  If we
+        // wrote `if let Some(u) = req.extensions().get::<UserId>().cloned()`
+        // the Ref would live until the end of the whole if-else, causing a
+        // RefCell double-borrow panic when the else branch calls
+        // `req.connection_info()` (which calls extensions_mut internally).
+        let maybe_user_id = req.extensions().get::<UserId>().cloned();
+        let (key, max) = if let Some(user_id) = maybe_user_id {
             (format!("user:{}", user_id.0), self.max_user_requests)
         } else {
             let ip = req
