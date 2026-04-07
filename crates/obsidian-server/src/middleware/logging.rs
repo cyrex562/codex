@@ -1,6 +1,7 @@
+use crate::middleware::request_id::RequestId;
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
-    Error,
+    HttpMessage, Error,
 };
 use std::future::{ready, Ready};
 use std::pin::Pin;
@@ -58,6 +59,13 @@ where
             .unwrap_or("unknown")
             .to_string();
 
+        // Grab the request ID injected by RequestIdMiddleware (if present).
+        let request_id = req
+            .extensions()
+            .get::<RequestId>()
+            .map(|r| r.0.clone())
+            .unwrap_or_default();
+
         let fut = self.service.call(req);
 
         Box::pin(async move {
@@ -75,6 +83,7 @@ where
                     duration_ms = %duration.as_millis(),
                     remote_addr = ?remote_addr,
                     user_agent = %user_agent,
+                    request_id = %request_id,
                     "API request completed"
                 );
             } else if status.is_client_error() || status.is_server_error() {
@@ -86,6 +95,7 @@ where
                     duration_ms = %duration.as_millis(),
                     remote_addr = ?remote_addr,
                     user_agent = %user_agent,
+                    request_id = %request_id,
                     "API request failed"
                 );
             }

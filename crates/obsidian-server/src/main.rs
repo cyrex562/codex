@@ -325,6 +325,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(app_config.clone())
             .wrap(cors)
             .wrap(obsidian_host::middleware::RequestLogging)
+            .wrap(obsidian_host::middleware::RequestIdMiddleware)
             .wrap(obsidian_host::middleware::AuthMiddleware)
             .wrap(obsidian_host::middleware::RateLimitMiddleware)
             .wrap(middleware::Compress::default())

@@ -29,3 +29,26 @@
 [2m2026-04-07T15:12:15.849078Z[0m [32m INFO[0m [2mactix_server::builder[0m[2m:[0m starting 32 workers
 [2m2026-04-07T15:12:15.849110Z[0m [32m INFO[0m [2mactix_server::server[0m[2m:[0m Actix runtime found; starting in Actix runtime
 [2m2026-04-07T15:12:15.849126Z[0m [32m INFO[0m [2mactix_server::server[0m[2m:[0m starting service: "actix-web-service-127.0.0.1:8080", workers: 32, listening on: 127.0.0.1:8080
+[2m2026-04-07T15:22:34.995412Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Logging initialized (format: text)
+[2m2026-04-07T15:22:34.996901Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Starting Obsidian Host server...
+[2m2026-04-07T15:22:34.996932Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Server config: 127.0.0.1:8080
+[2m2026-04-07T15:22:34.996977Z[0m [33m WARN[0m [2mobsidian_host[0m[2m:[0m auth.jwt_secret is empty; generated an ephemeral runtime secret. Set [auth].jwt_secret in config.toml for persistent tokens across restarts.
+[2m2026-04-07T15:22:35.003898Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Database initialized at ./obsidian-host.db
+[2m2026-04-07T15:22:35.004097Z[0m [33m WARN[0m [2mobsidian_host[0m[2m:[0m User bootstrap skipped: Invalid input: No users exist. Set auth.bootstrap_admin_password in config.toml. Configure [auth] bootstrap_admin_username/bootstrap_admin_password in config.toml to create the first admin.
+[2m2026-04-07T15:22:35.004131Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Search index initialized
+[2m2026-04-07T15:22:35.004257Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m File watcher initialized
+[2m2026-04-07T15:22:35.004554Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Starting HTTP server on 127.0.0.1:8080
+[2m2026-04-07T15:22:35.004808Z[0m [32m INFO[0m [2mactix_server::builder[0m[2m:[0m starting 32 workers
+[2m2026-04-07T15:22:35.004844Z[0m [32m INFO[0m [2mactix_server::server[0m[2m:[0m Actix runtime found; starting in Actix runtime
+[2m2026-04-07T15:22:35.004861Z[0m [32m INFO[0m [2mactix_server::server[0m[2m:[0m starting service: "actix-web-service-127.0.0.1:8080", workers: 32, listening on: 127.0.0.1:8080
+[2m2026-04-07T15:22:49.773143Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Logging initialized (format: text)
+[2m2026-04-07T15:22:49.774951Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Starting Obsidian Host server...
+[2m2026-04-07T15:22:49.774983Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Server config: 127.0.0.1:8080
+[2m2026-04-07T15:22:49.775030Z[0m [33m WARN[0m [2mobsidian_host[0m[2m:[0m auth.jwt_secret is empty; generated an ephemeral runtime secret. Set [auth].jwt_secret in config.toml for persistent tokens across restarts.
+[2m2026-04-07T15:22:49.784620Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Database initialized at ./obsidian-host.db
+[2m2026-04-07T15:22:49.785416Z[0m [33m WARN[0m [2mobsidian_host[0m[2m:[0m User bootstrap skipped: Invalid input: No users exist. Set auth.bootstrap_admin_password in config.toml. Configure [auth] bootstrap_admin_username/bootstrap_admin_password in config.toml to create the first admin.
+[2m2026-04-07T15:22:49.785484Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Search index initialized
+[2m2026-04-07T15:22:49.785657Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m File watcher initialized
+[2m2026-04-07T15:22:49.786138Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Starting HTTP server on 127.0.0.1:8080
+[2m2026-04-07T15:22:52.264842Z[0m [32m INFO[0m [2mobsidian_host::middleware::logging[0m[2m:[0m API request completed [3mmethod[0m[2m=[0mGET [3mpath[0m[2m=[0m/api/version [3mquery[0m[2m=[0m [3mstatus[0m[2m=[0m200 [3mduration_ms[0m[2m=[0m0 [3mremote_addr[0m[2m=[0mSome("127.0.0.1:35212") [3muser_agent[0m[2m=[0mPython-urllib/3.14 [3mrequest_id[0m[2m=[0m898e65df-fc56-4724-9617-d4195a257150
+[2m2026-04-07T15:22:52.265879Z[0m [32m INFO[0m [2mobsidian_host::middleware::logging[0m[2m:[0m API request completed [3mmethod[0m[2m=[0mGET [3mpath[0m[2m=[0m/api/version [3mquery[0m[2m=[0m [3mstatus[0m[2m=[0m200 [3mduration_ms[0m[2m=[0m0 [3mremote_addr[0m[2m=[0mSome("127.0.0.1:35214") [3muser_agent[0m[2m=[0mPython-urllib/3.14 [3mrequest_id[0m[2m=[0mmy-trace-abc123
