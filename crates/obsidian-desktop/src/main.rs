@@ -263,6 +263,10 @@ enum Message {
     ResizeHandlePressed,
     /// Cursor x-position while the sidebar resize handle is being dragged.
     SidebarResizeDrag(f32),
+    /// Toggle the Ctrl+? keyboard shortcut help overlay.
+    ShortcutsHelpToggled,
+    /// Close the shortcut help overlay (Escape or ✕ button).
+    ShortcutsHelpClosed,
 }
 
 fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
@@ -2352,6 +2356,16 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+
+        // ── shortcut help overlay ───────────────────────────────────────────
+        Message::ShortcutsHelpToggled => {
+            state.shortcuts_help_visible = !state.shortcuts_help_visible;
+            Task::none()
+        }
+        Message::ShortcutsHelpClosed => {
+            state.shortcuts_help_visible = false;
+            Task::none()
+        }
     }
 }
 
@@ -2400,6 +2414,14 @@ fn handle_window_event(state: &mut DesktopApp, event: Event) -> Task<Message> {
     let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event else {
         return Task::none();
     };
+
+    // Escape closes any open overlay (shortcuts help for now).
+    if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
+        if state.shortcuts_help_visible {
+            return Task::done(Message::ShortcutsHelpClosed);
+        }
+        return Task::none();
+    }
 
     let command = modifiers.control() || modifiers.logo();
     if !command {
@@ -2456,6 +2478,10 @@ fn handle_window_event(state: &mut DesktopApp, event: Event) -> Task<Message> {
                 Task::done(Message::LoadNotePressed),
                 Task::done(Message::LoadTreePressed),
             ])
+        }
+        keyboard::Key::Character("?") => {
+            state.status = "Shortcut: keyboard help".to_string();
+            Task::done(Message::ShortcutsHelpToggled)
         }
         _ => Task::none(),
     }

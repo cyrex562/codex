@@ -202,6 +202,8 @@ pub(crate) struct DesktopApp {
     pub(crate) event_sync_last_timestamp_ms: i64,
     pub(crate) event_sync_stream: Option<SharedWsStream>,
     pub(crate) preferences_visible: bool,
+    /// Whether the Ctrl+? keyboard shortcut help overlay is visible.
+    pub(crate) shortcuts_help_visible: bool,
     pub(crate) preferences_theme: String,
     pub(crate) preferences_editor_mode: PreferenceEditorMode,
     pub(crate) preferences_font_size_input: String,
@@ -329,6 +331,7 @@ impl Default for DesktopApp {
             event_sync_last_timestamp_ms: 0,
             event_sync_stream: None,
             preferences_visible: false,
+            shortcuts_help_visible: false,
             preferences_theme: "dark".to_string(),
             preferences_editor_mode: PreferenceEditorMode::SideBySide,
             preferences_font_size_input: "14".to_string(),

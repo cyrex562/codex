@@ -62,6 +62,8 @@ pub(crate) fn view(state: &DesktopApp) -> Element<'_, Message> {
             } else {
                 Message::ConnectEventsPressed
             }),
+            button(if state.shortcuts_help_visible { "● ?" } else { "?" })
+                .on_press(Message::ShortcutsHelpToggled),
         ]
         .spacing(8);
 
@@ -111,6 +113,12 @@ pub(crate) fn view(state: &DesktopApp) -> Element<'_, Message> {
         container(column![])
     };
 
+    let shortcuts_panel = if state.shortcuts_help_visible {
+        container(view_shortcuts_help()).padding(8)
+    } else {
+        container(column![])
+    };
+
     let resize_handle = mouse_area(
         rule::Rule::vertical(6),
     )
@@ -137,6 +145,7 @@ pub(crate) fn view(state: &DesktopApp) -> Element<'_, Message> {
             import_export_panel,
             admin_panel,
             diagnostics_panel,
+            shortcuts_panel,
             body,
             view_status_footer(state)
         ]
@@ -1615,5 +1624,53 @@ fn view_diagnostics_panel(state: &DesktopApp) -> Element<'_, Message> {
     )
     .padding(10)
     .width(Length::Fill)
+    .into()
+}
+
+/// Keyboard shortcut reference overlay (shown via Ctrl+? or the "?" toolbar button).
+fn view_shortcuts_help<'a>() -> Element<'a, Message> {
+    let shortcuts: &[(&str, &str)] = &[
+        ("Ctrl + S",          "Save note"),
+        ("Ctrl + Shift + S",  "Force save (bypass debounce)"),
+        ("Ctrl + F",          "Search vault"),
+        ("Ctrl + K / Ctrl + P", "Quick switcher"),
+        ("Ctrl + 1",          "Editor mode: raw Markdown"),
+        ("Ctrl + 2",          "Editor mode: formatted"),
+        ("Ctrl + 3",          "Editor mode: preview"),
+        ("Ctrl + E",          "Toggle real-time sync"),
+        ("Ctrl + \\",         "Toggle split pane"),
+        ("Ctrl + R",          "Refresh note & file tree"),
+        ("Ctrl + ?",          "Toggle this help overlay"),
+        ("Escape",            "Close overlay"),
+    ];
+
+    let rows = shortcuts.iter().fold(column![].spacing(4), |col, (key, desc)| {
+        col.push(
+            row![
+                text(*key)
+                    .size(13)
+                    .width(Length::Fixed(220.0)),
+                text(*desc).size(13),
+            ]
+            .spacing(12),
+        )
+    });
+
+    container(
+        column![
+            row![
+                text("Keyboard Shortcuts").size(18).width(Length::Fill),
+                button("✕").on_press(Message::ShortcutsHelpClosed),
+            ]
+            .align_y(iced::Alignment::Center)
+            .spacing(8),
+            rule::Rule::horizontal(6),
+            rows,
+        ]
+        .spacing(10)
+        .padding(8),
+    )
+    .padding(12)
+    .width(Length::Fixed(520.0))
     .into()
 }
