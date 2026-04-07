@@ -281,6 +281,11 @@ async fn main() -> std::io::Result<()> {
         }
     }
 
+    // Create shutdown broadcast channel. Sending on this notifies all
+    // WebSocket sessions to close with a proper Close frame before the
+    // process exits.
+    let (shutdown_tx, _) = broadcast::channel::<()>(1);
+
     // Create app state
     let app_state = web::Data::new(AppState {
         db,
@@ -290,6 +295,7 @@ async fn main() -> std::io::Result<()> {
         event_broadcaster: event_tx,
         change_log_retention_days: config.sync.change_log_retention_days,
         ml_undo_store: Arc::new(Mutex::new(HashMap::new())),
+        shutdown_tx: shutdown_tx.clone(),
     });
     let app_config = web::Data::new(config.clone());
 
@@ -300,7 +306,7 @@ async fn main() -> std::io::Result<()> {
     // Start HTTP server
     info!("Starting HTTP server on {}:{}", server_host, server_port);
 
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         let mut cors = Cors::default()
             .allow_any_header()
             .allow_any_method()
@@ -343,7 +349,49 @@ async fn main() -> std::io::Result<()> {
             .configure(obsidian_host::routes::invitations::configure)
             .configure(obsidian_host::routes::oidc::configure)
     })
+    // Give in-flight HTTP requests and WS close handshakes 10 s to finish.
+    .shutdown_timeout(10)
     .bind((server_host.as_str(), server_port))?
-    .run()
-    .await
+    .run();
+
+    // Obtain a handle before consuming the Server future.
+    let server_handle = server.handle();
+
+    // Spawn signal listener. On SIGTERM or Ctrl+C:
+    //  1. Broadcast shutdown to all WebSocket sessions so they send a Close frame.
+    //  2. Give sessions a short window to complete the handshake.
+    //  3. Ask actix-web to stop accepting new requests and drain existing ones.
+    tokio::spawn(async move {
+        wait_for_shutdown_signal().await;
+        info!("Shutdown signal received — notifying WebSocket clients and draining requests");
+
+        // Wake all WS tasks. Errors are expected when there are no subscribers.
+        let _ = shutdown_tx.send(());
+
+        // Allow WS close frames to be sent before the server stops.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        // graceful=true: wait for shutdown_timeout before forcing exit.
+        server_handle.stop(true).await;
+    });
+
+    server.await
+}
+
+/// Waits for SIGTERM (Unix) or Ctrl+C (all platforms).
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate())
+            .expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = sigterm.recv() => {}
+            _ = tokio::signal::ctrl_c() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }

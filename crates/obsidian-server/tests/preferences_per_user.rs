@@ -49,6 +49,7 @@ async fn preferences_are_scoped_per_authenticated_user() {
         event_broadcaster: event_tx,
         change_log_retention_days: 7,
         ml_undo_store: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+    shutdown_tx: tokio::sync::broadcast::channel::<()>(1).0,
     });
 
     let mut config = AppConfig::default();

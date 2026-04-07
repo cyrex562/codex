@@ -49,6 +49,7 @@ async fn verify_etag_optimistic_locking_and_change_log() {
         ml_undo_store: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
+    shutdown_tx: tokio::sync::broadcast::channel::<()>(1).0,
     });
 
     let mut config = AppConfig::default();

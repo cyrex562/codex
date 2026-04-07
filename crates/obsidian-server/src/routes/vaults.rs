@@ -23,6 +23,9 @@ pub struct AppState {
     pub event_broadcaster: broadcast::Sender<FileChangeEvent>,
     pub change_log_retention_days: u64,
     pub ml_undo_store: Arc<Mutex<HashMap<String, MlUndoReceipt>>>,
+    /// Broadcast a `()` on this channel to tell all WebSocket sessions to
+    /// send a Close frame and exit cleanly before the server stops.
+    pub shutdown_tx: broadcast::Sender<()>,
 }
 
 fn require_authenticated_user(req: &HttpRequest) -> AppResult<AuthenticatedUser> {

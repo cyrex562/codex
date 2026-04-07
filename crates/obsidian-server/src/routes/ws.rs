@@ -15,6 +15,7 @@ async fn websocket(
     let (response, mut session, mut msg_stream) = actix_ws::handle(&req, stream)?;
 
     let mut event_rx = state.event_broadcaster.subscribe();
+    let mut shutdown_rx = state.shutdown_tx.subscribe();
     let auth_enabled = config.auth.enabled;
     let current_user = req.extensions().get::<AuthenticatedUser>().cloned();
 
@@ -79,11 +80,23 @@ async fn websocket(
                     }
                 }
 
+                // Server is shutting down — send a Close frame so the client
+                // knows to reconnect later rather than treating it as an error.
+                _ = shutdown_rx.recv() => {
+                    let _ = session.close(Some(actix_ws::CloseReason {
+                        code: actix_ws::CloseCode::Away,
+                        description: Some("server shutting down".to_string()),
+                    })).await;
+                    return; // session already consumed; skip the close() below
+                }
+
                 else => break,
             }
         }
 
-        let _ = session.close(None).await;
+        // Best-effort close for all non-shutdown exit paths.
+        // Ignored if the session was already dropped by the client disconnect.
+        drop(session);
     });
 
     Ok(response)
