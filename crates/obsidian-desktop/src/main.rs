@@ -247,6 +247,18 @@ enum Message {
     FeatureFlagMediaChanged(bool),
     FeatureFlagSyncChanged(bool),
     CopyDiagnosticsPressed,
+    /// Tree drag-and-drop: mouse pressed on entry.
+    TreeDragStarted(String),
+    /// Tree drag-and-drop: cursor entered an entry while dragging.
+    TreeDragHover(String),
+    /// Tree drag-and-drop: cursor left an entry.
+    TreeDragLeft,
+    /// Tree drag-and-drop: mouse released over `path`; if drag_source differs, perform move.
+    TreeDragReleased(String),
+    /// Tree drag-and-drop: mouse released outside any entry — cancel drag.
+    DragCanceled,
+    /// Result of a drag-and-drop file move via the API.
+    FileMoved(Result<String, String>),
 }
 
 fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
@@ -2219,11 +2231,123 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
             state.status = "Diagnostics report copied to clipboard".to_string();
             iced::clipboard::write(report)
         }
+
+        // ── drag-and-drop file tree ─────────────────────────────────────────
+        Message::TreeDragStarted(path) => {
+            state.drag_source = Some(path);
+            state.drag_target = None;
+            Task::none()
+        }
+        Message::TreeDragHover(path) => {
+            if state.drag_source.is_some() {
+                state.drag_target = Some(path);
+            }
+            Task::none()
+        }
+        Message::TreeDragLeft => {
+            // Only clear if still hovering the same path; keep last target
+            // for drop detection until another entry is entered.
+            Task::none()
+        }
+        Message::DragCanceled => {
+            state.drag_source = None;
+            state.drag_target = None;
+            Task::none()
+        }
+        Message::TreeDragReleased(released_on) => {
+            let source = match state.drag_source.take() {
+                Some(s) => s,
+                None => return Task::none(),
+            };
+            state.drag_target = None;
+
+            // Same entry → treat as a normal click/select.
+            if source == released_on {
+                return Task::done(Message::TreeEntrySelected(released_on));
+            }
+
+            // Different entries → compute destination path.
+            let vault_id = match state.selected_vault_id.clone() {
+                Some(id) => id,
+                None => {
+                    state.status = "No vault selected for move".to_string();
+                    return Task::none();
+                }
+            };
+
+            let source_name = std::path::Path::new(&source)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| source.clone());
+
+            // Determine if released_on is a directory by looking it up in tree_entries.
+            let target_is_dir = state
+                .tree_entries
+                .iter()
+                .find(|e| e.path == released_on)
+                .map(|e| e.is_directory)
+                .unwrap_or(false);
+
+            let dest = if target_is_dir {
+                format!("{}/{}", released_on.trim_end_matches('/'), source_name)
+            } else {
+                let parent = std::path::Path::new(&released_on)
+                    .parent()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if parent.is_empty() {
+                    source_name
+                } else {
+                    format!("{parent}/{source_name}")
+                }
+            };
+
+            if dest == source {
+                state.status = "No move needed — same path".to_string();
+                return Task::none();
+            }
+
+            state.status = format!("Moving {source} → {dest}…");
+            let client = state.client.clone().unwrap();
+            Task::perform(
+                async move {
+                    client
+                        .rename_file(&vault_id, &source, &dest, "rename")
+                        .await
+                        .map(|r| format!("Moved to {}", r.new_path))
+                        .map_err(|e| e.to_string())
+                },
+                Message::FileMoved,
+            )
+        }
+        Message::FileMoved(result) => {
+            match result {
+                Ok(msg) => {
+                    state.status = msg;
+                    Task::done(Message::LoadTreePressed)
+                }
+                Err(e) => {
+                    state.status = format!("Move failed: {e}");
+                    Task::none()
+                }
+            }
+        }
     }
 }
 
 fn subscription(_state: &DesktopApp) -> Subscription<Message> {
-    event::listen().map(Message::WindowEventOccurred)
+    use iced::mouse;
+    // Keyboard + window events (existing).
+    let window_events = event::listen().map(Message::WindowEventOccurred);
+    // Cancel any in-progress drag when the mouse button is released anywhere.
+    let drag_cancel = event::listen_with(|ev, _status, _id| {
+        if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = ev {
+            Some(Message::DragCanceled)
+        } else {
+            None
+        }
+    });
+    Subscription::batch([window_events, drag_cancel])
 }
 
 fn restore_next_session_tab(state: &mut DesktopApp) -> Task<Message> {

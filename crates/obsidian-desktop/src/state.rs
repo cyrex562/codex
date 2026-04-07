@@ -237,6 +237,10 @@ pub(crate) struct DesktopApp {
     pub(crate) selected_tree_path: Option<String>,
     pub(crate) open_tabs: Vec<OpenTab>,
     pub(crate) active_tab_path: Option<String>,
+    /// Path of the tree entry currently being dragged (set on mouse-press).
+    pub(crate) drag_source: Option<String>,
+    /// Path of the tree entry the cursor is hovering during a drag.
+    pub(crate) drag_target: Option<String>,
 
     /// When true, the editor workspace shows two side-by-side panes.
     pub(crate) split_pane_enabled: bool,
@@ -353,6 +357,8 @@ impl Default for DesktopApp {
             selected_tree_path: None,
             open_tabs: Vec::new(),
             active_tab_path: None,
+            drag_source: None,
+            drag_target: None,
             split_pane_enabled: false,
             split_pane_active_tab: None,
             note_path: String::new(),

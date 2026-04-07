@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, image, markdown, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, image, markdown, mouse_area, row, scrollable, text, text_input};
 use iced::{ContentFit, Element, Length, Theme};
 use std::collections::BTreeSet;
 
@@ -191,7 +191,15 @@ fn view_sidebar(state: &DesktopApp) -> Element<'_, Message> {
         scrollable(state.tree_entries.iter().fold(
             column![tree_header].spacing(4),
             |col, entry| {
-                let prefix = if state.selected_tree_path.as_deref() == Some(entry.path.as_str()) {
+                let is_drag_source = state.drag_source.as_deref() == Some(entry.path.as_str());
+                let is_drag_target = state.drag_source.is_some()
+                    && state.drag_target.as_deref() == Some(entry.path.as_str());
+
+                let prefix = if is_drag_source {
+                    "✊ "
+                } else if is_drag_target {
+                    "📂 "
+                } else if state.selected_tree_path.as_deref() == Some(entry.path.as_str()) {
                     "• "
                 } else {
                     ""
@@ -203,11 +211,17 @@ fn view_sidebar(state: &DesktopApp) -> Element<'_, Message> {
                     format!("{prefix}📄 {}", entry.display)
                 };
 
-                col.push(
+                let path = entry.path.clone();
+                let row_widget = mouse_area(
                     button(text(label))
-                        .width(Length::Fill)
-                        .on_press(Message::TreeEntrySelected(entry.path.clone())),
+                        .width(Length::Fill),
                 )
+                .on_press(Message::TreeDragStarted(path.clone()))
+                .on_enter(Message::TreeDragHover(path.clone()))
+                .on_exit(Message::TreeDragLeft)
+                .on_release(Message::TreeDragReleased(path));
+
+                col.push(row_widget)
             },
         ))
         .height(Length::Fill)
