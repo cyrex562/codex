@@ -30,7 +30,9 @@ test.describe('Frontmatter metadata editor', () => {
         await page.getByText('project_alpha.md').click();
 
         await expect(page.getByText('Frontmatter')).toBeVisible();
-        await expect(page.getByText('status:')).toBeVisible();
+        // Frontmatter keys are rendered as v-text-field values (not plain text nodes).
+        // Confirm the "status" key input exists in the form view.
+        await expect(page.locator('.v-expansion-panel-text input[value="status"]')).toBeVisible();
 
         const firstFrontmatterInput = page.locator('.v-expansion-panel-text input').first();
         await firstFrontmatterInput.fill('done');

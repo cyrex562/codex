@@ -21,6 +21,9 @@ test.describe('Media embedding', () => {
         await page.goto('/');
         await page.getByText('media-note.md').click();
 
+        // Switch to fully-rendered preview mode so MarkdownPreview is mounted.
+        await page.getByRole('button', { name: 'Preview' }).click();
+
         await expect(page.locator('.markdown-preview img.wiki-embed')).toBeVisible();
         await expect(page.locator('.markdown-preview img.wiki-embed')).toHaveAttribute('alt', 'My Image');
     });
