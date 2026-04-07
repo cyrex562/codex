@@ -241,6 +241,10 @@ pub(crate) struct DesktopApp {
     pub(crate) drag_source: Option<String>,
     /// Path of the tree entry the cursor is hovering during a drag.
     pub(crate) drag_target: Option<String>,
+    /// Width of the left sidebar in pixels. Draggable by the resize handle.
+    pub(crate) sidebar_width: f32,
+    /// True while the user is dragging the sidebar resize handle.
+    pub(crate) is_resizing_sidebar: bool,
 
     /// When true, the editor workspace shows two side-by-side panes.
     pub(crate) split_pane_enabled: bool,
@@ -359,6 +363,8 @@ impl Default for DesktopApp {
             active_tab_path: None,
             drag_source: None,
             drag_target: None,
+            sidebar_width: 280.0,
+            is_resizing_sidebar: false,
             split_pane_enabled: false,
             split_pane_active_tab: None,
             note_path: String::new(),
@@ -504,6 +510,9 @@ pub(crate) struct PersistedSessionState {
     /// Persisted refresh token for auto-login on restart.
     #[serde(default)]
     pub(crate) refresh_token: Option<String>,
+    /// Persisted sidebar width in pixels.
+    #[serde(default)]
+    pub(crate) sidebar_width: Option<f32>,
 }
 
 pub(crate) fn flatten_tree(nodes: &[FileNode], ascending: bool) -> Vec<TreeEntry> {
@@ -1060,6 +1069,7 @@ pub(crate) fn capture_session_state(state: &DesktopApp) -> PersistedSessionState
         local_base_url: (!state.local_base_url.trim().is_empty())
             .then(|| state.local_base_url.clone()),
         refresh_token: state.client.as_ref().and_then(|c| c.refresh_token()),
+        sidebar_width: Some(state.sidebar_width),
     }
 }
 
@@ -1081,6 +1091,11 @@ pub(crate) fn apply_restored_session(state: &mut DesktopApp, session: PersistedS
         state.local_base_url = local_url;
     }
     state.saved_refresh_token = session.refresh_token;
+    if let Some(w) = session.sidebar_width {
+        if w >= 150.0 && w <= 600.0 {
+            state.sidebar_width = w;
+        }
+    }
 
     let preferred_path = session
         .active_tab_path

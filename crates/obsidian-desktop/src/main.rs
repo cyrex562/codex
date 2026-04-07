@@ -259,6 +259,10 @@ enum Message {
     DragCanceled,
     /// Result of a drag-and-drop file move via the API.
     FileMoved(Result<String, String>),
+    /// Sidebar resize handle was pressed — begin resize.
+    ResizeHandlePressed,
+    /// Cursor x-position while the sidebar resize handle is being dragged.
+    SidebarResizeDrag(f32),
 }
 
 fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
@@ -2252,6 +2256,7 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
         Message::DragCanceled => {
             state.drag_source = None;
             state.drag_target = None;
+            state.is_resizing_sidebar = false;
             Task::none()
         }
         Message::TreeDragReleased(released_on) => {
@@ -2332,10 +2337,25 @@ fn update(state: &mut DesktopApp, message: Message) -> Task<Message> {
                 }
             }
         }
+
+        // ── sidebar resize ──────────────────────────────────────────────────
+        Message::ResizeHandlePressed => {
+            state.is_resizing_sidebar = true;
+            Task::none()
+        }
+        Message::SidebarResizeDrag(cursor_x) => {
+            if state.is_resizing_sidebar {
+                // outer layout padding is 10px; clamp to a sensible range.
+                let new_width = (cursor_x - 10.0).max(150.0).min(600.0);
+                state.sidebar_width = new_width;
+                let _ = persist_session_state(state);
+            }
+            Task::none()
+        }
     }
 }
 
-fn subscription(_state: &DesktopApp) -> Subscription<Message> {
+fn subscription(state: &DesktopApp) -> Subscription<Message> {
     use iced::mouse;
     // Keyboard + window events (existing).
     let window_events = event::listen().map(Message::WindowEventOccurred);
@@ -2347,7 +2367,19 @@ fn subscription(_state: &DesktopApp) -> Subscription<Message> {
             None
         }
     });
-    Subscription::batch([window_events, drag_cancel])
+    // Emit cursor-x while the sidebar resize handle is being dragged.
+    let resize_drag = if state.is_resizing_sidebar {
+        event::listen_with(|ev, _status, _id| {
+            if let Event::Mouse(mouse::Event::CursorMoved { position }) = ev {
+                Some(Message::SidebarResizeDrag(position.x))
+            } else {
+                None
+            }
+        })
+    } else {
+        Subscription::none()
+    };
+    Subscription::batch([window_events, drag_cancel, resize_drag])
 }
 
 fn restore_next_session_tab(state: &mut DesktopApp) -> Task<Message> {

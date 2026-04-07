@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, image, markdown, mouse_area, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, image, markdown, mouse_area, row, rule, scrollable, text, text_input};
 use iced::{ContentFit, Element, Length, Theme};
 use std::collections::BTreeSet;
 
@@ -111,15 +111,22 @@ pub(crate) fn view(state: &DesktopApp) -> Element<'_, Message> {
         container(column![])
     };
 
+    let resize_handle = mouse_area(
+        rule::Rule::vertical(6),
+    )
+    .on_press(Message::ResizeHandlePressed)
+    .interaction(iced::mouse::Interaction::ResizingHorizontally);
+
     let body = row![
         container(view_sidebar(state))
-            .width(Length::FillPortion(1))
+            .width(Length::Fixed(state.sidebar_width))
             .padding(8),
+        resize_handle,
         container(view_editor_workspace(state))
-            .width(Length::FillPortion(3))
+            .width(Length::Fill)
             .padding(8),
     ]
-    .spacing(10)
+    .spacing(0)
     .height(Length::Fill);
 
     container(
