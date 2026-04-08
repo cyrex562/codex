@@ -68,14 +68,66 @@
         </template>
       </v-data-table>
     </v-card>
+
+    <!-- Entity Index Stats -->
+    <v-card>
+      <v-card-title class="d-flex align-center justify-space-between text-subtitle-1">
+        Entity Index
+        <v-btn
+          size="small"
+          variant="tonal"
+          prepend-icon="mdi-refresh"
+          :loading="statsLoading"
+          @click="loadStats"
+        >
+          Refresh
+        </v-btn>
+      </v-card-title>
+      <v-card-text>
+        <v-alert v-if="statsError" type="error" variant="tonal" class="mb-3">{{ statsError }}</v-alert>
+
+        <v-data-table
+          :headers="statsHeaders"
+          :items="vaultStats"
+          :loading="statsLoading"
+          density="compact"
+          hide-default-footer
+        >
+          <template #item.entity_count="{ item }">
+            <v-chip size="x-small" color="primary" label>{{ item.entity_count }}</v-chip>
+          </template>
+          <template #item.relation_count="{ item }">
+            <v-chip size="x-small" color="secondary" label>{{ item.relation_count }}</v-chip>
+          </template>
+          <template #item.last_reindexed="{ item }">
+            {{ item.last_reindexed ? formatDate(item.last_reindexed) : '—' }}
+          </template>
+          <template #item.reindex_duration_ms="{ item }">
+            {{ item.reindex_duration_ms != null ? `${item.reindex_duration_ms}ms` : '—' }}
+          </template>
+          <template #item.actions="{ item }">
+            <v-btn
+              size="x-small"
+              variant="tonal"
+              color="warning"
+              :loading="reindexingId === item.vault_id"
+              @click="triggerReindex(item.vault_id)"
+            >
+              Re-index
+            </v-btn>
+          </template>
+        </v-data-table>
+      </v-card-text>
+    </v-card>
   </v-main>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { apiCreateUser, apiListUsers } from '@/api/client';
+import { apiCreateUser, apiListUsers, apiGetEntityIndexStats, apiTriggerReindex } from '@/api/client';
 import type { AdminUser } from '@/api/types';
+import type { VaultEntityStats } from '@/api/client';
 
 const router = useRouter();
 
@@ -100,6 +152,7 @@ const headers = [
 
 onMounted(() => {
   void loadUsers();
+  void loadStats();
 });
 
 async function loadUsers() {
@@ -155,5 +208,47 @@ function formatDate(value: string) {
 
 function goHome() {
   void router.push('/');
+}
+
+// ── Entity Index Stats ───────────────────────────────────────────────────────
+
+const vaultStats = ref<VaultEntityStats[]>([]);
+const statsLoading = ref(false);
+const statsError = ref('');
+const reindexingId = ref<string | null>(null);
+
+const statsHeaders = [
+  { title: 'Vault', key: 'vault_name' },
+  { title: 'Entities', key: 'entity_count' },
+  { title: 'Relations', key: 'relation_count' },
+  { title: 'Last indexed', key: 'last_reindexed' },
+  { title: 'Duration', key: 'reindex_duration_ms' },
+  { title: '', key: 'actions', sortable: false },
+] as const;
+
+async function loadStats() {
+  statsLoading.value = true;
+  statsError.value = '';
+  try {
+    const result = await apiGetEntityIndexStats();
+    vaultStats.value = result.vaults ?? [];
+  } catch (e: any) {
+    statsError.value = e?.message ?? 'Failed to load entity index stats.';
+  } finally {
+    statsLoading.value = false;
+  }
+}
+
+async function triggerReindex(vaultId: string) {
+  reindexingId.value = vaultId;
+  try {
+    await apiTriggerReindex(vaultId);
+    // Poll stats after a short delay to show updated counts
+    setTimeout(() => void loadStats(), 2000);
+  } catch (e: any) {
+    statsError.value = e?.message ?? 'Reindex failed.';
+  } finally {
+    reindexingId.value = null;
+  }
 }
 </script>

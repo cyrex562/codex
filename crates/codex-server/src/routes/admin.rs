@@ -368,5 +368,64 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .service(reactivate_user)
         .service(delete_user)
         .service(get_audit_log)
-        .service(bulk_import_users);
+        .service(bulk_import_users)
+        .service(get_entity_index_stats);
+}
+
+#[derive(serde::Serialize)]
+struct VaultEntityStats {
+    vault_id: String,
+    vault_name: String,
+    entity_count: i64,
+    relation_count: i64,
+    last_reindexed: Option<String>,
+    reindex_file_count: Option<i64>,
+    reindex_duration_ms: Option<i64>,
+}
+
+#[get("/api/admin/entity-index-stats")]
+async fn get_entity_index_stats(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> AppResult<HttpResponse> {
+    let _admin = require_admin_user(&state, &req).await?;
+
+    let vaults = state.db.list_vaults().await?;
+    let mut stats = Vec::with_capacity(vaults.len());
+
+    for vault in &vaults {
+        let entity_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM entities WHERE vault_id = ?")
+                .bind(&vault.id)
+                .fetch_one(state.db.pool())
+                .await
+                .unwrap_or((0,));
+
+        let relation_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM relations WHERE vault_id = ?")
+                .bind(&vault.id)
+                .fetch_one(state.db.pool())
+                .await
+                .unwrap_or((0,));
+
+        let reindex_row: Option<(String, i64, i64)> = sqlx::query_as(
+            "SELECT completed_at, file_count, duration_ms FROM reindex_log WHERE vault_id = ?",
+        )
+        .bind(&vault.id)
+        .fetch_optional(state.db.pool())
+        .await
+        .unwrap_or(None);
+
+        stats.push(VaultEntityStats {
+            vault_id: vault.id.clone(),
+            vault_name: vault.name.clone(),
+            entity_count: entity_count.0,
+            relation_count: relation_count.0,
+            last_reindexed: reindex_row.as_ref().map(|r| r.0.clone()),
+            reindex_file_count: reindex_row.as_ref().map(|r| r.1),
+            reindex_duration_ms: reindex_row.as_ref().map(|r| r.2),
+        });
+    }
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "vaults": stats })))
 }

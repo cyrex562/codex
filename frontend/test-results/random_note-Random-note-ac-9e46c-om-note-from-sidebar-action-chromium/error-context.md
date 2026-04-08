@@ -1,0 +1,107 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e4]:
+  - navigation [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - combobox [ref=e10] [cursor=pointer]:
+          - generic [ref=e12]:
+            - generic [ref=e14]: Demo Vault
+            - combobox: Demo Vault
+          - generic [ref=e16]: 󰍝
+        - button [ref=e17] [cursor=pointer]:
+          - generic [ref=e19]: 󰒓
+      - generic [ref=e20]:
+        - button "Graph view" [ref=e21] [cursor=pointer]:
+          - generic [ref=e23]: 󱁊
+        - button "New entity" [ref=e24] [cursor=pointer]
+        - button "New note" [ref=e27] [cursor=pointer]:
+          - generic [ref=e29]: 󰻭
+        - button "New folder" [ref=e30] [cursor=pointer]:
+          - generic [ref=e32]: 󰮝
+        - button "Refresh file tree" [ref=e33] [cursor=pointer]:
+          - generic [ref=e35]: 󰑐
+        - button "Insert template" [ref=e36] [cursor=pointer]:
+          - generic [ref=e38]: 󱪞
+        - button "Import files or folders" [ref=e39] [cursor=pointer]:
+          - generic [ref=e41]: 󱃭
+        - button "Export vault or folder" [ref=e42] [cursor=pointer]:
+          - generic [ref=e44]: 󰈇
+        - button "Open random note" [active] [ref=e45] [cursor=pointer]:
+          - generic [ref=e47]: 󱅎
+        - button "Open daily note" [ref=e48] [cursor=pointer]:
+          - generic [ref=e50]: 󰃶
+        - button "Sort A→Z" [ref=e51] [cursor=pointer]:
+          - generic [ref=e53]: 󰖽
+        - button "Sort Z→A" [ref=e54] [cursor=pointer]:
+          - generic [ref=e56]: 󰖿
+      - generic [ref=e57]:
+        - generic [ref=e60] [cursor=pointer]:
+          - generic [ref=e61]: 󰽛
+          - generic [ref=e62]: Random.md
+        - generic [ref=e64] [cursor=pointer]:
+          - generic [ref=e65]: 󰅂
+          - generic [ref=e66]: AI INSIGHTS
+          - generic [ref=e68]: suggest-only
+        - generic [ref=e69]:
+          - generic [ref=e70] [cursor=pointer]:
+            - generic [ref=e71]: 󰅀
+            - generic [ref=e72]: OUTLINE
+          - generic [ref=e74]: No headings
+        - generic [ref=e75]:
+          - generic [ref=e76] [cursor=pointer]:
+            - generic [ref=e77]: 󰅀
+            - generic [ref=e78]: OUTGOING LINKS
+          - generic [ref=e80]: No outgoing links
+        - generic [ref=e81]:
+          - generic [ref=e82] [cursor=pointer]:
+            - generic [ref=e83]: 󰅀
+            - generic [ref=e84]: BACKLINKS
+          - generic [ref=e86]: No notes link to this file yet.
+        - generic [ref=e87]:
+          - generic [ref=e88] [cursor=pointer]:
+            - generic [ref=e89]: 󰅀
+            - generic [ref=e90]: BOOKMARKS
+            - button "Bookmark current file" [disabled]:
+              - generic:
+                - generic: 󰃄
+          - generic [ref=e92]: No bookmarks yet. Click + to save the current note.
+        - generic [ref=e93]:
+          - generic [ref=e94] [cursor=pointer]:
+            - generic [ref=e95]: 󰅀
+            - generic [ref=e96]: RECENT FILES
+          - generic [ref=e98]: No recent files
+        - generic [ref=e99]:
+          - generic [ref=e100] [cursor=pointer]:
+            - generic [ref=e101]: 󰅀
+            - generic [ref=e102]: TAGS
+          - generic [ref=e104]: No tags found in this vault.
+  - banner [ref=e105]:
+    - generic [ref=e106]:
+      - generic [ref=e108]: Demo Vault
+      - generic [ref=e109]:
+        - generic [ref=e111]:
+          - generic [ref=e112]: 󰌙
+          - text: Offline
+        - generic [ref=e114]:
+          - generic [ref=e115]: 󱣫
+          - text: Saved
+      - generic [ref=e116]:
+        - button "Search (Ctrl+Shift+F)" [ref=e117] [cursor=pointer]:
+          - generic [ref=e119]: 󰍉
+        - button "Plugins" [ref=e120] [cursor=pointer]:
+          - generic [ref=e122]: 󰩦
+        - button "Theme" [ref=e123] [cursor=pointer]:
+          - generic [ref=e125]: 󰘥
+        - button "alice" [ref=e126] [cursor=pointer]:
+          - generic [ref=e128]: 󰭕
+          - generic [ref=e129]: alice
+  - main [ref=e130]:
+    - generic [ref=e132]:
+      - button "Split pane" [ref=e135] [cursor=pointer]:
+        - generic [ref=e137]: 󱃧
+      - generic [ref=e139]:
+        - generic [ref=e140]: 󱇗
+        - paragraph [ref=e141]: Open a file from the sidebar to start editing.
+```

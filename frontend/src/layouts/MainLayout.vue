@@ -39,6 +39,7 @@
         <OutlinePanel :content="activeMdContent" />
         <OutgoingLinksPanel :content="activeMdContent" />
         <BacklinksPanel :file-path="tabsStore.activeTab?.filePath ?? ''" />
+        <EntityRelationsPanel :file-path="tabsStore.activeTab?.filePath ?? ''" />
         <NeighboringFilesPanel :file-path="tabsStore.activeTab?.filePath ?? ''" />
       </template>
 
@@ -87,6 +88,7 @@ import OutgoingLinksPanel from '@/components/sidebar/OutgoingLinksPanel.vue';
 import RecentFilesPanel from '@/components/sidebar/RecentFilesPanel.vue';
 import BacklinksPanel from '@/components/sidebar/BacklinksPanel.vue';
 import NeighboringFilesPanel from '@/components/sidebar/NeighboringFilesPanel.vue';
+import EntityRelationsPanel from '@/components/sidebar/EntityRelationsPanel.vue';
 import TagsPanel from '@/components/sidebar/TagsPanel.vue';
 import BookmarksPanel from '@/components/sidebar/BookmarksPanel.vue';
 import PaneContainer from '@/components/tabs/PaneContainer.vue';

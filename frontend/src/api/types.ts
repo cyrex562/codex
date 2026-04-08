@@ -54,6 +54,8 @@ export interface SearchResult {
     title: string;
     matches: SearchMatch[];
     score: number;
+    entity_type?: string;
+    labels?: string[];
 }
 
 export interface PagedSearchResult {
@@ -76,7 +78,7 @@ export interface FileChangeEvent {
     timestamp: string;
 }
 
-export type EditorMode = 'raw' | 'side_by_side' | 'formatted_raw' | 'fully_rendered';
+export type EditorMode = 'raw' | 'side_by_side' | 'formatted_raw' | 'fully_rendered' | 'structural';
 
 export interface UserPreferences {
     theme: string;
@@ -84,6 +86,107 @@ export interface UserPreferences {
     font_size: number;
     window_layout?: string;
     icon_map?: Record<string, string>;
+}
+
+// ── Entity / Plugin schema types ──────────────────────────────────────────────
+
+export type FieldType =
+    | 'string'
+    | 'text'
+    | 'number'
+    | 'date'
+    | 'boolean'
+    | 'enum'
+    | 'entity_ref'
+    | 'list';
+
+export interface FieldSchema {
+    key: string;
+    label: string;
+    field_type: FieldType;
+    required: boolean;
+    item_type?: FieldType;
+    values: string[];
+    default?: unknown;
+    target_label?: string;
+    relation?: string;
+    description?: string;
+}
+
+export interface EntityTypeSchema {
+    id: string;
+    plugin_id: string;
+    name: string;
+    icon?: string;
+    color?: string;
+    template?: string;
+    labels: string[];
+    fields: FieldSchema[];
+    display_field?: string;
+    show_on_create?: string[];
+}
+
+export interface RelationTypeSchema {
+    id: string;
+    plugin_id: string;
+    name: string;
+    label: string;
+    from_label?: string;
+    to_label?: string;
+    directed: boolean;
+    inverse_label?: string;
+    color?: string;
+    metadata_fields: FieldSchema[];
+}
+
+export interface Entity {
+    id: string;
+    vault_id: string;
+    path: string;
+    entity_type?: string;
+    plugin_id?: string;
+    labels: string[];
+    fields: Record<string, unknown>;
+    modified_at: string;
+    indexed_at: string;
+}
+
+export interface EntityRelation {
+    id: string;
+    source_entity_id: string;
+    target_entity_id: string;
+    target_path: string;
+    relation_type?: string;
+    label: string;
+    directed: boolean;
+    metadata: Record<string, unknown>;
+    plugin_id?: string;
+    is_inverse: boolean;
+}
+
+export interface GraphNode {
+    id: string;
+    path: string;
+    entity_type?: string;
+    labels: string[];
+    title: string;
+    color?: string;
+    icon?: string;
+}
+
+export interface GraphEdge {
+    id: string;
+    source: string;
+    target: string;
+    label: string;
+    relation_type?: string;
+    color?: string;
+    is_inverse: boolean;
+}
+
+export interface GraphData {
+    nodes: GraphNode[];
+    edges: GraphEdge[];
 }
 
 // Upload session types
@@ -317,7 +420,7 @@ export type WsMessage =
     | { type: 'Error'; message: string };
 
 // UI-only tab type
-export type FileType = 'markdown' | 'image' | 'pdf' | 'text' | 'audio' | 'video' | 'other';
+export type FileType = 'markdown' | 'image' | 'pdf' | 'text' | 'audio' | 'video' | 'graph' | 'other';
 
 export interface Tab {
     id: string;

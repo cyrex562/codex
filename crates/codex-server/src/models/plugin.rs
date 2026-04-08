@@ -1,3 +1,4 @@
+use crate::models::schema::PluginLabelDeclaration;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -50,6 +51,21 @@ pub struct PluginManifest {
 
     /// Configuration schema (JSON Schema)
     pub config_schema: Option<serde_json::Value>,
+
+    // ── Plugin schema declarations (optional; backwards-compatible) ──────────
+
+    /// Relative paths to entity-type TOML files inside the plugin directory
+    /// (e.g. `["entity_types/character.toml"]`)
+    #[serde(default)]
+    pub entity_types: Vec<String>,
+
+    /// Relative paths to relation-type TOML files inside the plugin directory
+    #[serde(default)]
+    pub relation_types: Vec<String>,
+
+    /// Labels this plugin declares and wants to register
+    #[serde(default)]
+    pub labels: Vec<PluginLabelDeclaration>,
 }
 
 fn default_plugin_type() -> PluginType {

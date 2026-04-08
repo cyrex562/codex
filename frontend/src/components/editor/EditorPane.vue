@@ -25,7 +25,7 @@
       />
 
       <!-- Markdown: mode-aware editor -->
-      <div v-if="isMd" class="d-flex" style="flex: 1; min-height: 0; overflow: hidden;">
+      <div v-if="isMd && normalizedEditorMode !== 'structural'" class="d-flex" style="flex: 1; min-height: 0; overflow: hidden;">
         <!-- Editor visible in plain/formatted modes -->
         <MarkdownEditor
           v-if="normalizedEditorMode !== 'fully_rendered'"
@@ -47,6 +47,13 @@
         />
       </div>
 
+      <!-- Structural entity editor -->
+      <StructuralEditor
+        v-else-if="isMd && normalizedEditorMode === 'structural'"
+        :tab-id="activeTab.id"
+        style="flex: 1; min-height: 0;"
+      />
+
       <!-- Image viewer -->
       <ImageViewer v-else-if="isImage" :vault-id="vaultsStore.activeVaultId ?? ''" :path="activeTab.filePath ?? ''" />
 
@@ -55,6 +62,9 @@
 
       <!-- Audio/Video viewer -->
       <AudioVideoViewer v-else-if="isAv" :vault-id="vaultsStore.activeVaultId ?? ''" :path="activeTab.filePath ?? ''" />
+
+      <!-- Graph view -->
+      <GraphView v-else-if="isGraph" :vault-id="graphVaultId" style="flex: 1; min-height: 0;" />
 
       <!-- Generic binary notice -->
       <div v-else class="d-flex align-center justify-center" style="flex: 1;">
@@ -88,9 +98,11 @@ import FrontmatterPanel from './FrontmatterPanel.vue';
 import MarkdownEditor from './MarkdownEditor.vue';
 import EditorToolbar from './EditorToolbar.vue';
 const MarkdownPreview = defineAsyncComponent(() => import('./MarkdownPreview.vue'));
+const StructuralEditor = defineAsyncComponent(() => import('./StructuralEditor.vue'));
 const ImageViewer = defineAsyncComponent(() => import('@/components/viewers/ImageViewer.vue'));
 const PdfViewer = defineAsyncComponent(() => import('@/components/viewers/PdfViewer.vue'));
 const AudioVideoViewer = defineAsyncComponent(() => import('@/components/viewers/AudioVideoViewer.vue'));
+const GraphView = defineAsyncComponent(() => import('@/components/graph/GraphView.vue'));
 
 const props = defineProps<{ paneId: string }>();
 
@@ -111,7 +123,8 @@ const activeTab = computed(() => {
 
 const normalizedEditorMode = computed<EditorMode>(() => {
   // Legacy compatibility: old split mode now maps to formatted text mode.
-  return editorStore.mode === 'side_by_side' ? 'formatted_raw' : editorStore.mode;
+  if (editorStore.mode === 'side_by_side') return 'formatted_raw';
+  return editorStore.mode;
 });
 
 const ext = computed(() => activeTab.value?.filePath?.split('.').pop()?.toLowerCase() ?? '');
@@ -119,6 +132,11 @@ const isMd = computed(() => ext.value === 'md');
 const isImage = computed(() => ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext.value));
 const isPdf = computed(() => ext.value === 'pdf');
 const isAv = computed(() => ['mp4', 'webm', 'ogv', 'mov', 'mp3', 'ogg', 'wav', 'flac', 'm4a'].includes(ext.value));
+const isGraph = computed(() => activeTab.value?.fileType === 'graph');
+const graphVaultId = computed(() => {
+  const fp = activeTab.value?.filePath ?? '';
+  return fp.startsWith('__graph__:') ? fp.slice('__graph__:'.length) : '';
+});
 
 const wordCount = computed(() => {
   const text = activeTab.value?.content ?? '';
@@ -129,6 +147,8 @@ const charCount = computed(() => (activeTab.value?.content ?? '').length);
 
 watch(activeTab, async (tab) => {
   if (!tab || tab.content !== '' || !tab.filePath) return;
+  // Graph tabs are virtual — no file to load
+  if (tab.fileType === 'graph') return;
   const vaultId = vaultsStore.activeVaultId;
   if (!vaultId) return;
   const fc = await filesStore.readFile(vaultId, tab.filePath);

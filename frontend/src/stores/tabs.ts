@@ -193,6 +193,32 @@ export const useTabsStore = defineStore('tabs', () => {
         activePaneId.value = paneId;
     }
 
+    function openGraphTab(paneId: string, vaultId: string): Tab {
+        const filePath = `__graph__:${vaultId}`;
+        const targetPaneId = paneId ?? activePaneId.value;
+        const id = makeTabId(filePath, targetPaneId);
+
+        if (tabs.value.has(id)) {
+            activateTab(id, targetPaneId);
+            return tabs.value.get(id)!;
+        }
+
+        const tab: Tab = {
+            id,
+            filePath,
+            fileName: 'Graph',
+            content: '',
+            modified: '',
+            isDirty: false,
+            paneId: targetPaneId,
+            fileType: 'graph',
+        };
+
+        tabs.value.set(id, tab);
+        activateTab(id, targetPaneId);
+        return tab;
+    }
+
     return {
         tabs,
         panes,
@@ -202,6 +228,7 @@ export const useTabsStore = defineStore('tabs', () => {
         tabsForPane,
         dirtyTabs,
         openTab,
+        openGraphTab,
         closeTab,
         activateTab,
         updateTabContent,

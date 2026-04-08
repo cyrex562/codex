@@ -33,6 +33,11 @@ import type {
     ApplyOrganizationSuggestionResponse,
     OrganizationSuggestion,
     UndoMlActionResponse,
+    Entity,
+    EntityRelation,
+    EntityTypeSchema,
+    RelationTypeSchema,
+    GraphData,
 } from './types';
 import { useAuthStore } from '@/stores/auth';
 
@@ -544,3 +549,57 @@ export const apiRevokeVaultGroupShare = (
     request(`/api/vaults/${vaultId}/shares/groups/${groupId}`, {
         method: 'DELETE',
     });
+
+// ── Entities & Schema ─────────────────────────────────────────────────────────
+
+export interface EntityListParams {
+    entity_type?: string;
+    label?: string;
+    plugin?: string;
+    q?: string;
+}
+
+export const apiListEntities = (vaultId: string, params?: EntityListParams): Promise<{ entities: Entity[] }> => {
+    const qs = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined) as [string, string][]).toString() : '';
+    return request(`/api/vaults/${vaultId}/entities${qs ? `?${qs}` : ''}`);
+};
+
+export const apiGetEntity = (vaultId: string, entityId: string): Promise<Entity> =>
+    request(`/api/vaults/${vaultId}/entities/${entityId}`);
+
+export const apiGetEntityRelations = (vaultId: string, entityId: string): Promise<{ relations: EntityRelation[] }> =>
+    request(`/api/vaults/${vaultId}/entities/${entityId}/relations`);
+
+export const apiGetGraph = (vaultId: string): Promise<GraphData> =>
+    request(`/api/vaults/${vaultId}/graph`);
+
+export const apiTriggerReindex = (vaultId: string): Promise<{ reindexed: number }> =>
+    request(`/api/vaults/${vaultId}/reindex`, { method: 'POST' });
+
+export const apiListLabels = (): Promise<{ labels: Array<{ name: string; description?: string }> }> =>
+    request('/api/plugins/labels');
+
+export const apiListEntityTypes = (): Promise<{ entity_types: EntityTypeSchema[] }> =>
+    request('/api/plugins/entity-types');
+
+export const apiGetEntityTypeTemplate = (vaultId: string, typeId: string): Promise<{ content: string }> =>
+    request(`/api/vaults/${encodeURIComponent(vaultId)}/entity-template?type=${encodeURIComponent(typeId)}`);
+
+export const apiListRelationTypes = (): Promise<{ relation_types: RelationTypeSchema[] }> =>
+    request('/api/plugins/relation-types');
+
+export const apiGetEntityByPath = (vaultId: string, filePath: string): Promise<{ entity: import('./types').Entity | null; relations: import('./types').EntityRelation[] }> =>
+    request(`/api/vaults/${encodeURIComponent(vaultId)}/entity-by-path?path=${encodeURIComponent(filePath)}`);
+
+export interface VaultEntityStats {
+    vault_id: string;
+    vault_name: string;
+    entity_count: number;
+    relation_count: number;
+    last_reindexed?: string;
+    reindex_file_count?: number;
+    reindex_duration_ms?: number;
+}
+
+export const apiGetEntityIndexStats = (): Promise<{ vaults: VaultEntityStats[] }> =>
+    request('/api/admin/entity-index-stats');

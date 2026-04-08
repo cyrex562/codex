@@ -4,6 +4,11 @@ use sqlx::FromRow;
 pub mod bookmarks;
 pub mod graph;
 pub mod plugin;
+pub mod schema;
+
+pub use schema::{
+    EntityTypeSchema, FieldSchema, FieldType, PluginLabelDeclaration, RelationTypeSchema,
+};
 
 pub use codex_types::{
     AcceptInviteRequest, AddGroupMemberRequest, AdminUser, ApiKeyInfo, AuditLogEntry,

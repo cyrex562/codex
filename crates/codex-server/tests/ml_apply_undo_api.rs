@@ -45,6 +45,9 @@ async fn apply_tag_and_undo_restores_file_and_receipt_is_single_use() {
         change_log_retention_days: 7,
         ml_undo_store: Arc::new(Mutex::new(HashMap::new())),
     shutdown_tx: tokio::sync::broadcast::channel::<()>(1).0,
+        entity_type_registry: codex::services::EntityTypeRegistry::new(),
+        relation_type_registry: codex::services::RelationTypeRegistry::new(),
+        plugins_dir: String::new(),
     });
 
     let app = test::init_service(App::new().app_data(state.clone()).configure(ml::configure)).await;
@@ -136,6 +139,9 @@ async fn apply_move_and_undo_restores_original_path() {
         change_log_retention_days: 7,
         ml_undo_store: Arc::new(Mutex::new(HashMap::new())),
     shutdown_tx: tokio::sync::broadcast::channel::<()>(1).0,
+        entity_type_registry: codex::services::EntityTypeRegistry::new(),
+        relation_type_registry: codex::services::RelationTypeRegistry::new(),
+        plugins_dir: String::new(),
     });
 
     let app = test::init_service(App::new().app_data(state.clone()).configure(ml::configure)).await;
@@ -213,6 +219,9 @@ async fn undo_receipt_persists_across_app_reinitialization() {
             change_log_retention_days: 7,
             ml_undo_store: Arc::new(Mutex::new(HashMap::new())),
         shutdown_tx: tokio::sync::broadcast::channel::<()>(1).0,
+        entity_type_registry: codex::services::EntityTypeRegistry::new(),
+        relation_type_registry: codex::services::RelationTypeRegistry::new(),
+        plugins_dir: String::new(),
         });
 
         let app =
@@ -257,6 +266,9 @@ async fn undo_receipt_persists_across_app_reinitialization() {
             change_log_retention_days: 7,
             ml_undo_store: Arc::new(Mutex::new(HashMap::new())),
         shutdown_tx: tokio::sync::broadcast::channel::<()>(1).0,
+        entity_type_registry: codex::services::EntityTypeRegistry::new(),
+        relation_type_registry: codex::services::RelationTypeRegistry::new(),
+        plugins_dir: String::new(),
         });
 
         let app =

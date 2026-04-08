@@ -7,17 +7,103 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 use walkdir::WalkDir;
 
+/// Metadata derived from an entity file, stored alongside content for search enrichment.
+#[derive(Clone, Default)]
+struct EntityMeta {
+    entity_type: Option<String>,
+    labels: Vec<String>,
+    /// Extra searchable text from entity field values (appended to content score)
+    extra_text: String,
+}
+
+fn extract_entity_meta(content: &str) -> EntityMeta {
+    // Fast path: if no frontmatter, skip
+    if !content.starts_with("---") {
+        return EntityMeta::default();
+    }
+    let end = match content.find("\n---") {
+        Some(e) => e,
+        None => return EntityMeta::default(),
+    };
+    if end < 4 {
+        return EntityMeta::default();
+    }
+    let yaml_block = &content[4..end]; // skip leading "---\n"
+
+    // Extract codex_type
+    let entity_type = yaml_block
+        .lines()
+        .find_map(|line| {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("codex_type:") {
+                let val = rest.trim().trim_matches('"').trim_matches('\'');
+                if !val.is_empty() { Some(val.to_string()) } else { None }
+            } else {
+                None
+            }
+        });
+
+    if entity_type.is_none() {
+        return EntityMeta::default();
+    }
+
+    // Extract codex_labels (YAML list)
+    let mut labels = Vec::new();
+    let mut in_labels = false;
+    for line in yaml_block.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("codex_labels:") {
+            in_labels = true;
+            continue;
+        }
+        if in_labels {
+            if let Some(item) = trimmed.strip_prefix("- ") {
+                labels.push(item.trim_matches('"').trim_matches('\'').to_string());
+            } else if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                in_labels = false;
+            }
+        }
+    }
+
+    // Collect string/text field values as extra searchable text
+    // (simple heuristic: any YAML string value that's not a reserved key)
+    let reserved = ["codex_type", "codex_labels", "codex_plugin"];
+    let mut extra_parts: Vec<String> = Vec::new();
+    for line in yaml_block.lines() {
+        let trimmed = line.trim();
+        if let Some(colon_pos) = trimmed.find(':') {
+            let key = trimmed[..colon_pos].trim();
+            let val = trimmed[colon_pos + 1..].trim();
+            if !reserved.contains(&key) && !val.is_empty() && !val.starts_with('[') && !val.starts_with('{') {
+                let clean = val.trim_matches('"').trim_matches('\'');
+                if !clean.is_empty() {
+                    extra_parts.push(clean.to_string());
+                }
+            }
+        }
+    }
+
+    EntityMeta {
+        entity_type,
+        labels,
+        extra_text: extra_parts.join(" "),
+    }
+}
+
 /// Simple in-memory search index
 #[derive(Clone)]
 pub struct SearchIndex {
     // vault_id -> (file_path -> content)
     indices: Arc<RwLock<HashMap<String, HashMap<String, String>>>>,
+    // vault_id -> (file_path -> entity metadata)
+    entity_meta: Arc<RwLock<HashMap<String, HashMap<String, EntityMeta>>>>,
 }
 
 impl SearchIndex {
     pub fn new() -> Self {
         Self {
             indices: Arc::new(RwLock::new(HashMap::new())),
+            entity_meta: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -25,6 +111,7 @@ impl SearchIndex {
     pub fn index_vault(&self, vault_id: &str, vault_path: &str) -> AppResult<usize> {
         let mut file_count = 0;
         let mut index = HashMap::new();
+        let mut entity_meta_map: HashMap<String, EntityMeta> = HashMap::new();
 
         for entry in WalkDir::new(vault_path)
             .follow_links(false)
@@ -51,7 +138,9 @@ impl SearchIndex {
                                 .to_string_lossy()
                                 .to_string();
 
-                            index.insert(relative_path, content);
+                            let meta = extract_entity_meta(&content);
+                            index.insert(relative_path.clone(), content);
+                            entity_meta_map.insert(relative_path, meta);
                             file_count += 1;
                         }
                     }
@@ -64,22 +153,39 @@ impl SearchIndex {
             .write()
             .map_err(|_| AppError::InternalError("Failed to acquire write lock".to_string()))?;
         indices.insert(vault_id.to_string(), index);
+        drop(indices);
+
+        let mut meta_store = self
+            .entity_meta
+            .write()
+            .map_err(|_| AppError::InternalError("Failed to acquire write lock".to_string()))?;
+        meta_store.insert(vault_id.to_string(), entity_meta_map);
 
         Ok(file_count)
     }
 
     /// Update a single file in the index
     pub fn update_file(&self, vault_id: &str, file_path: &str, content: String) -> AppResult<()> {
+        let meta = extract_entity_meta(&content);
+
         let mut indices = self
             .indices
             .write()
             .map_err(|_| AppError::InternalError("Failed to acquire write lock".to_string()))?;
-
         let vault_index = indices
             .entry(vault_id.to_string())
             .or_insert_with(HashMap::new);
-
         vault_index.insert(file_path.to_string(), content);
+        drop(indices);
+
+        let mut meta_store = self
+            .entity_meta
+            .write()
+            .map_err(|_| AppError::InternalError("Failed to acquire write lock".to_string()))?;
+        meta_store
+            .entry(vault_id.to_string())
+            .or_insert_with(HashMap::new)
+            .insert(file_path.to_string(), meta);
         Ok(())
     }
 
@@ -89,15 +195,22 @@ impl SearchIndex {
             .indices
             .write()
             .map_err(|_| AppError::InternalError("Failed to acquire write lock".to_string()))?;
-
         if let Some(vault_index) = indices.get_mut(vault_id) {
             vault_index.remove(file_path);
+        }
+        drop(indices);
+
+        let mut meta_store = self
+            .entity_meta
+            .write()
+            .map_err(|_| AppError::InternalError("Failed to acquire write lock".to_string()))?;
+        if let Some(vault_meta) = meta_store.get_mut(vault_id) {
+            vault_meta.remove(file_path);
         }
 
         Ok(())
     }
 
-    /// Search for a query in a vault
     /// Search for a query in a vault with pagination
     pub fn search(
         &self,
@@ -115,6 +228,14 @@ impl SearchIndex {
             "Vault index not found: {}",
             vault_id
         )))?;
+
+        // Grab entity metadata snapshot (best-effort — don't fail search if unavailable)
+        let meta_snapshot: HashMap<String, EntityMeta> = self
+            .entity_meta
+            .read()
+            .ok()
+            .and_then(|m| m.get(vault_id).cloned())
+            .unwrap_or_default();
 
         let query_lower = query.to_lowercase();
 
@@ -160,12 +281,29 @@ impl SearchIndex {
                         title: file_name.to_string(),
                         matches,
                         score,
+                        // Populated below after collect
+                        entity_type: None,
+                        labels: Vec::new(),
                     })
                 } else {
                     None
                 }
             })
             .collect();
+
+        // Enrich results with entity metadata (sequential — avoids parallel borrow)
+        for result in &mut results {
+            if let Some(meta) = meta_snapshot.get(&result.path) {
+                if meta.entity_type.is_some() {
+                    result.entity_type = meta.entity_type.clone();
+                    result.labels = meta.labels.clone();
+                    // Boost score if query matches entity field values
+                    if !meta.extra_text.is_empty() && meta.extra_text.to_lowercase().contains(&query_lower) {
+                        result.score += 2.0;
+                    }
+                }
+            }
+        }
 
         // Sort by score (descending)
         results.par_sort_unstable_by(|a, b| {
@@ -206,8 +344,14 @@ impl SearchIndex {
             .indices
             .write()
             .map_err(|_| AppError::InternalError("Failed to acquire write lock".to_string()))?;
-
         indices.remove(vault_id);
+        drop(indices);
+
+        let mut meta_store = self
+            .entity_meta
+            .write()
+            .map_err(|_| AppError::InternalError("Failed to acquire write lock".to_string()))?;
+        meta_store.remove(vault_id);
         Ok(())
     }
 
@@ -217,14 +361,29 @@ impl SearchIndex {
         vault_id: &str,
         files: Vec<(String, String)>,
     ) -> AppResult<usize> {
-        use std::collections::HashMap;
         let count = files.len();
-        let index: HashMap<String, String> = files.into_iter().collect();
+        let mut meta_map: HashMap<String, EntityMeta> = HashMap::with_capacity(count);
+        let index: HashMap<String, String> = files
+            .into_iter()
+            .map(|(path, content)| {
+                let meta = extract_entity_meta(&content);
+                meta_map.insert(path.clone(), meta);
+                (path, content)
+            })
+            .collect();
+
         let mut indices = self
             .indices
             .write()
             .map_err(|_| AppError::InternalError("Failed to acquire write lock".to_string()))?;
         indices.insert(vault_id.to_string(), index);
+        drop(indices);
+
+        let mut meta_store = self
+            .entity_meta
+            .write()
+            .map_err(|_| AppError::InternalError("Failed to acquire write lock".to_string()))?;
+        meta_store.insert(vault_id.to_string(), meta_map);
         Ok(count)
     }
 
@@ -717,5 +876,99 @@ mod tests {
         handle2.join().unwrap();
 
         // If we get here without panicking, concurrent access works
+    }
+
+    // ── extract_entity_meta tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_extract_entity_meta_no_frontmatter() {
+        let content = "# Just a plain markdown file\n\nNo frontmatter here.";
+        let meta = extract_entity_meta(content);
+        assert!(meta.entity_type.is_none());
+        assert!(meta.labels.is_empty());
+        assert!(meta.extra_text.is_empty());
+    }
+
+    #[test]
+    fn test_extract_entity_meta_no_codex_type() {
+        let content = "---\ntitle: My Note\nauthor: Alice\n---\n# Content";
+        let meta = extract_entity_meta(content);
+        assert!(meta.entity_type.is_none());
+        assert!(meta.labels.is_empty());
+    }
+
+    #[test]
+    fn test_extract_entity_meta_with_codex_type() {
+        let content = "---\ncodex_type: character\nfull_name: Alice\n---\n# Content";
+        let meta = extract_entity_meta(content);
+        assert_eq!(meta.entity_type.as_deref(), Some("character"));
+    }
+
+    #[test]
+    fn test_extract_entity_meta_with_labels() {
+        let content = "---\ncodex_type: character\ncodex_labels:\n- graphable\n- person\n---\n# Content";
+        let meta = extract_entity_meta(content);
+        assert_eq!(meta.entity_type.as_deref(), Some("character"));
+        assert!(meta.labels.contains(&"graphable".to_string()));
+        assert!(meta.labels.contains(&"person".to_string()));
+        assert_eq!(meta.labels.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_entity_meta_extra_text_from_string_fields() {
+        let content = "---\ncodex_type: character\nfull_name: Alice Smith\nstatus: Active\n---\n# Content";
+        let meta = extract_entity_meta(content);
+        assert!(meta.extra_text.contains("Alice Smith"));
+        assert!(meta.extra_text.contains("Active"));
+    }
+
+    #[test]
+    fn test_extract_entity_meta_reserved_keys_not_in_extra_text() {
+        let content = "---\ncodex_type: character\ncodex_plugin: worldbuilding\nfull_name: Alice\n---\n# Content";
+        let meta = extract_entity_meta(content);
+        // reserved keys must not be included as extra text
+        assert!(!meta.extra_text.contains("worldbuilding"));
+        assert!(!meta.extra_text.contains("character"));
+    }
+
+    #[test]
+    fn test_extract_entity_meta_empty_frontmatter() {
+        let content = "---\n---\n# Content";
+        let meta = extract_entity_meta(content);
+        assert!(meta.entity_type.is_none());
+    }
+
+    #[test]
+    fn test_search_result_has_entity_type_after_index() {
+        let temp = TempDir::new().unwrap();
+        let vault = temp.path();
+        let content = "---\ncodex_type: character\ncodex_labels:\n- graphable\nfull_name: Alice Smith\n---\n# Alice Smith\n\nA brave adventurer.";
+        fs::write(vault.join("alice.md"), content).unwrap();
+
+        let index = SearchIndex::new();
+        index.index_vault("vault1", vault.to_str().unwrap()).unwrap();
+
+        let results = index.search("vault1", "alice", 1, 10).unwrap().results;
+        assert!(!results.is_empty());
+        let result = &results[0];
+        assert_eq!(result.entity_type.as_deref(), Some("character"));
+        assert!(result.labels.contains(&"graphable".to_string()));
+    }
+
+    #[test]
+    fn test_search_result_no_entity_type_for_plain_file() {
+        let temp = TempDir::new().unwrap();
+        let vault = temp.path();
+        let content = "# Just a note\n\nNo entity metadata here.";
+        fs::write(vault.join("note.md"), content).unwrap();
+
+        let index = SearchIndex::new();
+        index.index_vault("vault1", vault.to_str().unwrap()).unwrap();
+
+        let results = index.search("vault1", "note", 1, 10).unwrap().results;
+        assert!(!results.is_empty());
+        let result = &results[0];
+        assert!(result.entity_type.is_none());
+        assert!(result.labels.is_empty());
     }
 }

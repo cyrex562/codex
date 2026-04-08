@@ -12,7 +12,10 @@ use codex::config::AppConfig;
 use codex::db::Database;
 use codex::models::FileChangeEvent;
 use codex::routes::AppState;
-use codex::services::{build_storage_backend, SearchIndex};
+use codex::services::{
+    build_storage_backend, EntityTypeRegistry, LabelService, ReindexService,
+    RelationTypeRegistry, SchemaService, SearchIndex,
+};
 use codex::watcher::FileWatcher;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -175,6 +178,13 @@ async fn main() -> std::io::Result<()> {
         }
     }
 
+    // Seed core labels (idempotent — safe to run on every startup)
+    if let Err(e) = LabelService::seed_core_labels(&db).await {
+        warn!("Failed to seed core labels: {e}");
+    } else {
+        info!("Core labels seeded");
+    }
+
     // Initialize search index
     let search_index = SearchIndex::new();
     info!("Search index initialized");
@@ -212,15 +222,41 @@ async fn main() -> std::io::Result<()> {
                                     content.content,
                                 );
                             }
+                            // Update entity index
+                            let abs_path = format!("{}/{}", vault.path.trim_end_matches('/'), change_event.path);
+                            if let Err(e) = ReindexService::index_file(
+                                &db_clone,
+                                &change_event.vault_id,
+                                &change_event.path,
+                                &abs_path,
+                            ).await {
+                                warn!("Entity index_file failed for {}: {e}", change_event.path);
+                            }
                         }
                     }
                 }
                 codex::models::FileChangeType::Deleted => {
                     let _ =
                         search_index_clone.remove_file(&change_event.vault_id, &change_event.path);
+                    // Remove entity + relations
+                    if let Err(e) = ReindexService::remove_file(
+                        &db_clone,
+                        &change_event.vault_id,
+                        &change_event.path,
+                    ).await {
+                        warn!("Entity remove_file failed for {}: {e}", change_event.path);
+                    }
                 }
                 codex::models::FileChangeType::Renamed { from, to } => {
                     let _ = search_index_clone.remove_file(&change_event.vault_id, from);
+                    // Remove old entity
+                    if let Err(e) = ReindexService::remove_file(
+                        &db_clone,
+                        &change_event.vault_id,
+                        from,
+                    ).await {
+                        warn!("Entity remove_file (rename from) failed for {from}: {e}");
+                    }
                     if to.ends_with(".md") {
                         if let Ok(vault) = db_clone.get_vault(&change_event.vault_id).await {
                             if let Ok(content) =
@@ -231,6 +267,15 @@ async fn main() -> std::io::Result<()> {
                                     to,
                                     content.content,
                                 );
+                            }
+                            let abs_path = format!("{}/{}", vault.path.trim_end_matches('/'), to);
+                            if let Err(e) = ReindexService::index_file(
+                                &db_clone,
+                                &change_event.vault_id,
+                                to,
+                                &abs_path,
+                            ).await {
+                                warn!("Entity index_file (rename to) failed for {to}: {e}");
                             }
                         }
                     }
@@ -288,12 +333,48 @@ async fn main() -> std::io::Result<()> {
             Ok(count) => info!("Indexed {} files in vault {}", count, vault.name),
             Err(e) => error!("Failed to index vault {}: {}", vault.id, e),
         }
+
+        // Entity reindex (two-pass: entities then relations)
+        let db_reindex = db.clone();
+        let vid = vault.id.clone();
+        let vpath = vault.path.clone();
+        tokio::spawn(async move {
+            if let Err(e) = ReindexService::reindex_vault(&db_reindex, &vid, &vpath).await {
+                error!("Entity reindex failed for vault {vid}: {e}");
+            }
+        });
     }
 
     // Create shutdown broadcast channel. Sending on this notifies all
     // WebSocket sessions to close with a proper Close frame before the
     // process exits.
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
+
+    // Load plugin schemas into in-memory registries
+    let entity_type_registry = EntityTypeRegistry::new();
+    let relation_type_registry = RelationTypeRegistry::new();
+    {
+        use codex::services::PluginService;
+        let mut plugin_svc = PluginService::new("./plugins");
+        match plugin_svc.discover_plugins() {
+            Ok(plugins) => {
+                if let Err(e) = SchemaService::load_plugin_schemas(
+                    &db,
+                    &plugins,
+                    &entity_type_registry,
+                    &relation_type_registry,
+                )
+                .await
+                {
+                    warn!("Schema loading error: {e}");
+                }
+            }
+            Err(e) => {
+                warn!("Plugin discovery failed during schema load: {e}");
+            }
+        }
+    }
+    info!("Plugin schemas loaded");
 
     // Create app state
     let app_state = web::Data::new(AppState {
@@ -304,6 +385,9 @@ async fn main() -> std::io::Result<()> {
         event_broadcaster: event_tx,
         change_log_retention_days: config.sync.change_log_retention_days,
         ml_undo_store: Arc::new(Mutex::new(HashMap::new())),
+        entity_type_registry,
+        relation_type_registry,
+        plugins_dir: "./plugins".to_string(),
         shutdown_tx: shutdown_tx.clone(),
     });
     let app_config = web::Data::new(config.clone());
@@ -350,6 +434,7 @@ async fn main() -> std::io::Result<()> {
             .configure(codex::routes::ws::configure)
             .configure(codex::routes::markdown::configure)
             .configure(codex::routes::preferences::configure)
+            .configure(codex::routes::entities::configure)
             .configure(codex::routes::plugins::configure)
             .configure(configure_static)
             .configure(codex::routes::bookmarks::configure)

@@ -1,0 +1,135 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e4]:
+  - navigation [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - combobox [ref=e10] [cursor=pointer]:
+          - generic [ref=e12]:
+            - generic [ref=e14]: Demo Vault
+            - combobox: Demo Vault
+          - generic [ref=e16]: 󰍝
+        - button [ref=e17] [cursor=pointer]:
+          - generic [ref=e19]: 󰒓
+      - generic [ref=e20]:
+        - button "Graph view" [ref=e21] [cursor=pointer]:
+          - generic [ref=e23]: 󱁊
+        - button "New entity" [ref=e24] [cursor=pointer]
+        - button "New note" [ref=e27] [cursor=pointer]:
+          - generic [ref=e29]: 󰻭
+        - button "New folder" [ref=e30] [cursor=pointer]:
+          - generic [ref=e32]: 󰮝
+        - button "Refresh file tree" [ref=e33] [cursor=pointer]:
+          - generic [ref=e35]: 󰑐
+        - button "Insert template" [ref=e36] [cursor=pointer]:
+          - generic [ref=e38]: 󱪞
+        - button "Import files or folders" [ref=e39] [cursor=pointer]:
+          - generic [ref=e41]: 󱃭
+        - button "Export vault or folder" [ref=e42] [cursor=pointer]:
+          - generic [ref=e44]: 󰈇
+        - button "Open random note" [ref=e45] [cursor=pointer]:
+          - generic [ref=e47]: 󱅎
+        - button "Open daily note" [ref=e48] [cursor=pointer]:
+          - generic [ref=e50]: 󰃶
+        - button "Sort A→Z" [ref=e51] [cursor=pointer]:
+          - generic [ref=e53]: 󰖽
+        - button "Sort Z→A" [ref=e54] [cursor=pointer]:
+          - generic [ref=e56]: 󰖿
+      - generic [ref=e57]:
+        - generic [ref=e58]:
+          - generic [ref=e60] [cursor=pointer]:
+            - button "󰅀" [ref=e61]
+            - generic [ref=e62]: 󰉖
+            - generic [ref=e63]: notes
+          - generic [ref=e65] [cursor=pointer]:
+            - generic [ref=e66]: 󰽛
+            - generic [ref=e67]: alpha.md
+          - generic [ref=e69] [cursor=pointer]:
+            - generic [ref=e70]: 󰽛
+            - generic [ref=e71]: beta.md
+          - generic [ref=e73] [cursor=pointer]:
+            - generic [ref=e74]: 󰽛
+            - generic [ref=e75]: gamma.md
+        - generic [ref=e77] [cursor=pointer]:
+          - generic [ref=e78]: 󰅂
+          - generic [ref=e79]: AI INSIGHTS
+          - generic [ref=e81]: suggest-only
+        - generic [ref=e82]:
+          - generic [ref=e83] [cursor=pointer]:
+            - generic [ref=e84]: 󰅀
+            - generic [ref=e85]: OUTLINE
+          - generic [ref=e87]: No headings
+        - generic [ref=e88]:
+          - generic [ref=e89] [cursor=pointer]:
+            - generic [ref=e90]: 󰅀
+            - generic [ref=e91]: OUTGOING LINKS
+          - generic [ref=e93]: No outgoing links
+        - generic [ref=e94]:
+          - generic [ref=e95] [cursor=pointer]:
+            - generic [ref=e96]: 󰅀
+            - generic [ref=e97]: BACKLINKS
+            - generic [ref=e98]: (1)
+          - generic "notes/beta.md" [ref=e101] [cursor=pointer]:
+            - generic [ref=e102]: 󰁍
+            - generic [ref=e103]: Beta
+        - generic [ref=e104]:
+          - generic [ref=e105] [cursor=pointer]:
+            - generic [ref=e106]: 󰅀
+            - generic [ref=e107]: BOOKMARKS
+            - generic [ref=e108]: (1)
+            - button "Bookmark current file" [disabled]:
+              - generic:
+                - generic: 󰃄
+          - generic "notes/beta.md" [ref=e111] [cursor=pointer]:
+            - generic [ref=e112]: 󰃃
+            - generic [ref=e113]: beta
+            - button "Remove bookmark" [ref=e114]:
+              - generic [ref=e116]: 󰅖
+        - generic [ref=e117]:
+          - generic [ref=e118] [cursor=pointer]:
+            - generic [ref=e119]: 󰅀
+            - generic [ref=e120]: RECENT FILES
+          - generic [ref=e122]: No recent files
+        - generic [ref=e123]:
+          - generic [ref=e124] [cursor=pointer]:
+            - generic [ref=e125]: 󰅀
+            - generic [ref=e126]: TAGS
+            - generic [ref=e127]: (2)
+          - generic [ref=e129]:
+            - generic "Search research (3 note(s))" [ref=e130] [cursor=pointer]:
+              - generic [ref=e131]: 󰓼
+              - generic [ref=e132]: research
+              - generic [ref=e133]: "3"
+            - generic "Search draft (1 note(s))" [ref=e134] [cursor=pointer]:
+              - generic [ref=e135]: 󰓼
+              - generic [ref=e136]: draft
+              - generic [ref=e137]: "1"
+  - banner [ref=e138]:
+    - generic [ref=e139]:
+      - generic [ref=e141]: Demo Vault
+      - generic [ref=e142]:
+        - generic [ref=e144]:
+          - generic [ref=e145]: 󰌙
+          - text: Offline
+        - generic [ref=e147]:
+          - generic [ref=e148]: 󱣫
+          - text: Saved
+      - generic [ref=e149]:
+        - button "Search (Ctrl+Shift+F)" [ref=e150] [cursor=pointer]:
+          - generic [ref=e152]: 󰍉
+        - button "Plugins" [ref=e153] [cursor=pointer]:
+          - generic [ref=e155]: 󰩦
+        - button "Theme" [ref=e156] [cursor=pointer]:
+          - generic [ref=e158]: 󰘥
+        - button "alice" [ref=e159] [cursor=pointer]:
+          - generic [ref=e161]: 󰭕
+          - generic [ref=e162]: alice
+  - main [ref=e163]:
+    - generic [ref=e165]:
+      - button "Split pane" [ref=e168] [cursor=pointer]:
+        - generic [ref=e170]: 󱃧
+      - generic [ref=e172]:
+        - generic [ref=e173]: 󱇗
+        - paragraph [ref=e174]: Open a file from the sidebar to start editing.
+```

@@ -1,6 +1,20 @@
 <template>
   <div class="sidebar-actions d-flex align-center pa-1 gap-1" style="border-bottom: 1px solid rgb(var(--v-theme-border));">
     <v-btn
+      icon="mdi-graph-outline"
+      size="small"
+      density="compact"
+      title="Graph view"
+      @click="openGraph"
+    />
+    <v-btn
+      icon="mdi-cube-plus-outline"
+      size="small"
+      density="compact"
+      title="New entity"
+      @click="newEntityDialog = true"
+    />
+    <v-btn
       icon="mdi-file-plus-outline"
       size="small"
       density="compact"
@@ -85,6 +99,9 @@
     />
   </div>
 
+  <!-- New entity dialog -->
+  <NewEntityDialog v-model="newEntityDialog" />
+
   <!-- New note dialog -->
   <v-dialog v-model="newNoteDialog" max-width="400">
     <v-card>
@@ -133,6 +150,7 @@ import { useVaultsStore } from '@/stores/vaults';
 import { useFilesStore } from '@/stores/files';
 import { useTabsStore } from '@/stores/tabs';
 import { useUiStore } from '@/stores/ui';
+import NewEntityDialog from '@/components/modals/NewEntityDialog.vue';
 
 const vaultsStore = useVaultsStore();
 const filesStore = useFilesStore();
@@ -144,6 +162,12 @@ const newNoteDialog = ref(false);
 const newNoteName = ref('');
 const newFolderDialog = ref(false);
 const newFolderName = ref('');
+const newEntityDialog = ref(false);
+
+function openGraph() {
+  const vaultId = vaultsStore.activeVaultId;
+  if (vaultId) tabsStore.openGraphTab(tabsStore.activePaneId, vaultId);
+}
 
 // Provide sort value for FileTree via provide/inject
 import { provide } from 'vue';

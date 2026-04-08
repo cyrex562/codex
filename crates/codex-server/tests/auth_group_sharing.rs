@@ -53,6 +53,9 @@ async fn username_login_group_membership_and_vault_sharing_work() {
             std::collections::HashMap::new(),
         )),
     shutdown_tx: tokio::sync::broadcast::channel::<()>(1).0,
+        entity_type_registry: codex::services::EntityTypeRegistry::new(),
+        relation_type_registry: codex::services::RelationTypeRegistry::new(),
+        plugins_dir: String::new(),
     });
 
     let mut config = AppConfig::default();

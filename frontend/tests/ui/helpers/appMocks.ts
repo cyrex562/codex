@@ -25,6 +25,18 @@ type MockOptions = {
     backlinksByVaultId?: Record<string, Array<{ path: string; title: string }>>;
     /** Generate-outline mock result */
     outlineResult?: { summary: string; sections: Array<{ line_number: number; level: number; title: string; summary: string }> };
+    /** Entity types returned from /api/plugins/entity-types */
+    entityTypes?: Array<{ id: string; name: string; plugin_id: string; color?: string; icon?: string; fields: unknown[]; labels?: string[]; show_on_create?: string[]; display_field?: string }>;
+    /** Relation types returned from /api/plugins/relation-types */
+    relationTypes?: Array<{ id: string; name: string; plugin_id: string; source_types: string[]; target_types: string[] }>;
+    /** Graph data keyed by vault id */
+    graphByVaultId?: Record<string, { nodes: unknown[]; edges: unknown[] }>;
+    /** Entity-by-path responses keyed by vault id, then file path */
+    entityByPathByVaultId?: Record<string, Record<string, { entity: unknown | null; relations: unknown[] }>>;
+    /** Entity-type template content keyed by type id */
+    entityTemplatesByTypeId?: Record<string, string>;
+    /** Admin entity index stats (requires admin profile) */
+    entityIndexStats?: { vaults: Array<{ vault_id: string; vault_name: string; entity_count: number }> };
 };
 
 export const defaultProfile: UserProfile = {
@@ -77,6 +89,12 @@ export async function installCommonAppMocks(page: Page, options: MockOptions = {
     const tagsByVaultId = options.tagsByVaultId ?? {};
     const backlinksByVaultId = options.backlinksByVaultId ?? {};
     const uploadSessions = new Map<string, { filename: string; path: string; uploadedBytes: number; totalSize: number }>();
+    const entityTypes = options.entityTypes ?? [];
+    const relationTypes = options.relationTypes ?? [];
+    const graphByVaultId = options.graphByVaultId ?? {};
+    const entityByPathByVaultId = options.entityByPathByVaultId ?? {};
+    const entityTemplatesByTypeId = options.entityTemplatesByTypeId ?? {};
+    const entityIndexStats = options.entityIndexStats ?? { vaults: [] };
 
     function ensureDirectoryNode(vaultId: string, path: string) {
         if (!path) return;
@@ -622,5 +640,50 @@ export async function installCommonAppMocks(page: Page, options: MockOptions = {
     });
     await page.route(/.*\/api\/vaults\/[^/]+\/suggest-organization$/, async (route) => {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ suggestions: ['Move to subfolder', 'Add tags'] }) });
+    });
+
+    // ── Entity / Schema / Graph routes ────────────────────────────────────────
+    await page.route('**/api/plugins/entity-types', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entity_types: entityTypes }) });
+    });
+
+    await page.route('**/api/plugins/relation-types', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ relation_types: relationTypes }) });
+    });
+
+    await page.route('**/api/plugins/labels', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ labels: [] }) });
+    });
+
+    await page.route(/.*\/api\/vaults\/([^/]+)\/graph$/, async (route) => {
+        const vaultId = route.request().url().match(/\/vaults\/([^/]+)\/graph/)![1];
+        const data = graphByVaultId[vaultId] ?? { nodes: [], edges: [] };
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) });
+    });
+
+    await page.route(/.*\/api\/vaults\/([^/]+)\/entity-by-path.*/, async (route) => {
+        const url = route.request().url();
+        const vaultMatch = url.match(/\/vaults\/([^/]+)\/entity-by-path/);
+        if (!vaultMatch) { await route.fallback(); return; }
+        const vaultId = vaultMatch[1];
+        const pathParam = new URL(url).searchParams.get('path') ?? '';
+        const byPath = entityByPathByVaultId[vaultId] ?? {};
+        const result = byPath[pathParam] ?? { entity: null, relations: [] };
+        if (result.entity === null) {
+            await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'Not found' }) });
+        } else {
+            await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) });
+        }
+    });
+
+    await page.route(/.*\/api\/vaults\/[^/]+\/entity-template.*/, async (route) => {
+        const url = route.request().url();
+        const typeId = new URL(url).searchParams.get('type') ?? '';
+        const content = entityTemplatesByTypeId[typeId] ?? `---\ncodex_type: ${typeId}\n---\n`;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content }) });
+    });
+
+    await page.route('**/api/admin/entity-index-stats', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(entityIndexStats) });
     });
 }

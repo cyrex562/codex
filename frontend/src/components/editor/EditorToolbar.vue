@@ -97,6 +97,7 @@
       <v-btn value="raw" size="x-small" title="Plain text editor">Plain</v-btn>
       <v-btn value="formatted_raw" size="x-small" title="Markdown text with inline formatting">Formatted</v-btn>
       <v-btn value="fully_rendered" size="x-small" title="Rendered preview only">Preview</v-btn>
+      <v-btn value="structural" size="x-small" title="Structural entity editor">Structural</v-btn>
     </v-btn-toggle>
   </div>
 </template>
@@ -117,7 +118,7 @@ const emit = defineEmits<{
   'mode-change': [mode: EditorMode];
 }>();
 
-const editorVisible = computed(() => props.mode !== 'fully_rendered');
+const editorVisible = computed(() => props.mode !== 'fully_rendered' && props.mode !== 'structural');
 const isFormattedMode = computed(() => props.mode === 'formatted_raw');
 
 // Shared button binding applied to every icon button in the toolbar

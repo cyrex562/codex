@@ -523,6 +523,109 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // ── Worldbuilding: label registry ────────────────────────────────────
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS labels (
+                name        TEXT PRIMARY KEY NOT NULL,
+                description TEXT,
+                source      TEXT NOT NULL CHECK(source IN ('core', 'plugin')),
+                plugin_id   TEXT
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // ── Worldbuilding: entity store (derived from frontmatter) ───────────
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS entities (
+                id          TEXT PRIMARY KEY NOT NULL,
+                vault_id    TEXT NOT NULL,
+                path        TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                plugin_id   TEXT NOT NULL,
+                labels      TEXT NOT NULL,
+                fields      TEXT NOT NULL,
+                modified_at TEXT NOT NULL,
+                indexed_at  TEXT NOT NULL,
+                UNIQUE(vault_id, path),
+                FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_entities_vault_id ON entities(vault_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_entities_vault_type ON entities(vault_id, entity_type)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // ── Worldbuilding: relation edges (derived from entity_ref fields) ────
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS relations (
+                id              TEXT PRIMARY KEY NOT NULL,
+                vault_id        TEXT NOT NULL,
+                from_entity_id  TEXT NOT NULL,
+                to_entity_id    TEXT NOT NULL,
+                relation_type   TEXT NOT NULL,
+                direction       TEXT NOT NULL CHECK(direction IN ('forward', 'inverse')),
+                metadata        TEXT,
+                source          TEXT NOT NULL CHECK(source IN ('field', 'explicit')),
+                source_field    TEXT,
+                created_at      TEXT NOT NULL,
+                FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE CASCADE,
+                FOREIGN KEY (from_entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+                FOREIGN KEY (to_entity_id) REFERENCES entities(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_relations_from ON relations(from_entity_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_relations_to ON relations(to_entity_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_relations_vault ON relations(vault_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // ── Worldbuilding: reindex audit log ─────────────────────────────────
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS reindex_log (
+                vault_id     TEXT PRIMARY KEY NOT NULL,
+                completed_at TEXT NOT NULL,
+                file_count   INTEGER NOT NULL,
+                duration_ms  INTEGER NOT NULL,
+                FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 

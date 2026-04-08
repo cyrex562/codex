@@ -300,6 +300,12 @@ pub struct SearchResult {
     pub title: String,
     pub matches: Vec<SearchMatch>,
     pub score: f32,
+    /// Set when the file is a typed entity
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity_type: Option<String>,
+    /// Labels from `codex_labels` frontmatter when present
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

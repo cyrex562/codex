@@ -6,7 +6,7 @@ use crate::models::{
     CreateVaultRequest, FileChangeEvent, MlUndoReceipt, ShareVaultWithGroupRequest,
     ShareVaultWithUserRequest,
 };
-use crate::services::SearchIndex;
+use crate::services::{EntityTypeRegistry, RelationTypeRegistry, SearchIndex};
 use crate::watcher::FileWatcher;
 use actix_web::{delete, get, post, web, HttpMessage, HttpRequest, HttpResponse};
 use std::collections::HashMap;
@@ -23,6 +23,10 @@ pub struct AppState {
     pub event_broadcaster: broadcast::Sender<FileChangeEvent>,
     pub change_log_retention_days: u64,
     pub ml_undo_store: Arc<Mutex<HashMap<String, MlUndoReceipt>>>,
+    pub entity_type_registry: EntityTypeRegistry,
+    pub relation_type_registry: RelationTypeRegistry,
+    /// Path to the plugins directory (e.g. `"./plugins"`)
+    pub plugins_dir: String,
     /// Broadcast a `()` on this channel to tell all WebSocket sessions to
     /// send a Close frame and exit cleanly before the server stops.
     pub shutdown_tx: broadcast::Sender<()>,
