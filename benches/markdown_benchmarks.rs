@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use obsidian_host::services::MarkdownService;
+use codex::services::MarkdownService;
 
 fn benchmark_simple_markdown(c: &mut Criterion) {
     let markdown =

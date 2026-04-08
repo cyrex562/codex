@@ -1,5 +1,5 @@
-use obsidian_host::db::Database;
-use obsidian_host::models::EditorMode;
+use codex::db::Database;
+use codex::models::EditorMode;
 use tempfile::TempDir;
 
 #[tokio::test]

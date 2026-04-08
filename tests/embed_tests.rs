@@ -1,4 +1,4 @@
-use obsidian_host::services::MarkdownService;
+use codex::services::MarkdownService;
 
 #[test]
 fn test_basic_embed() {

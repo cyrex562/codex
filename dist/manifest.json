@@ -1,16 +1,16 @@
 {
-  "build_time_utc": "2026-03-14T15:58:14.810141+00:00",
-  "git_commit": "c51b673053daa4fcffd6fb507970664bef5126bd",
-  "release_id": "f8481b8d5f4d2aec",
+  "build_time_utc": "2026-04-07T23:59:03.390477+00:00",
+  "git_commit": "83e91d9ad40ba169e305290b9100c41b245150cf",
+  "release_id": "c8a29e6ec76b9c6c",
   "target_platform": "x86_64-unknown-linux-gnu",
-  "deployment_target": "obsidian-test-a",
+  "deployment_target": "local",
   "server": {
-    "artifact": "server/obsidian-host",
-    "sha256": "f8481b8d5f4d2aecb8441817a472f69f481a5fe21664908a26746f25dfbcbffa",
+    "artifact": "server/codex",
+    "sha256": "c8a29e6ec76b9c6cda08abf03e4b3233c5b968dbf0ea89f65c3cd603f8c69f04",
     "frontend_embedded": true
   },
   "desktop": {
-    "placeholder": true,
-    "path": "desktop"
+    "artifact": "desktop/codex-desktop",
+    "sha256": "e4b5f61b261d6f9fac238a3f23fcf069a2228073f30cead7eb613639ad563ed0"
   }
 }

@@ -1,4 +1,4 @@
-# Contributing to Obsidian Host
+# Contributing to Codex
 
 We welcome contributions! Here's how to get started.
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Plugin Management UI provides a comprehensive interface for managing plugins in Obsidian Host.
+The Plugin Management UI provides a comprehensive interface for managing plugins in Codex.
 
 ## Components Added
 
@@ -219,7 +219,7 @@ Returns list of all plugins with their status.
 [
   {
     "manifest": {
-      "id": "com.obsidian-host.daily-notes",
+      "id": "com.codex.daily-notes",
       "name": "Daily Notes",
       "version": "1.0.0",
       "description": "...",

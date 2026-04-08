@@ -1,10 +1,10 @@
-# Obsidian Host - User Guide
+# Codex - User Guide
 
-Welcome to Obsidian Host! This application allows you to host and edit your Obsidian vaults via a web interface.
+Welcome to Codex! This application allows you to host and edit your Obsidian vaults via a web interface.
 
 ## Getting Started
 
-1.  **Launch the Application**: Run the `obsidian-host` binary or start the Docker container.
+1.  **Launch the Application**: Run the `codex` binary or start the Docker container.
 2.  **Access the Web UI**: Open your browser and navigate to `http://localhost:8080` (or your configured port).
 3.  **Register a Vault**:
     -   Click "Manage Vaults" or the vault switcher in the sidebar.

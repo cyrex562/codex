@@ -1,9 +1,9 @@
 {
-    "id": "com.obsidian-host.backlinks",
+    "id": "com.codex.backlinks",
     "name": "Backlinks",
     "version": "1.0.0",
     "description": "Show all notes that link to the current note",
-    "author": "Obsidian Host Team",
+    "author": "Codex Team",
     "license": "MIT",
     "main": "main.js",
     "plugin_type": "javascript",

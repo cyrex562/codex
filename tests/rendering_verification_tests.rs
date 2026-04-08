@@ -1,4 +1,4 @@
-use obsidian_host::services::MarkdownService;
+use codex::services::MarkdownService;
 
 /// Rendering correctness verification tests
 /// These tests verify that the HTML output is semantically correct and well-formed

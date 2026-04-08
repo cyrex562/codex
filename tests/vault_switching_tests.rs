@@ -1,5 +1,5 @@
-use obsidian_host::db::Database;
-use obsidian_host::services::{FileService, SearchIndex};
+use codex::db::Database;
+use codex::services::{FileService, SearchIndex};
 use tempfile::TempDir;
 
 #[tokio::test]

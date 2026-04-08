@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Obsidian Host is a full-stack application built with Rust (backend) and TypeScript (frontend), managing a local SQLite database for metadata.
+Codex is a full-stack application built with Rust (backend) and TypeScript (frontend), managing a local SQLite database for metadata.
 
 ## Tech Stack
 

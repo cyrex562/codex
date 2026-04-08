@@ -1,7 +1,7 @@
 {
-  "name": "obsidian-host-frontend",
+  "name": "codex-frontend",
   "version": "0.1.0",
-  "description": "Frontend for Obsidian Host",
+  "description": "Frontend for Codex",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -1,6 +1,6 @@
-# Obsidian Host Plugins
+# Codex Plugins
 
-This directory contains core plugins for Obsidian Host. Each plugin demonstrates different aspects of the plugin API.
+This directory contains core plugins for Codex. Each plugin demonstrates different aspects of the plugin API.
 
 ## Core Plugins
 
@@ -185,7 +185,7 @@ await this.api.extract_frontmatter(content);
 2. Add `manifest.json` with plugin metadata
 3. Create `main.js` with plugin class
 4. Export the plugin class as default
-5. Test with Obsidian Host
+5. Test with Codex
 
 ### Testing
 

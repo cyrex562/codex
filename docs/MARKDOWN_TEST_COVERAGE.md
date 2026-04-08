@@ -2,7 +2,7 @@
 
 ## Test Summary
 
-This document provides an overview of the markdown feature testing for the Obsidian Host project.
+This document provides an overview of the markdown feature testing for the Codex project.
 
 ## Test Suites
 
@@ -140,4 +140,4 @@ The markdown service has **comprehensive test coverage** with:
 - Extended GFM features support
 - Syntax highlighting for 100+ languages
 
-The implementation is production-ready for markdown rendering in the Obsidian Host application.
+The implementation is production-ready for markdown rendering in the Codex application.

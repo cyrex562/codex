@@ -1,9 +1,9 @@
 {
-    "id": "com.obsidian-host.daily-notes",
+    "id": "com.codex.daily-notes",
     "name": "Daily Notes",
     "version": "1.0.0",
     "description": "Automatically create and manage daily notes with templates",
-    "author": "Obsidian Host Team",
+    "author": "Codex Team",
     "license": "MIT",
     "main": "main.js",
     "plugin_type": "javascript",

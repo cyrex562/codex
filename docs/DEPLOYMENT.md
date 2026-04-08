@@ -4,8 +4,8 @@
 
 ```bash
 # 1. Clone and build
-git clone <repo-url> obsidian-host
-cd obsidian-host
+git clone <repo-url> codex
+cd codex
 
 # 2. Generate a JWT secret
 export JWT_SECRET=$(openssl rand -hex 32)
@@ -24,10 +24,10 @@ Edit `docker-compose.yml` environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OBSIDIAN__AUTH__ENABLED` | `true` | Enable/disable authentication |
-| `OBSIDIAN__AUTH__JWT_SECRET` | (auto) | Stable JWT signing secret |
-| `OBSIDIAN__AUTH__BOOTSTRAP_ADMIN_USERNAME` | `admin` | Initial admin username |
-| `OBSIDIAN__AUTH__BOOTSTRAP_ADMIN_PASSWORD` | — | Initial admin password |
+| `CODEX__AUTH__ENABLED` | `true` | Enable/disable authentication |
+| `CODEX__AUTH__JWT_SECRET` | (auto) | Stable JWT signing secret |
+| `CODEX__AUTH__BOOTSTRAP_ADMIN_USERNAME` | `admin` | Initial admin username |
+| `CODEX__AUTH__BOOTSTRAP_ADMIN_PASSWORD` | — | Initial admin password |
 | `RATE_LIMIT_REQUESTS` | `120` | Max requests per 60s per IP |
 | `RUST_LOG` | `info` | Log level |
 
@@ -47,7 +47,7 @@ cp config.toml config.local.toml
 #   - Set auth.bootstrap_admin_password = "<strong-password>"
 
 # 3. Run
-./target/release/obsidian-host
+./target/release/codex
 # Server starts at http://127.0.0.1:8080
 ```
 
@@ -162,7 +162,7 @@ curl http://localhost:8080/api/health
 The server uses a single SQLite file. To back up:
 
 ```bash
-sqlite3 /data/obsidian-host.db ".backup /backups/obsidian-host-$(date +%F).db"
+sqlite3 /data/codex.db ".backup /backups/codex-$(date +%F).db"
 ```
 
 Vault files are regular filesystem files in the configured `vault.base_dir`.

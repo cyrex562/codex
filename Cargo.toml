@@ -1,11 +1,11 @@
 [workspace]
 members = [
-	"crates/obsidian-server",
-	"crates/obsidian-types",
-	"crates/obsidian-client",
-	"crates/obsidian-desktop",
+	"crates/codex-server",
+	"crates/codex-types",
+	"crates/codex-client",
+	"crates/codex-desktop",
 ]
-default-members = ["crates/obsidian-server"]
+default-members = ["crates/codex-server"]
 resolver = "2"
 
 [profile.release]

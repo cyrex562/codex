@@ -1,9 +1,9 @@
 use actix_web::{test, web, App};
-use obsidian_host::db::Database;
-use obsidian_host::models::{CreateFileRequest, UpdateFileRequest};
-use obsidian_host::routes::{files, vaults, AppState};
-use obsidian_host::services::{default_storage_backend, FileService, SearchIndex};
-use obsidian_host::watcher::FileWatcher;
+use codex::db::Database;
+use codex::models::{CreateFileRequest, UpdateFileRequest};
+use codex::routes::{files, vaults, AppState};
+use codex::services::{default_storage_backend, FileService, SearchIndex};
+use codex::watcher::FileWatcher;
 use serde_json::json;
 use std::sync::Arc;
 use tempfile::TempDir;

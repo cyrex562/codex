@@ -1,4 +1,4 @@
-use obsidian_host::services::{FileService, SearchIndex};
+use codex::services::{FileService, SearchIndex};
 use std::fs;
 use std::io::Write;
 use std::time::Instant;

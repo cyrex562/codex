@@ -1,5 +1,5 @@
-use obsidian_host::error::AppError;
-use obsidian_host::services::FileService;
+use codex::error::AppError;
+use codex::services::FileService;
 use tempfile::TempDir;
 
 #[test]
@@ -54,7 +54,7 @@ fn test_input_validation_filenames() {
 #[test]
 fn test_xss_protection_in_markdown() {
     // This tests that our markdown rendering doesn't blindly output dangerous HTML
-    use obsidian_host::services::MarkdownService;
+    use codex::services::MarkdownService;
 
     let dangerous_content = "<script>alert('xss')</script>";
     let rendered = MarkdownService::to_html(dangerous_content);

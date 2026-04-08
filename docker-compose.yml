@@ -1,27 +1,27 @@
 version: '3.8'
 
 services:
-  obsidian-host:
+  codex:
     build: .
-    image: obsidian-host:latest
-    container_name: obsidian-host
+    image: codex:latest
+    container_name: codex
     ports:
       - "8080:8080"
     volumes:
-      - obsidian_data:/data
+      - codex_data:/data
       # Uncomment to mount local vault directory:
       # - ./my-vaults:/data/vaults
     environment:
-      - OBSIDIAN__SERVER__HOST=0.0.0.0
-      - OBSIDIAN__SERVER__PORT=8080
-      - OBSIDIAN__DATABASE__PATH=/data/obsidian-host.db
-      - OBSIDIAN__VAULT__BASE_DIR=/data/vaults
-      - OBSIDIAN__AUTH__ENABLED=true
-      - OBSIDIAN__AUTH__BOOTSTRAP_ADMIN_USERNAME=admin
+      - CODEX__SERVER__HOST=0.0.0.0
+      - CODEX__SERVER__PORT=8080
+      - CODEX__DATABASE__PATH=/data/codex.db
+      - CODEX__VAULT__BASE_DIR=/data/vaults
+      - CODEX__AUTH__ENABLED=true
+      - CODEX__AUTH__BOOTSTRAP_ADMIN_USERNAME=admin
       # IMPORTANT: Change this before first run, then remove it.
-      - OBSIDIAN__AUTH__BOOTSTRAP_ADMIN_PASSWORD=changeme-on-first-login
+      - CODEX__AUTH__BOOTSTRAP_ADMIN_PASSWORD=changeme-on-first-login
       # Generate a stable secret: openssl rand -hex 32
-      # - OBSIDIAN__AUTH__JWT_SECRET=your-secret-here
+      # - CODEX__AUTH__JWT_SECRET=your-secret-here
       - RUST_LOG=info
       # Rate limiting (requests per 60-second window per IP)
       - RATE_LIMIT_REQUESTS=120
@@ -34,4 +34,4 @@ services:
       retries: 3
 
 volumes:
-  obsidian_data:
+  codex_data:

@@ -1,8 +1,8 @@
-# Obsidian Host UI Test Plan
+# Codex UI Test Plan
 
 ## Overview
 
-This document outlines the manual and automated testing strategy to verify all user interface features of the Obsidian Host application. It covers core functionality, plugin management, and advanced features.
+This document outlines the manual and automated testing strategy to verify all user interface features of the Codex application. It covers core functionality, plugin management, and advanced features.
 
 ## 1. Vault Management
 

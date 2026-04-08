@@ -1,4 +1,4 @@
-# Copilot Instructions for Obsidian Host
+# Copilot Instructions for Codex
 
 A self-hosted web UI for Obsidian vaults built with Rust (backend) and Vue.js/TypeScript (frontend).
 
@@ -89,7 +89,7 @@ This is a **Cargo workspace** with 4 crates:
 
 ### Desktop Client
 
-The native desktop client (`obsidian-desktop`) is a standalone GUI application built with **Iced** (Rust GUI framework). It connects to the Obsidian Host server via the `obsidian-client` library.
+The native desktop client (`obsidian-desktop`) is a standalone GUI application built with **Iced** (Rust GUI framework). It connects to the Codex server via the `obsidian-client` library.
 
 **Architecture:**
 - **UI Framework:** Iced (immediate-mode GUI with Elm architecture)
@@ -122,7 +122,7 @@ cargo build --release -p obsidian-desktop
 
 **Desktop logging:** Set `RUST_LOG=obsidian_desktop=debug` for verbose output.
 
-**Important:** The desktop client is a **server client** - it requires a running Obsidian Host server (web or self-hosted) to connect to. Configure the server URL in the login screen.
+**Important:** The desktop client is a **server client** - it requires a running Codex server (web or self-hosted) to connect to. Configure the server URL in the login screen.
 
 ### Desktop-Server Synchronization
 
@@ -139,7 +139,7 @@ The desktop client uses a **partial sync** model for performance and offline sup
 - Large file uploads use chunked transfer via upload sessions (`create_upload_session` → `upload_chunk` → `finish_upload_session`)
 
 **Local caching (`state.rs`):**
-- **Cache location:** `~/.config/obsidian-host/file-cache/{vault_id}/` (Linux/macOS) or `%APPDATA%\obsidian-host\file-cache\{vault_id}\` (Windows)
+- **Cache location:** `~/.config/codex/file-cache/{vault_id}/` (Linux/macOS) or `%APPDATA%\codex\file-cache\{vault_id}\` (Windows)
 - **What's cached:** File content of opened files (flat structure with `__` path separators)
 - **Offline edits:** Queued in `__edit_queue__/` subdirectory with timestamp prefixes
 - **Replay on reconnect:** `drain_offline_edits()` replays queued edits when connection restored
@@ -230,7 +230,7 @@ SQLite stores:
 - **Follow `rustfmt` and `clippy` standards** - Run before committing
 - **Error handling:** Use `anyhow::Result` for most functions, `thiserror` for custom errors
 - **Logging:** Use `tracing` macros (`info!`, `debug!`, `warn!`, `error!`)
-- **Configuration:** Environment vars override `config.toml` using double underscores (e.g., `OBSIDIAN__SERVER__PORT`)
+- **Configuration:** Environment vars override `config.toml` using double underscores (e.g., `CODEX__SERVER__PORT`)
 
 ### Frontend Code
 
@@ -255,7 +255,7 @@ SQLite stores:
 ## Configuration
 
 Configuration is loaded from (in priority order):
-1. Environment variables (`OBSIDIAN__*`)
+1. Environment variables (`CODEX__*`)
 2. `config.toml` file
 3. Defaults
 
@@ -318,7 +318,7 @@ docker-compose up
 ```bash
 cd frontend && npm run build && cd ..
 cargo build --release
-./target/release/obsidian-host
+./target/release/codex
 ```
 
 **Cross-compilation:**

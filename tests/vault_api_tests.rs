@@ -1,9 +1,9 @@
 use actix_web::{test, web, App};
-use obsidian_host::db::Database;
-use obsidian_host::models::CreateVaultRequest;
-use obsidian_host::routes::{vaults, AppState};
-use obsidian_host::services::{default_storage_backend, SearchIndex};
-use obsidian_host::watcher::FileWatcher;
+use codex::db::Database;
+use codex::models::CreateVaultRequest;
+use codex::routes::{vaults, AppState};
+use codex::services::{default_storage_backend, SearchIndex};
+use codex::watcher::FileWatcher;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::{broadcast, Mutex};

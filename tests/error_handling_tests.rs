@@ -1,5 +1,5 @@
 use actix_web::ResponseError;
-use obsidian_host::error::{AppError, FileSystemError, VaultError};
+use codex::error::{AppError, FileSystemError, VaultError};
 use std::io;
 
 #[test]

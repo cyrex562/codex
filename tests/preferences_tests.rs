@@ -1,5 +1,5 @@
-use obsidian_host::db::Database;
-use obsidian_host::models::{EditorMode, UserPreferences};
+use codex::db::Database;
+use codex::models::{EditorMode, UserPreferences};
 use tempfile::TempDir;
 
 async fn create_test_db() -> (Database, TempDir) {

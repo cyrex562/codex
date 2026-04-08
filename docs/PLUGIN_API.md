@@ -1,6 +1,6 @@
 # Plugin API Documentation
 
-Obsidian Host supports a frontend-centric plugin system allowing you to extend the UI and functionality using JavaScript and CSS.
+Codex supports a frontend-centric plugin system allowing you to extend the UI and functionality using JavaScript and CSS.
 
 ## Plugin Structure
 

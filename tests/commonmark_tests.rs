@@ -1,4 +1,4 @@
-use obsidian_host::services::MarkdownService;
+use codex::services::MarkdownService;
 
 /// Tests for CommonMark specification compliance
 /// Based on the CommonMark spec: https://spec.commonmark.org/

@@ -9,7 +9,7 @@
 To build the Docker image locally:
 
 ```bash
-docker build -t obsidian-host .
+docker build -t codex .
 ```
 
 *Note: The build process is multi-stage and builds both the frontend and backend. It may take a few minutes initially.*
@@ -30,16 +30,16 @@ The application will be available at `http://localhost:8080`.
 
 ```bash
 docker run -d \
-  --name obsidian-host \
+  --name codex \
   -p 8080:8080 \
   -v obsidian_data:/data \
-  obsidian-host
+  codex
 ```
 
 ## Volumes
 
 The container uses `/data` to store:
-- `obsidian-host.db` (The SQLite database)
+- `codex.db` (The SQLite database)
 - `vaults/` (Default location for created vaults, though you can mount external paths)
 
 ### Mounting External Vaults
@@ -51,7 +51,7 @@ docker run -d \
   -p 8080:8080 \
   -v $(pwd)/my-local-vaults:/data/vaults \
   -v obsidian_data:/data \
-  obsidian-host
+  codex
 ```
 
 Then, when registering a vault in the UI, use the container path (e.g., `/data/vaults/my-vault`).
@@ -62,8 +62,8 @@ You can override configuration using environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OBSIDIAN__SERVER__PORT` | 8080 | Server listening port |
-| `OBSIDIAN__DATABASE__PATH` | `/data/obsidian-host.db` | Path to SQLite database |
+| `CODEX__SERVER__PORT` | 8080 | Server listening port |
+| `CODEX__DATABASE__PATH` | `/data/codex.db` | Path to SQLite database |
 | `RUST_LOG` | `info` | Logging level (error, warn, info, debug, trace) |
 
 ## Image optimization

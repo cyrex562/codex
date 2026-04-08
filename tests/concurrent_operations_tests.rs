@@ -1,4 +1,4 @@
-use obsidian_host::services::{FileService, SearchIndex};
+use codex::services::{FileService, SearchIndex};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::task;
@@ -188,7 +188,7 @@ async fn test_concurrent_search_and_update() {
 
 #[tokio::test]
 async fn test_concurrent_vault_operations() {
-    use obsidian_host::db::Database;
+    use codex::db::Database;
 
     let db_dir = TempDir::new().unwrap();
     let db_path = db_dir.path().join("test.db");
@@ -226,7 +226,7 @@ async fn test_concurrent_vault_operations() {
 
 #[tokio::test]
 async fn test_concurrent_recent_file_updates() {
-    use obsidian_host::db::Database;
+    use codex::db::Database;
 
     let db_dir = TempDir::new().unwrap();
     let db_path = db_dir.path().join("test.db");

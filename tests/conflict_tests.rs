@@ -1,4 +1,4 @@
-use obsidian_host::services::FileService;
+use codex::services::FileService;
 use std::fs;
 use std::thread;
 use std::time::Duration;

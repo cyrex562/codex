@@ -1,6 +1,6 @@
 # API Documentation
 
-Obsidian Host exposes a RESTful API for managing vaults and files.
+Codex exposes a RESTful API for managing vaults and files.
 
 ## Base URL
 

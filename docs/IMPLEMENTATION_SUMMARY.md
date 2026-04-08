@@ -1,7 +1,7 @@
-# Obsidian Host - Implementation Summary
+# Codex - Implementation Summary
 
 ## Project Overview
-Obsidian Host is a self-hosted, web-based knowledge management system inspired by Obsidian.md, built with Rust (backend) and TypeScript (frontend).
+Codex is a self-hosted, web-based knowledge management system inspired by Obsidian.md, built with Rust (backend) and TypeScript (frontend).
 
 ## Completed Features
 
@@ -282,7 +282,7 @@ Obsidian Host is a self-hosted, web-based knowledge management system inspired b
 
 ## Conclusion
 
-Obsidian Host now has a **fully functional plugin system** with:
+Codex now has a **fully functional plugin system** with:
 - Complete architecture and security model
 - Three working example plugins
 - Comprehensive management UI

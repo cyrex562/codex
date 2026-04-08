@@ -1,9 +1,9 @@
 {
-    "id": "com.obsidian-host.word-count",
+    "id": "com.codex.word-count",
     "name": "Word Count",
     "version": "1.0.0",
     "description": "Display word count, character count, and reading time for the current note",
-    "author": "Obsidian Host Team",
+    "author": "Codex Team",
     "license": "MIT",
     "main": "main.js",
     "plugin_type": "javascript",
