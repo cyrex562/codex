@@ -1,7 +1,7 @@
 use actix_web::{test, web, App};
 use codex::db::Database;
 use codex::routes::{ml, AppState};
-use codex::services::{default_storage_backend, SearchIndex};
+use codex::services::{default_storage_backend, MarkdownParser, SearchIndex};
 use codex::watcher::FileWatcher;
 use serde_json::json;
 use std::collections::HashMap;
@@ -42,9 +42,11 @@ async fn apply_tag_and_undo_restores_file_and_receipt_is_single_use() {
         storage: default_storage_backend(),
         watcher,
         event_broadcaster: event_tx,
+        ws_broadcaster: tokio::sync::broadcast::channel::<codex::models::WsMessage>(16).0,
         change_log_retention_days: 7,
         ml_undo_store: Arc::new(Mutex::new(HashMap::new())),
     shutdown_tx: tokio::sync::broadcast::channel::<()>(1).0,
+        document_parser: Arc::new(MarkdownParser),
         entity_type_registry: codex::services::EntityTypeRegistry::new(),
         relation_type_registry: codex::services::RelationTypeRegistry::new(),
         plugins_dir: String::new(),
@@ -136,9 +138,11 @@ async fn apply_move_and_undo_restores_original_path() {
         storage: default_storage_backend(),
         watcher,
         event_broadcaster: event_tx,
+        ws_broadcaster: tokio::sync::broadcast::channel::<codex::models::WsMessage>(16).0,
         change_log_retention_days: 7,
         ml_undo_store: Arc::new(Mutex::new(HashMap::new())),
     shutdown_tx: tokio::sync::broadcast::channel::<()>(1).0,
+        document_parser: Arc::new(MarkdownParser),
         entity_type_registry: codex::services::EntityTypeRegistry::new(),
         relation_type_registry: codex::services::RelationTypeRegistry::new(),
         plugins_dir: String::new(),
@@ -216,12 +220,14 @@ async fn undo_receipt_persists_across_app_reinitialization() {
             storage: default_storage_backend(),
             watcher,
             event_broadcaster: event_tx,
+            ws_broadcaster: tokio::sync::broadcast::channel::<codex::models::WsMessage>(16).0,
             change_log_retention_days: 7,
             ml_undo_store: Arc::new(Mutex::new(HashMap::new())),
         shutdown_tx: tokio::sync::broadcast::channel::<()>(1).0,
-        entity_type_registry: codex::services::EntityTypeRegistry::new(),
-        relation_type_registry: codex::services::RelationTypeRegistry::new(),
-        plugins_dir: String::new(),
+            document_parser: Arc::new(MarkdownParser),
+            entity_type_registry: codex::services::EntityTypeRegistry::new(),
+            relation_type_registry: codex::services::RelationTypeRegistry::new(),
+            plugins_dir: String::new(),
         });
 
         let app =
@@ -263,12 +269,14 @@ async fn undo_receipt_persists_across_app_reinitialization() {
             storage: default_storage_backend(),
             watcher,
             event_broadcaster: event_tx,
+            ws_broadcaster: tokio::sync::broadcast::channel::<codex::models::WsMessage>(16).0,
             change_log_retention_days: 7,
             ml_undo_store: Arc::new(Mutex::new(HashMap::new())),
         shutdown_tx: tokio::sync::broadcast::channel::<()>(1).0,
-        entity_type_registry: codex::services::EntityTypeRegistry::new(),
-        relation_type_registry: codex::services::RelationTypeRegistry::new(),
-        plugins_dir: String::new(),
+            document_parser: Arc::new(MarkdownParser),
+            entity_type_registry: codex::services::EntityTypeRegistry::new(),
+            relation_type_registry: codex::services::RelationTypeRegistry::new(),
+            plugins_dir: String::new(),
         });
 
         let app =

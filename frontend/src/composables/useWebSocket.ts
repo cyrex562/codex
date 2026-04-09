@@ -4,6 +4,7 @@ import { useFilesStore } from '@/stores/files';
 import { useTabsStore } from '@/stores/tabs';
 import { useVaultsStore } from '@/stores/vaults';
 import { useAuthStore } from '@/stores/auth';
+import { useNotifications } from '@/composables/useNotifications';
 
 const WS_BASE_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws`;
 const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -27,6 +28,10 @@ function handleMessage(event: MessageEvent) {
     } catch {
         return;
     }
+
+    // Forward all events to the notification composable (best-effort).
+    const { handleWsMessage } = useNotifications();
+    handleWsMessage(msg as { type: string; [key: string]: unknown });
 
     switch (msg.type) {
         case 'FileChanged': {
@@ -58,6 +63,9 @@ function handleMessage(event: MessageEvent) {
             });
             break;
         }
+        case 'ReindexComplete':
+            // Notification was already fired above; no UI state update needed.
+            break;
         case 'SyncPing':
         case 'SyncPong':
             // Reserved for desktop sync heartbeat handling.

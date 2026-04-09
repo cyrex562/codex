@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -515,6 +516,12 @@ pub enum WsMessage {
         etag: Option<String>,
         timestamp: i64,
     },
+    /// Broadcast after a full vault reindex completes.
+    ReindexComplete {
+        vault_id: String,
+        file_count: i64,
+        duration_ms: i64,
+    },
     SyncPing,
     SyncPong {
         server_time: i64,
@@ -522,4 +529,40 @@ pub enum WsMessage {
     Error {
         message: String,
     },
+}
+
+// ── Document format abstraction ──────────────────────────────────────────────
+
+/// The output of rendering a document source into HTML.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderedDocument {
+    /// Rendered HTML body (does not include `<html>`/`<body>` wrapper tags).
+    pub html: String,
+}
+
+/// Parsed document frontmatter as a JSON value.
+///
+/// Typically a `Value::Object` mapping key names to values.  `Value::Null`
+/// is returned when the source document contains no frontmatter block.
+pub type Frontmatter = Value;
+
+/// Abstraction over document formats (Markdown, MDX, …).
+///
+/// All document rendering and metadata extraction goes through this trait so
+/// that a future `MdxParser` can be swapped in without touching call sites.
+///
+/// Implementations must be cheaply cloneable behind an `Arc`; they should
+/// hold no mutable per-request state.
+pub trait DocumentParser: Send + Sync {
+    /// Render `source` to HTML.
+    fn render(&self, source: &str) -> RenderedDocument;
+
+    /// Extract the frontmatter block from `source`.
+    ///
+    /// Returns `Value::Null` when no frontmatter is present.
+    fn extract_frontmatter(&self, source: &str) -> Frontmatter;
+
+    /// Return the prose body of `source` with frontmatter and any structural
+    /// sentinels (e.g. `<!-- codex:prose:begin -->`) stripped.
+    fn extract_prose(&self, source: &str) -> String;
 }

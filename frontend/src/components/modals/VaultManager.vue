@@ -36,8 +36,34 @@
         <!-- Add vault form -->
         <p class="text-caption font-weight-bold mb-2">Add Vault</p>
         <v-text-field v-model="newName" label="Name" density="compact" />
+        <div v-if="showPathField" class="d-flex align-center gap-2 mb-1">
+          <v-text-field
+            v-model="newPath"
+            label="Directory path (optional)"
+            density="compact"
+            hide-details
+            class="flex-grow-1"
+            data-testid="vault-path-input"
+            :readonly="isTauriEnv"
+            :placeholder="isTauriEnv ? 'Click Browse… to select a folder' : '/path/to/vault'"
+          />
+          <v-btn
+            v-if="isTauriEnv"
+            variant="tonal"
+            size="small"
+            data-testid="vault-browse-btn"
+            @click="browseForVaultDir"
+          >Browse…</v-btn>
+        </div>
         <div class="text-caption text-medium-emphasis mb-2">
-          Vault directories are created automatically under the server-configured vault base directory.
+          <template v-if="!showPathField">
+            Vault directories are created automatically under the server-configured vault base directory.
+            <a href="#" class="text-primary" @click.prevent="showPathField = true">Set a custom path</a>
+          </template>
+          <template v-else>
+            Leave the path blank to use the server default.
+            <a href="#" class="text-primary" @click.prevent="showPathField = false; newPath = ''">Use default</a>
+          </template>
         </div>
 
         <v-divider class="my-3" />
@@ -244,12 +270,16 @@ import {
   apiShareVaultWithUser,
 } from '@/api/client';
 import type { GroupInfo, GroupMember, VaultRole, VaultShareList } from '@/api/types';
+import { isTauri, openDirectoryDialog } from '@/utils/tauri';
 
 const props = defineProps<{ modelValue: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [v: boolean] }>();
 
 const vaultsStore = useVaultsStore();
 const newName = ref('');
+const newPath = ref('');
+const showPathField = ref(false);
+const isTauriEnv = isTauri();
 const saving = ref(false);
 const sharingBusy = ref(false);
 const sharingError = ref('');
@@ -302,10 +332,23 @@ async function addVault() {
   if (!newName.value) return;
   saving.value = true;
   try {
-    await vaultsStore.createVault({ name: newName.value });
+    await vaultsStore.createVault({
+      name: newName.value,
+      path: newPath.value.trim() || undefined,
+    });
     newName.value = '';
+    newPath.value = '';
+    showPathField.value = false;
   } finally {
     saving.value = false;
+  }
+}
+
+async function browseForVaultDir() {
+  const selected = await openDirectoryDialog();
+  if (selected) {
+    newPath.value = selected;
+    showPathField.value = true;
   }
 }
 

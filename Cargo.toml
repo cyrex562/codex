@@ -4,6 +4,7 @@ members = [
 	"crates/codex-types",
 	"crates/codex-client",
 	"crates/codex-desktop",
+	"crates/codex-tauri",
 ]
 default-members = ["crates/codex-server"]
 resolver = "2"

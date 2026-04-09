@@ -201,11 +201,25 @@ async fn trigger_reindex(
 
     // Spawn async so we return immediately (reindex can be slow)
     let db = state.db.clone();
+    let ws_tx = state.ws_broadcaster.clone();
     let vid = vault_id.clone();
     let vpath = vault.path.clone();
     tokio::spawn(async move {
-        if let Err(e) = ReindexService::reindex_vault(&db, &vid, &vpath).await {
-            tracing::error!("Background reindex failed for vault {vid}: {e}");
+        let start = std::time::Instant::now();
+        match ReindexService::reindex_vault(&db, &vid, &vpath).await {
+            Ok(file_count) => {
+                let duration_ms = start.elapsed().as_millis() as i64;
+                let msg = crate::models::WsMessage::ReindexComplete {
+                    vault_id: vid.clone(),
+                    file_count,
+                    duration_ms,
+                };
+                let _ = ws_tx.send(msg);
+                tracing::info!("Reindex complete for vault {vid}: {file_count} files in {duration_ms}ms");
+            }
+            Err(e) => {
+                tracing::error!("Background reindex failed for vault {vid}: {e}");
+            }
         }
     });
 

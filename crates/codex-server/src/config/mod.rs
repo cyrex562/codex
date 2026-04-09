@@ -1,4 +1,6 @@
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 pub const DEFAULT_DEV_JWT_SECRET: &str = "dev-insecure-jwt-secret-change-me";
 
@@ -342,27 +344,99 @@ impl Default for StorageConfig {
     }
 }
 
+/// Platform-standard directory set passed to `AppConfig` when running as the
+/// Tauri desktop app. Standalone server (`--config` flag) does not use this.
+#[derive(Debug, Clone)]
+pub struct CodexPaths {
+    /// Directory that holds `config.toml`. Maps to `app_config_dir()` in Tauri.
+    pub config_dir: PathBuf,
+    /// Directory for the database, plugins, and logs. Maps to `app_data_dir()`.
+    pub data_dir: PathBuf,
+    /// Cache directory. Maps to `app_cache_dir()`.
+    pub cache_dir: PathBuf,
+    /// Default location where the user's vault(s) live.
+    pub default_vault_dir: PathBuf,
+}
+
 impl AppConfig {
-    pub fn load() -> Result<Self, config::ConfigError> {
-        let config = config::Config::builder()
-            // Start with defaults
+    /// Load from an explicit file path (standalone server / `--config` flag).
+    ///
+    /// Returns a descriptive error if the file is missing or cannot be parsed.
+    /// Environment variable overrides (`CODEX__*`) are applied on top.
+    pub fn load_from_file(path: PathBuf) -> anyhow::Result<Self> {
+        if !path.exists() {
+            anyhow::bail!("Config file not found: {}", path.display());
+        }
+        let path_str = path
+            .to_str()
+            .context("Config path contains non-UTF-8 characters")?;
+        let cfg = config::Config::builder()
             .add_source(config::File::from_str(
                 &serde_json::to_string(&AppConfig::default()).unwrap(),
                 config::FileFormat::Json,
             ))
-            // Merge with local config file if exists
-            .add_source(config::File::with_name("config").required(false))
-            // Merge with environment variables
+            .add_source(
+                config::File::new(path_str, config::FileFormat::Toml).required(true),
+            )
             .add_source(config::Environment::with_prefix("CODEX").separator("__"))
-            .build()?;
+            .build()
+            .with_context(|| format!("Failed to load config from {}", path.display()))?;
+        cfg.try_deserialize()
+            .with_context(|| format!("Failed to parse config from {}", path.display()))
+    }
 
-        config.try_deserialize()
+    /// Load using Tauri platform directories.
+    ///
+    /// Reads `{config_dir}/config.toml` when it exists; otherwise returns the
+    /// struct produced by `default_for_dirs` (no error).
+    pub fn load_from_dirs(paths: &CodexPaths) -> anyhow::Result<Self> {
+        let config_file = paths.config_dir.join("config.toml");
+        if config_file.exists() {
+            Self::load_from_file(config_file)
+        } else {
+            Ok(Self::default_for_dirs(paths))
+        }
+    }
+
+    /// Write a default `config.toml` into `paths.config_dir` and return it.
+    ///
+    /// Creates the directory if it does not exist. Safe to call repeatedly —
+    /// subsequent calls overwrite the file with the same content.
+    pub fn write_default(paths: &CodexPaths) -> anyhow::Result<Self> {
+        std::fs::create_dir_all(&paths.config_dir).with_context(|| {
+            format!("Failed to create config dir: {}", paths.config_dir.display())
+        })?;
+        let config = Self::default_for_dirs(paths);
+        let content = toml::to_string_pretty(&config)
+            .context("Failed to serialize default config to TOML")?;
+        let dest = paths.config_dir.join("config.toml");
+        std::fs::write(&dest, &content)
+            .with_context(|| format!("Failed to write config to {}", dest.display()))?;
+        Ok(config)
+    }
+
+    /// Build a default `AppConfig` with paths derived from the provided
+    /// `CodexPaths`. No reference to the working directory.
+    pub fn default_for_dirs(paths: &CodexPaths) -> Self {
+        let mut cfg = AppConfig::default();
+        cfg.database.path = paths
+            .data_dir
+            .join("codex.db")
+            .to_string_lossy()
+            .into_owned();
+        cfg.vault.base_dir = paths
+            .default_vault_dir
+            .to_string_lossy()
+            .into_owned();
+        cfg
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+    use tempfile::TempDir;
 
     #[test]
     fn test_default_config() {
@@ -390,5 +464,157 @@ mod tests {
         assert!(exclusions.contains(&".git".to_string()));
         assert!(exclusions.contains(&".obsidian".to_string()));
         assert!(exclusions.contains(&".trash".to_string()));
+    }
+
+    // ── load_from_file ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_load_from_file_missing_file_returns_error() {
+        let result = AppConfig::load_from_file("/nonexistent/path/config.toml".into());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("Config file not found"), "unexpected: {msg}");
+    }
+
+    #[test]
+    fn test_load_from_file_malformed_toml_returns_error() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("bad.toml");
+        std::fs::write(&path, "this is [[[not valid toml").unwrap();
+        let result = AppConfig::load_from_file(path.clone());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains(path.display().to_string().as_str())
+                || msg.contains("Failed"),
+            "unexpected: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_load_from_file_valid_file_overrides_defaults() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, "[server]\nport = 9090\n").unwrap();
+        let config = AppConfig::load_from_file(path).unwrap();
+        assert_eq!(config.server.port, 9090);
+        // Unspecified fields keep defaults
+        assert_eq!(config.server.host, "127.0.0.1");
+    }
+
+    #[test]
+    fn test_load_from_file_omitted_fields_use_defaults() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("config.toml");
+        // Empty file — all defaults apply
+        std::fs::write(&path, "").unwrap();
+        let config = AppConfig::load_from_file(path).unwrap();
+        assert_eq!(config.server.port, 8080);
+        assert_eq!(config.server.host, "127.0.0.1");
+    }
+
+    // ── load_from_dirs ────────────────────────────────────────────────────
+
+    fn make_paths(temp: &TempDir) -> CodexPaths {
+        CodexPaths {
+            config_dir: temp.path().join("config"),
+            data_dir: temp.path().join("data"),
+            cache_dir: temp.path().join("cache"),
+            default_vault_dir: temp.path().join("Documents/Codex"),
+        }
+    }
+
+    #[test]
+    fn test_load_from_dirs_no_config_file_returns_defaults() {
+        let temp = TempDir::new().unwrap();
+        let paths = make_paths(&temp);
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        // No config.toml — should succeed with default_for_dirs values
+        let config = AppConfig::load_from_dirs(&paths).unwrap();
+        assert!(config.database.path.contains("codex.db"));
+        assert!(
+            config.vault.base_dir.contains("Codex"),
+            "base_dir should reference default vault dir"
+        );
+    }
+
+    #[test]
+    fn test_load_from_dirs_existing_file_is_read() {
+        let temp = TempDir::new().unwrap();
+        let paths = make_paths(&temp);
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        let config_path = paths.config_dir.join("config.toml");
+        std::fs::write(&config_path, "[server]\nport = 7777\n").unwrap();
+        let config = AppConfig::load_from_dirs(&paths).unwrap();
+        assert_eq!(config.server.port, 7777);
+    }
+
+    // ── write_default ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_write_default_creates_file_at_correct_path() {
+        let temp = TempDir::new().unwrap();
+        let paths = make_paths(&temp);
+        // config_dir does not yet exist
+        AppConfig::write_default(&paths).unwrap();
+        assert!(paths.config_dir.join("config.toml").exists());
+    }
+
+    #[test]
+    fn test_write_default_content_round_trips() {
+        let temp = TempDir::new().unwrap();
+        let paths = make_paths(&temp);
+        let written = AppConfig::write_default(&paths).unwrap();
+        // Read back and compare key field
+        let read_back = AppConfig::load_from_file(paths.config_dir.join("config.toml")).unwrap();
+        assert_eq!(written.server.port, read_back.server.port);
+        assert_eq!(written.database.path, read_back.database.path);
+    }
+
+    #[test]
+    fn test_write_default_is_idempotent() {
+        let temp = TempDir::new().unwrap();
+        let paths = make_paths(&temp);
+        AppConfig::write_default(&paths).unwrap();
+        // Second call overwrites — should not error
+        AppConfig::write_default(&paths).unwrap();
+    }
+
+    // ── default_for_dirs ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_default_for_dirs_paths_resolve_relative_to_codex_paths() {
+        let temp = TempDir::new().unwrap();
+        let paths = make_paths(&temp);
+        let config = AppConfig::default_for_dirs(&paths);
+        assert!(
+            config.database.path.contains("codex.db"),
+            "database path should include codex.db"
+        );
+        assert!(
+            Path::new(&config.database.path).is_absolute(),
+            "database path should be absolute"
+        );
+        assert!(
+            Path::new(&config.vault.base_dir).is_absolute(),
+            "vault base_dir should be absolute"
+        );
+    }
+
+    #[test]
+    fn test_default_for_dirs_does_not_reference_working_directory() {
+        let temp = TempDir::new().unwrap();
+        let paths = make_paths(&temp);
+        let config = AppConfig::default_for_dirs(&paths);
+        assert!(
+            !config.database.path.starts_with("./"),
+            "database.path must not start with ./: {}",
+            config.database.path
+        );
+        assert!(
+            !config.vault.base_dir.starts_with("./"),
+            "vault.base_dir must not start with ./: {}",
+            config.vault.base_dir
+        );
     }
 }

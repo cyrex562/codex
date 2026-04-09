@@ -129,3 +129,191 @@ impl LabelService {
         Ok(labels)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    async fn setup_db(temp: &TempDir) -> Database {
+        let db_path = temp.path().join("label-test.db");
+        let db_url = format!("sqlite://{}", db_path.display());
+        Database::new(&db_url).await.expect("db should initialise")
+    }
+
+    // ── CORE_LABELS constant ──────────────────────────────────────────────
+
+    #[test]
+    fn test_core_labels_count() {
+        assert_eq!(CORE_LABELS.len(), 8, "expected exactly 8 core labels");
+    }
+
+    #[test]
+    fn test_core_labels_contains_expected_names() {
+        let names: Vec<&str> = CORE_LABELS.iter().map(|(n, _)| *n).collect();
+        for expected in ["graphable", "person", "organization", "place", "event", "object", "concept", "creature"] {
+            assert!(names.contains(&expected), "missing core label: {expected}");
+        }
+    }
+
+    #[test]
+    fn test_core_labels_all_have_descriptions() {
+        for (name, desc) in CORE_LABELS {
+            assert!(!desc.is_empty(), "core label '{name}' should have a description");
+        }
+    }
+
+    // ── seed_core_labels ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_seed_core_labels_creates_all_labels() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        LabelService::seed_core_labels(&db).await.unwrap();
+
+        let labels = LabelService::list(&db).await.unwrap();
+        assert_eq!(
+            labels.len(),
+            CORE_LABELS.len(),
+            "should have all core labels in DB"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_seed_core_labels_idempotent() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        LabelService::seed_core_labels(&db).await.unwrap();
+        LabelService::seed_core_labels(&db).await.unwrap(); // second call should not error or duplicate
+
+        let labels = LabelService::list(&db).await.unwrap();
+        assert_eq!(labels.len(), CORE_LABELS.len(), "no duplicates on double-seed");
+    }
+
+    #[tokio::test]
+    async fn test_seed_core_labels_source_is_core() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        LabelService::seed_core_labels(&db).await.unwrap();
+
+        let labels = LabelService::list(&db).await.unwrap();
+        for label in &labels {
+            assert_eq!(label.source, "core");
+            assert!(label.plugin_id.is_none());
+        }
+    }
+
+    // ── register ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_register_plugin_label() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        LabelService::register(&db, "undead", Some("A dead but animated entity"), "com.plugin.undead")
+            .await
+            .unwrap();
+
+        let labels = LabelService::list(&db).await.unwrap();
+        let label = labels.iter().find(|l| l.name == "undead").expect("should have undead label");
+        assert_eq!(label.source, "plugin");
+        assert_eq!(label.plugin_id.as_deref(), Some("com.plugin.undead"));
+    }
+
+    #[tokio::test]
+    async fn test_register_same_plugin_idempotent() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        LabelService::register(&db, "custom", None, "plugin-a").await.unwrap();
+        // Re-registering from same plugin should be a no-op (not an error)
+        LabelService::register(&db, "custom", None, "plugin-a").await.unwrap();
+
+        let labels = LabelService::list(&db).await.unwrap();
+        let count = labels.iter().filter(|l| l.name == "custom").count();
+        assert_eq!(count, 1, "no duplicate should be created");
+    }
+
+    #[tokio::test]
+    async fn test_register_conflict_with_different_plugin() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        LabelService::register(&db, "custom", None, "plugin-a").await.unwrap();
+        let result = LabelService::register(&db, "custom", None, "plugin-b").await;
+
+        assert!(result.is_err(), "second plugin should get a Conflict error");
+        let err_str = result.unwrap_err().to_string();
+        assert!(err_str.contains("already registered"), "error message should mention conflict: {err_str}");
+    }
+
+    #[tokio::test]
+    async fn test_register_conflict_with_core_label() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        LabelService::seed_core_labels(&db).await.unwrap();
+
+        let result = LabelService::register(&db, "graphable", None, "some-plugin").await;
+        assert!(result.is_err(), "plugin cannot override core label");
+    }
+
+    // ── remove_plugin_labels ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_remove_plugin_labels() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        LabelService::register(&db, "label-a", None, "plugin-x").await.unwrap();
+        LabelService::register(&db, "label-b", None, "plugin-x").await.unwrap();
+        LabelService::register(&db, "label-c", None, "plugin-y").await.unwrap();
+
+        LabelService::remove_plugin_labels(&db, "plugin-x").await.unwrap();
+
+        let labels = LabelService::list(&db).await.unwrap();
+        assert!(!labels.iter().any(|l| l.name == "label-a"), "label-a should be removed");
+        assert!(!labels.iter().any(|l| l.name == "label-b"), "label-b should be removed");
+        assert!(labels.iter().any(|l| l.name == "label-c"), "label-c (plugin-y) should remain");
+    }
+
+    #[tokio::test]
+    async fn test_remove_plugin_labels_does_not_affect_core() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        LabelService::seed_core_labels(&db).await.unwrap();
+        LabelService::remove_plugin_labels(&db, "some-plugin").await.unwrap();
+
+        let labels = LabelService::list(&db).await.unwrap();
+        assert_eq!(labels.len(), CORE_LABELS.len(), "core labels should be untouched");
+    }
+
+    // ── list ──────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_returns_empty_on_fresh_db() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+        let labels = LabelService::list(&db).await.unwrap();
+        assert!(labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_includes_both_core_and_plugin_labels() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        LabelService::seed_core_labels(&db).await.unwrap();
+        LabelService::register(&db, "custom-label", Some("A custom type"), "my-plugin")
+            .await
+            .unwrap();
+
+        let labels = LabelService::list(&db).await.unwrap();
+        assert!(labels.iter().any(|l| l.name == "graphable"), "core label should be present");
+        assert!(labels.iter().any(|l| l.name == "custom-label"), "plugin label should be present");
+    }
+}

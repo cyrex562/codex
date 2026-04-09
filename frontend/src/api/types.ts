@@ -415,6 +415,7 @@ export interface VaultShareList {
 // WebSocket message envelope (Phase F formal type, used here for frontend)
 export type WsMessage =
     | { type: 'FileChanged'; vault_id: string; path: string; event_type: FileChangeType; etag?: string; timestamp: number }
+    | { type: 'ReindexComplete'; vault_id: string; file_count: number; duration_ms: number }
     | { type: 'SyncPing' }
     | { type: 'SyncPong'; server_time: number }
     | { type: 'Error'; message: string };

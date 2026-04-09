@@ -17,13 +17,19 @@ pub struct RenderWithResolutionRequest {
     current_file: Option<String>,
 }
 
+/// Render markdown to HTML (no vault context — uses the default parser).
 #[post("/api/render")]
-pub async fn render_markdown(req: web::Json<RenderRequest>) -> AppResult<HttpResponse> {
-    let html = MarkdownService::to_html(&req.content);
-    Ok(HttpResponse::Ok().content_type("text/html").body(html))
+pub async fn render_markdown(
+    state: web::Data<AppState>,
+    req: web::Json<RenderRequest>,
+) -> AppResult<HttpResponse> {
+    let doc = state.document_parser.render(&req.content);
+    Ok(HttpResponse::Ok()
+        .content_type("text/html")
+        .body(doc.html))
 }
 
-/// Render markdown with wiki link resolution for a specific vault
+/// Render markdown with wiki link resolution for a specific vault.
 #[post("/api/vaults/{vault_id}/render")]
 pub async fn render_markdown_with_resolution(
     state: web::Data<AppState>,

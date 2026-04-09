@@ -36,9 +36,13 @@ impl RelationService {
     ) -> AppResult<()> {
         // Remove all existing field-derived relations for this entity so we
         // start fresh (avoids stale edges after a field value changes).
+        // This includes both outgoing forward edges AND the mirror inverse edges
+        // that point back to this entity from its targets.
         sqlx::query(
-            "DELETE FROM relations WHERE from_entity_id = ? AND source = 'field'",
+            "DELETE FROM relations WHERE source = 'field' AND \
+             (from_entity_id = ? OR (to_entity_id = ? AND direction = 'inverse'))",
         )
+        .bind(&entity.id)
         .bind(&entity.id)
         .execute(db.pool())
         .await
@@ -263,4 +267,258 @@ fn extract_wiki_title(s: &str) -> Option<&str> {
     let inner = &s[2..s.len() - 2];
     // Strip alias: [[Title|Alias]] → "Title"
     Some(inner.split('|').next().unwrap_or(inner).trim())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Database;
+    use crate::services::entity_service::EntityService;
+    use tempfile::TempDir;
+
+    // ── extract_wiki_title ────────────────────────────────────────────────
+
+    #[test]
+    fn test_extract_wiki_title_simple() {
+        assert_eq!(extract_wiki_title("[[Alice]]"), Some("Alice"));
+    }
+
+    #[test]
+    fn test_extract_wiki_title_with_alias() {
+        assert_eq!(extract_wiki_title("[[Alice|The Hero]]"), Some("Alice"));
+    }
+
+    #[test]
+    fn test_extract_wiki_title_with_spaces() {
+        assert_eq!(extract_wiki_title("[[  Lyra  ]]"), Some("Lyra"));
+    }
+
+    #[test]
+    fn test_extract_wiki_title_outer_whitespace_trimmed() {
+        assert_eq!(extract_wiki_title("  [[Castle Keep]]  "), Some("Castle Keep"));
+    }
+
+    #[test]
+    fn test_extract_wiki_title_not_wiki_link_plain() {
+        assert!(extract_wiki_title("just a string").is_none());
+    }
+
+    #[test]
+    fn test_extract_wiki_title_not_wiki_link_single_bracket() {
+        assert!(extract_wiki_title("[single]").is_none());
+    }
+
+    #[test]
+    fn test_extract_wiki_title_empty_string() {
+        assert!(extract_wiki_title("").is_none());
+    }
+
+    #[test]
+    fn test_extract_wiki_title_only_brackets() {
+        // [[]] — empty title; inner is empty, but still valid link
+        assert_eq!(extract_wiki_title("[[]]"), Some(""));
+    }
+
+    #[test]
+    fn test_extract_wiki_title_alias_only_keeps_title_part() {
+        // Multiple pipes: [[Title|Alias1|Extra]] → only first segment
+        assert_eq!(extract_wiki_title("[[Hero|The Hero|extra]]"), Some("Hero"));
+    }
+
+    // ── DB-backed tests ────────────────────────────────────────────────────
+
+    async fn setup_db(temp: &TempDir) -> Database {
+        let db_path = temp.path().join("rel-test.db");
+        let db_url = format!("sqlite://{}", db_path.display());
+        let db = Database::new(&db_url).await.expect("db should initialise");
+        // Seed vault rows required by FK constraint on entities.vault_id
+        for (id, path) in &[("vault-1", "/tmp/rel-vault-1"), ("v1", "/tmp/rel-v1")] {
+            sqlx::query(
+                "INSERT OR IGNORE INTO vaults (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(id)
+            .bind("Test Vault")
+            .bind(path)
+            .bind("2024-01-01T00:00:00Z")
+            .bind("2024-01-01T00:00:00Z")
+            .execute(db.pool())
+            .await
+            .expect("vault seed failed");
+        }
+        db
+    }
+
+    fn make_frontmatter(entity_type: &str, fields: serde_json::Value) -> serde_json::Value {
+        let mut obj = fields.as_object().cloned().unwrap_or_default();
+        obj.insert("codex_type".into(), serde_json::Value::String(entity_type.into()));
+        obj.insert("codex_plugin".into(), serde_json::Value::String("worldbuilding".into()));
+        serde_json::Value::Object(obj)
+    }
+
+    #[tokio::test]
+    async fn test_resolve_target_returns_none_for_unknown_title() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+        let result = RelationService::resolve_target(&db, "vault-1", "NonExistent").await;
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_target_finds_entity_by_stem() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        let fm = make_frontmatter("character", serde_json::json!({ "full_name": "Alice" }));
+        EntityService::upsert(&db, "vault-1", "alice.md", &fm, "2024-01-01T00:00:00Z", None)
+            .await
+            .unwrap();
+
+        let result = RelationService::resolve_target(&db, "vault-1", "alice")
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().path, "alice.md");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_target_case_insensitive() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        let fm = make_frontmatter("character", serde_json::json!({}));
+        EntityService::upsert(&db, "vault-1", "CastleKeep.md", &fm, "2024-01-01T00:00:00Z", None)
+            .await
+            .unwrap();
+
+        let result = RelationService::resolve_target(&db, "vault-1", "castlekeep")
+            .await
+            .unwrap();
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_sync_from_entity_creates_no_relations_when_no_refs() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        let fm = make_frontmatter("character", serde_json::json!({ "full_name": "Alice" }));
+        let entity = EntityService::upsert(&db, "v1", "alice.md", &fm, "2024-01-01T00:00:00Z", None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        RelationService::sync_from_entity(&db, &entity, None)
+            .await
+            .unwrap();
+
+        let relations = RelationService::get_for_entity(&db, &entity.id).await.unwrap();
+        assert!(relations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sync_from_entity_creates_forward_and_inverse_relation() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        // Index both entities
+        let alice_fm = make_frontmatter(
+            "character",
+            serde_json::json!({ "faction": "[[Order]]" }),
+        );
+        let alice = EntityService::upsert(&db, "v1", "alice.md", &alice_fm, "2024-01-01T00:00:00Z", None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let order_fm = make_frontmatter("faction", serde_json::json!({}));
+        let order = EntityService::upsert(&db, "v1", "Order.md", &order_fm, "2024-01-01T00:00:00Z", None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        RelationService::sync_from_entity(&db, &alice, None)
+            .await
+            .unwrap();
+
+        // Forward edge: alice → order
+        let alice_relations = RelationService::get_for_entity(&db, &alice.id).await.unwrap();
+        assert!(!alice_relations.is_empty(), "alice should have at least one relation");
+
+        // Inverse edge visible from order's perspective
+        let order_relations = RelationService::get_for_entity(&db, &order.id).await.unwrap();
+        assert!(!order_relations.is_empty(), "order should have an inverse relation");
+
+        let forward = alice_relations.iter().find(|r| r.direction == "forward");
+        assert!(forward.is_some(), "should have a forward relation");
+        assert_eq!(forward.unwrap().from_entity_id, alice.id);
+        assert_eq!(forward.unwrap().to_entity_id, order.id);
+    }
+
+    #[tokio::test]
+    async fn test_sync_from_entity_clears_stale_relations_on_resync() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        let alice_fm = make_frontmatter(
+            "character",
+            serde_json::json!({ "faction": "[[Order]]" }),
+        );
+        let alice = EntityService::upsert(&db, "v1", "alice.md", &alice_fm, "2024-01-01T00:00:00Z", None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        EntityService::upsert(
+            &db, "v1", "Order.md",
+            &make_frontmatter("faction", serde_json::json!({})),
+            "2024-01-01T00:00:00Z", None,
+        )
+        .await
+        .unwrap();
+
+        // First sync — creates relations
+        RelationService::sync_from_entity(&db, &alice, None).await.unwrap();
+        let count_first = RelationService::get_for_entity(&db, &alice.id).await.unwrap().len();
+        assert!(count_first > 0);
+
+        // Re-sync — should not double-count
+        RelationService::sync_from_entity(&db, &alice, None).await.unwrap();
+        let count_second = RelationService::get_for_entity(&db, &alice.id).await.unwrap().len();
+        assert_eq!(count_first, count_second, "re-sync should not create duplicate relations");
+    }
+
+    #[tokio::test]
+    async fn test_update_metadata_stores_json() {
+        let temp = TempDir::new().unwrap();
+        let db = setup_db(&temp).await;
+
+        // Create two entities and a relation between them
+        let fm_a = make_frontmatter("character", serde_json::json!({ "friend": "[[Bob]]" }));
+        let alice = EntityService::upsert(&db, "v1", "alice.md", &fm_a, "2024-01-01T00:00:00Z", None)
+            .await.unwrap().unwrap();
+
+        EntityService::upsert(
+            &db, "v1", "bob.md",
+            &make_frontmatter("character", serde_json::json!({})),
+            "2024-01-01T00:00:00Z", None,
+        )
+        .await.unwrap();
+
+        RelationService::sync_from_entity(&db, &alice, None).await.unwrap();
+
+        let relations = RelationService::get_for_entity(&db, &alice.id).await.unwrap();
+        let rel = relations.iter().find(|r| r.direction == "forward").expect("forward relation");
+
+        let metadata = serde_json::json!({ "relationship": "Friend" });
+        RelationService::update_metadata(&db, &rel.id, &metadata).await.unwrap();
+
+        // Re-fetch and check
+        let updated = RelationService::get_for_entity(&db, &alice.id)
+            .await.unwrap()
+            .into_iter()
+            .find(|r| r.id == rel.id)
+            .unwrap();
+        let stored: serde_json::Value = serde_json::from_str(updated.metadata.as_deref().unwrap_or("{}")).unwrap();
+        assert_eq!(stored["relationship"].as_str(), Some("Friend"));
+    }
 }

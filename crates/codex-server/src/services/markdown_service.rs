@@ -1,5 +1,7 @@
 use crate::services::wiki_link_service::{FileIndex, WikiLinkResolver};
+use codex_types::{DocumentParser, Frontmatter, RenderedDocument};
 use pulldown_cmark::{html, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use serde_json;
 use regex::Regex;
 use std::sync::LazyLock;
 use syntect::easy::HighlightLines;
@@ -488,6 +490,78 @@ impl MarkdownService {
     }
 }
 
+// ── DocumentParser implementation ────────────────────────────────────────────
+
+/// Prose-sentinel pattern used by the structural (worldbuilding) editor.
+const PROSE_BEGIN: &str = "<!-- codex:prose:begin -->";
+const PROSE_END: &str = "<!-- codex:prose:end -->";
+
+/// YAML frontmatter delimiter.
+const FRONTMATTER_DELIM: &str = "---";
+
+/// `DocumentParser` implementation backed by `pulldown-cmark`.
+///
+/// This is the only active parser; a future `MdxParser` would slot in by
+/// implementing the same trait and being stored in `AppState`.
+pub struct MarkdownParser;
+
+impl DocumentParser for MarkdownParser {
+    fn render(&self, source: &str) -> RenderedDocument {
+        RenderedDocument {
+            html: MarkdownService::to_html(source),
+        }
+    }
+
+    fn extract_frontmatter(&self, source: &str) -> Frontmatter {
+        let trimmed = source.trim_start();
+        if !trimmed.starts_with(FRONTMATTER_DELIM) {
+            return serde_json::Value::Null;
+        }
+
+        // Skip past the opening `---`
+        let rest = &trimmed[FRONTMATTER_DELIM.len()..];
+        // Find the closing `---`
+        if let Some(end_pos) = rest.find(&format!("\n{FRONTMATTER_DELIM}")) {
+            let yaml = rest[..end_pos].trim();
+            return serde_yaml::from_str(yaml).unwrap_or(serde_json::Value::Null);
+        }
+        serde_json::Value::Null
+    }
+
+    fn extract_prose(&self, source: &str) -> String {
+        // 1. Strip frontmatter if present.
+        let without_fm = strip_frontmatter(source);
+
+        // 2. If prose sentinels are present, return only their content.
+        if let Some(begin) = without_fm.find(PROSE_BEGIN) {
+            let after_begin = &without_fm[begin + PROSE_BEGIN.len()..];
+            if let Some(end) = after_begin.find(PROSE_END) {
+                return after_begin[..end].trim().to_string();
+            }
+        }
+
+        without_fm.trim().to_string()
+    }
+}
+
+/// Strip leading YAML frontmatter block (`--- ... ---`) from `source`.
+fn strip_frontmatter(source: &str) -> String {
+    let trimmed = source.trim_start();
+    if !trimmed.starts_with(FRONTMATTER_DELIM) {
+        return source.to_string();
+    }
+    let rest = &trimmed[FRONTMATTER_DELIM.len()..];
+    if let Some(end_pos) = rest.find(&format!("\n{FRONTMATTER_DELIM}")) {
+        // Skip past closing `---` and any trailing newline.
+        let after_close = &rest[end_pos + FRONTMATTER_DELIM.len() + 1..];
+        return after_close
+            .strip_prefix('\n')
+            .unwrap_or(after_close)
+            .to_string();
+    }
+    source.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,5 +714,106 @@ mod tests {
 
         assert!(html.contains("image.png"));
         assert!(html.contains("Alt text"));
+    }
+
+    // ── DocumentParser trait tests ──────────────────────────────────────────
+
+    #[test]
+    fn markdown_parser_render_produces_html() {
+        let parser = MarkdownParser;
+        let doc = parser.render("# Hello\n\nworld");
+        assert!(doc.html.contains("<h1>"), "expected h1 tag, got: {}", doc.html);
+        assert!(doc.html.contains("world"), "expected body, got: {}", doc.html);
+    }
+
+    #[test]
+    fn markdown_parser_render_bold_and_italic() {
+        let parser = MarkdownParser;
+        let doc = parser.render("**bold** and _italic_");
+        assert!(doc.html.contains("<strong>bold</strong>"), "missing bold: {}", doc.html);
+        assert!(
+            doc.html.contains("<em>italic</em>"),
+            "missing italic: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn markdown_parser_extract_frontmatter_present() {
+        let parser = MarkdownParser;
+        let src = "---\ntitle: My Note\ntags: [a, b]\n---\n\nBody text";
+        let fm = parser.extract_frontmatter(src);
+        assert!(!fm.is_null(), "expected frontmatter object");
+        assert_eq!(fm["title"], serde_json::json!("My Note"));
+        let tags = fm["tags"].as_array().expect("tags should be array");
+        assert_eq!(tags.len(), 2);
+    }
+
+    #[test]
+    fn markdown_parser_extract_frontmatter_absent() {
+        let parser = MarkdownParser;
+        let src = "# Just a heading\n\nNo frontmatter here.";
+        let fm = parser.extract_frontmatter(src);
+        assert!(fm.is_null(), "expected null when no frontmatter, got: {fm:?}");
+    }
+
+    #[test]
+    fn markdown_parser_extract_frontmatter_empty_body() {
+        let parser = MarkdownParser;
+        let src = "---\nkey: value\n---\n";
+        let fm = parser.extract_frontmatter(src);
+        assert_eq!(fm["key"], serde_json::json!("value"));
+    }
+
+    #[test]
+    fn markdown_parser_extract_prose_no_frontmatter_no_sentinels() {
+        let parser = MarkdownParser;
+        let src = "# Heading\n\nSimple body.";
+        let prose = parser.extract_prose(src);
+        assert!(prose.contains("Heading"), "prose: {prose}");
+        assert!(prose.contains("Simple body."), "prose: {prose}");
+    }
+
+    #[test]
+    fn markdown_parser_extract_prose_strips_frontmatter() {
+        let parser = MarkdownParser;
+        let src = "---\ntitle: Test\n---\n\nBody text here.";
+        let prose = parser.extract_prose(src);
+        assert!(!prose.contains("title:"), "frontmatter leaked: {prose}");
+        assert!(prose.contains("Body text here."), "prose: {prose}");
+    }
+
+    #[test]
+    fn markdown_parser_extract_prose_uses_sentinels_when_present() {
+        let parser = MarkdownParser;
+        let src = "---\ntitle: Test\n---\n\n<!-- codex:prose:begin -->\nProse content.\n<!-- codex:prose:end -->\n\nExtra after.";
+        let prose = parser.extract_prose(src);
+        assert!(prose.contains("Prose content."), "prose: {prose}");
+        // Text outside sentinels should NOT be included
+        assert!(!prose.contains("Extra after."), "sentinel not respected: {prose}");
+        assert!(!prose.contains("title:"), "frontmatter in prose: {prose}");
+    }
+
+    #[test]
+    fn strip_frontmatter_helper_no_frontmatter() {
+        let src = "Just text, no frontmatter.";
+        let result = strip_frontmatter(src);
+        assert_eq!(result, src);
+    }
+
+    #[test]
+    fn strip_frontmatter_helper_strips_correctly() {
+        let src = "---\nkey: val\n---\nBody";
+        let result = strip_frontmatter(src);
+        assert_eq!(result, "Body");
+    }
+
+    #[test]
+    fn document_parser_trait_object_compiles() {
+        // Verify MarkdownParser can be stored as Arc<dyn DocumentParser>.
+        use std::sync::Arc;
+        let parser: Arc<dyn DocumentParser> = Arc::new(MarkdownParser);
+        let doc = parser.render("test");
+        assert!(!doc.html.is_empty());
     }
 }

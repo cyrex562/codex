@@ -4,11 +4,12 @@ use crate::error::{AppError, AppResult};
 use crate::middleware::AuthenticatedUser;
 use crate::models::{
     CreateVaultRequest, FileChangeEvent, MlUndoReceipt, ShareVaultWithGroupRequest,
-    ShareVaultWithUserRequest,
+    ShareVaultWithUserRequest, WsMessage,
 };
 use crate::services::{EntityTypeRegistry, RelationTypeRegistry, SearchIndex};
 use crate::watcher::FileWatcher;
 use actix_web::{delete, get, post, web, HttpMessage, HttpRequest, HttpResponse};
+use codex_types::DocumentParser;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,6 +22,11 @@ pub struct AppState {
     pub storage: Arc<dyn crate::services::StorageBackend>,
     pub watcher: Arc<Mutex<FileWatcher>>,
     pub event_broadcaster: broadcast::Sender<FileChangeEvent>,
+    /// General-purpose WebSocket message broadcaster.
+    ///
+    /// Routes that want to push a `WsMessage` to all connected clients (e.g.
+    /// `ReindexComplete`) send on this channel; the WS handler subscribes to it.
+    pub ws_broadcaster: broadcast::Sender<WsMessage>,
     pub change_log_retention_days: u64,
     pub ml_undo_store: Arc<Mutex<HashMap<String, MlUndoReceipt>>>,
     pub entity_type_registry: EntityTypeRegistry,
@@ -30,6 +36,8 @@ pub struct AppState {
     /// Broadcast a `()` on this channel to tell all WebSocket sessions to
     /// send a Close frame and exit cleanly before the server stops.
     pub shutdown_tx: broadcast::Sender<()>,
+    /// Active document parser (Markdown by default; swappable for MDX in future).
+    pub document_parser: Arc<dyn DocumentParser>,
 }
 
 fn require_authenticated_user(req: &HttpRequest) -> AppResult<AuthenticatedUser> {

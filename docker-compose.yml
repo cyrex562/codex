@@ -22,6 +22,8 @@ services:
       - CODEX__AUTH__BOOTSTRAP_ADMIN_PASSWORD=changeme-on-first-login
       # Generate a stable secret: openssl rand -hex 32
       # - CODEX__AUTH__JWT_SECRET=your-secret-here
+      # Override config file path (default: /data/config.toml via CMD --config)
+      # - CODEX_CONFIG=/data/config.toml
       - RUST_LOG=info
       # Rate limiting (requests per 60-second window per IP)
       - RATE_LIMIT_REQUESTS=120

@@ -1,7 +1,7 @@
 use actix_web::{test, web, App};
 use codex::db::Database;
 use codex::routes::{entities, AppState};
-use codex::services::{default_storage_backend, EntityTypeRegistry, RelationTypeRegistry, ReindexService, SearchIndex};
+use codex::services::{default_storage_backend, EntityTypeRegistry, MarkdownParser, RelationTypeRegistry, ReindexService, SearchIndex};
 use codex::watcher::FileWatcher;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -23,9 +23,11 @@ async fn setup(temp_dir: &TempDir) -> (web::Data<AppState>, String) {
         storage: default_storage_backend(),
         watcher,
         event_broadcaster: event_tx,
+        ws_broadcaster: tokio::sync::broadcast::channel::<codex::models::WsMessage>(16).0,
         change_log_retention_days: 7,
         ml_undo_store: Arc::new(Mutex::new(std::collections::HashMap::new())),
         shutdown_tx: broadcast::channel::<()>(1).0,
+        document_parser: Arc::new(MarkdownParser),
         entity_type_registry: EntityTypeRegistry::new(),
         relation_type_registry: RelationTypeRegistry::new(),
         plugins_dir: String::new(),

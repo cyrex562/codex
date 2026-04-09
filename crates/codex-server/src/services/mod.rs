@@ -26,7 +26,7 @@ pub use file_service::{FileService, RenameStrategy};
 pub use image_service::ImageService;
 pub use entity_service::{Entity, EntityService};
 pub use label_service::{Label, LabelService};
-pub use markdown_service::{MarkdownService, RenderOptions};
+pub use markdown_service::{MarkdownParser, MarkdownService, RenderOptions};
 pub use ml_service::MlService;
 pub use plugin_api::{Command, Event, EventBus, EventType, PluginApi, PluginStorage};
 pub use plugin_service::PluginService;

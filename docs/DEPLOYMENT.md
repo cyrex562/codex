@@ -48,7 +48,37 @@ cp config.toml config.local.toml
 
 # 3. Run
 ./target/release/codex
+# Or specify an explicit config path:
+./target/release/codex --config /etc/codex/config.toml
+# Or via environment variable:
+CODEX_CONFIG=/etc/codex/config.toml ./target/release/codex
 # Server starts at http://127.0.0.1:8080
+```
+
+### CLI flags
+
+| Flag | Env var | Default | Description |
+|------|---------|---------|-------------|
+| `--config <PATH>` | `CODEX_CONFIG` | `./config.toml` | Path to the TOML config file |
+
+### systemd service example
+
+```ini
+[Unit]
+Description=Codex knowledge server
+After=network.target
+
+[Service]
+Type=simple
+User=codex
+WorkingDirectory=/opt/codex
+ExecStart=/opt/codex/codex --config /etc/codex/config.toml
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target
 ```
 
 ## Desktop App

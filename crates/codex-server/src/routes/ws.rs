@@ -15,6 +15,7 @@ async fn websocket(
     let (response, mut session, mut msg_stream) = actix_ws::handle(&req, stream)?;
 
     let mut event_rx = state.event_broadcaster.subscribe();
+    let mut ws_rx = state.ws_broadcaster.subscribe();
     let mut shutdown_rx = state.shutdown_tx.subscribe();
     let auth_enabled = config.auth.enabled;
     let current_user = req.extensions().get::<AuthenticatedUser>().cloned();
@@ -74,6 +75,15 @@ async fn websocket(
                     };
 
                     if let Ok(json) = serde_json::to_string(&message) {
+                        if session.text(json).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+
+                // General-purpose WS messages (e.g. ReindexComplete)
+                Ok(ws_msg) = ws_rx.recv() => {
+                    if let Ok(json) = serde_json::to_string(&ws_msg) {
                         if session.text(json).await.is_err() {
                             break;
                         }

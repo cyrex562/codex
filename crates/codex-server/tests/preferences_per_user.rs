@@ -7,7 +7,7 @@ use codex::config::AppConfig;
 use codex::db::Database;
 use codex::middleware::AuthMiddleware;
 use codex::routes::{auth, preferences, AppState};
-use codex::services::{default_storage_backend, SearchIndex};
+use codex::services::{default_storage_backend, MarkdownParser, SearchIndex};
 use codex::watcher::FileWatcher;
 use serde_json::json;
 use std::sync::Arc;
@@ -47,9 +47,11 @@ async fn preferences_are_scoped_per_authenticated_user() {
         storage: default_storage_backend(),
         watcher,
         event_broadcaster: event_tx,
+        ws_broadcaster: tokio::sync::broadcast::channel::<codex::models::WsMessage>(16).0,
         change_log_retention_days: 7,
         ml_undo_store: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
     shutdown_tx: tokio::sync::broadcast::channel::<()>(1).0,
+        document_parser: Arc::new(MarkdownParser),
         entity_type_registry: codex::services::EntityTypeRegistry::new(),
         relation_type_registry: codex::services::RelationTypeRegistry::new(),
         plugins_dir: String::new(),
