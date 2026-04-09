@@ -10,7 +10,7 @@
     "frontend_embedded": true
   },
   "desktop": {
-    "artifact": "desktop/codex-desktop",
+    "artifact": "desktop/codex-tauri",
     "sha256": "e4b5f61b261d6f9fac238a3f23fcf069a2228073f30cead7eb613639ad563ed0"
   }
 }

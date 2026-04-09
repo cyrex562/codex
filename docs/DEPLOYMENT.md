@@ -81,22 +81,22 @@ Environment=RUST_LOG=info
 WantedBy=multi-user.target
 ```
 
-## Desktop App
+## Desktop App (Tauri)
 
 ```bash
-# Build
-cargo build --release -p obsidian-desktop
+# Build the frontend first (embedded into the server binary)
+cd frontend && npm run build && cd ..
+
+# Build the Tauri desktop binary
+cargo build --release -p codex-tauri
 
 # Run
-./target/release/obsidian-desktop
+./target/release/codex-tauri
 ```
 
-The desktop app connects to a running server. Enter the server URL, username, and password to log in. If you previously logged in, the app will attempt auto-login using a saved refresh token.
-
-### Desktop Features
-- **Cloud mode**: Connect to a remote server
-- **Standalone mode**: Server runs locally
-- **Hybrid mode**: Remote server + local mirror for faster reads
+On first launch the app prompts for a vault directory and writes a default
+`config.toml` to the platform config directory (`~/.config/codex/` on Linux).
+The embedded server starts in-process; no separate server binary is required.
 
 ## Production Recommendations
 

@@ -15,7 +15,7 @@ Key characteristics:
 - **Multi-vault** — multiple separate vault paths can be registered and switched between.
 - **Real-time** — a file watcher notifies connected browsers via WebSocket whenever files change on disk, so the UI stays in sync with external editors (including Obsidian desktop).
 - **Plugin-extensible** — a JavaScript/WASM plugin system (modelled loosely on Obsidian's plugin API) allows community or custom extensions.
-- **Optional native desktop client** — an Iced-based Rust GUI (`codex-desktop`) connects to a running server for a native experience.
+- **Native desktop client** — a Tauri shell (`codex-tauri`) embeds the Vue frontend in a WebView and runs the Actix server in-process, producing a single self-contained desktop binary.
 
 ---
 
@@ -58,11 +58,10 @@ codex/
 │   │       └── main.rs      # Entry point
 │   ├── codex-types/         # Shared Rust types (used by server + client + desktop)
 │   ├── codex-client/        # Async HTTP + WebSocket client library
-│   └── codex-desktop/       # Iced-based native GUI desktop client
+│   └── codex-tauri/         # Tauri desktop shell (single-binary desktop app)
 │       └── src/
-│           ├── main.rs      # Iced app entry point
-│           ├── state.rs     # Application state + business logic
-│           └── ui.rs        # View / widget rendering
+│           ├── main.rs      # Platform init, server spawn, WebView navigation
+│           └── paths.rs     # Platform data-directory resolution (XDG / macOS / Windows)
 ├── docs/                    # Extended documentation
 ├── plugins/                 # Drop-in plugin directory
 ├── tests/                   # Rust integration tests
@@ -91,7 +90,7 @@ codex/
 | Component library | Vuetify |
 | Unit tests | Vitest |
 | E2E tests | Playwright |
-| Desktop GUI | Iced (Rust, Elm-architecture) |
+| Desktop shell | Tauri 2 (WebView + OS integration) |
 | Client SDK | `codex-client` (reqwest + tokio-tungstenite) |
 
 ---
@@ -397,53 +396,54 @@ Typing `[[` in the raw editor triggers an autocomplete dropdown populated from t
 
 ---
 
-## 6. Native Desktop Client (`codex-desktop`)
+## 6. Desktop Client (`codex-tauri`)
 
-An optional GUI application built with the **Iced** Rust framework (Elm-style architecture).
+A native desktop application built with **Tauri 2**. It is a thin shell that:
+
+1. Resolves platform data directories (XDG on Linux, `~/Library` on macOS, `%APPDATA%` on Windows).
+2. Handles first-launch initialisation — creates directories, writes a default `config.toml`, prompts for a vault directory.
+3. Spawns the Actix server (`codex-server::run()`) on a background thread.
+4. Polls `GET /api/health` then navigates the embedded WebView to `http://localhost:{port}`.
+
+All application UI is the same Vue frontend used in the browser. No separate desktop UI codebase.
 
 ### 6.1 Architecture
 
 ```
-main.rs     – Iced App trait impl; initialises state, subscription loop
-state.rs    – AppState, messages (Msg enum), update logic, async commands
-ui.rs       – view() function; all widget rendering
+main.rs     – Platform init, server thread spawn, health polling, WebView navigation
+paths.rs    – CodexPaths resolution via Tauri path API
 ```
 
-Uses `codex-client` for all communication with the server — no direct filesystem access; the desktop talks to the server's HTTP API and WebSocket just like the browser does.
+### 6.2 OS Integration
 
-### 6.2 Features
+| Feature | Plugin |
+|---|---|
+| Native file/directory dialogs | `tauri-plugin-dialog` |
+| System tray (open / quit / status) | Built-in Tauri tray API |
+| Desktop notifications | `tauri-plugin-notification` |
+| `codex://` deep links + `.md` associations | `tauri-plugin-deep-link` |
 
-- Vault browser (file tree navigation).
-- Multi-tab markdown editor (raw, formatted, preview modes).
-- Frontmatter editor with JSON validation.
-- Full-text search (server-side) and quick switcher (local).
-- Real-time sync via WebSocket subscription.
-- ML outline and organisation suggestion panels (toggled by `CODEX_DISABLE_ML=1`).
-- Media preview for images, audio, video (toggled by `CODEX_DISABLE_MEDIA=1`).
-- Conflict resolution UI.
-- Plugin manager panel.
-- Preferences sync with server.
-- Local session persistence (restores last open vault and tabs across restarts).
-- Auto-login using a saved refresh token (`~/.config/codex/session.json`).
+### 6.3 Platform Data Directories
 
-### 6.3 Local File Cache
-
-Opened files are cached locally at `~/.config/codex/file-cache/{vault_id}/` (Linux/macOS) or `%APPDATA%\codex\file-cache\{vault_id}\` (Windows). Path separators are replaced with `__` to produce flat cache filenames.
-
-### 6.4 Offline Edit Queue
-
-Edits made while disconnected are written to `__edit_queue__/{timestamp}__{path}` in the cache directory. On reconnect, `drain_offline_edits()` replays them in order against the server API.
-
-### 6.5 Feature Flags
-
-Runtime feature flags (can be overridden by environment variables at startup):
-
-| Flag | Env var to disable | Default |
+| Platform | Config / Data | Cache |
 |---|---|---|
-| `ml_features` | `CODEX_DISABLE_ML=1` | enabled |
-| `media_preview` | `CODEX_DISABLE_MEDIA=1` | enabled |
-| `event_sync` | `CODEX_DISABLE_SYNC=1` | enabled |
-| `diagnostics_panel` | `CODEX_DIAGNOSTICS=1` to enable | disabled |
+| Linux (XDG) | `~/.config/codex/` / `~/.local/share/codex/` | `~/.cache/codex/` |
+| macOS | `~/Library/Application Support/codex/` | `~/Library/Caches/codex/` |
+| Windows | `%APPDATA%\codex\` | `%LOCALAPPDATA%\codex\` |
+
+Default vault location (prompted on first launch): `~/Documents/Codex/`
+
+### 6.4 Startup Sequence
+
+```
+main()
+  ├─ resolve CodexPaths → create dirs → load/write config.toml
+  ├─ thread::spawn → actix_web::rt::System::new().block_on(codex_server::run(config))
+  └─ tauri setup hook
+       ├─ show "Starting Codex…" loading screen
+       └─ poll GET /api/health every 100 ms (10 s timeout)
+             success  → navigate WebView to http://localhost:{port}
+             timeout  → show error screen with log path
 
 ---
 
@@ -701,14 +701,20 @@ The Dockerfile uses three stages:
 
 Volumes: mount local vault folders to `/data/vaults/` inside the container.
 
-### Desktop Client
+### Desktop App (Tauri)
 
 ```bash
-cargo build --release -p codex-desktop
-./target/release/codex-desktop
+# Build the frontend first (embedded into the Tauri binary via codex-server)
+cd frontend && npm run build && cd ..
+
+# Build the Tauri desktop binary
+cargo build --release -p codex-tauri
+
+# Run it
+./target/release/codex-tauri
 ```
 
-Validate without full compilation: `cargo check -p codex-desktop`
+Validate without full compilation: `cargo check -p codex-tauri`
 
 ### Release Profile Optimisations
 
