@@ -10,6 +10,10 @@ export default defineConfig({
     ],
     base: '/',
     build: {
+        // Cap to ES2020 for WebKitGTK 2.36 compatibility (Ubuntu 22.04 LTS).
+        // ES2021+ features (e.g. logical assignment `??=`) are not supported by
+        // WebKitGTK 2.36's JavaScriptCore engine.
+        target: 'es2020',
         outDir: '../target/frontend',
         emptyOutDir: true,
         rollupOptions: {

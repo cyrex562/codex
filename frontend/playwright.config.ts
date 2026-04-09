@@ -22,5 +22,16 @@ export default defineConfig({
             name: 'chromium',
             use: { ...devices['Desktop Chrome'] },
         },
+        {
+            name: 'firefox',
+            use: { ...devices['Desktop Firefox'] },
+        },
+        // webkit approximates WebKitGTK 2.36 behaviour for logic testing.
+        // Full WebKitGTK 2.36 gate runs in the webkit-compat CI job
+        // (ubuntu-22.04 with WebKitGTK installed).
+        {
+            name: 'webkit',
+            use: { ...devices['Desktop Safari'] },
+        },
     ],
 });
