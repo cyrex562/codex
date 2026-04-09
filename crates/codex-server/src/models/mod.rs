@@ -34,6 +34,8 @@ pub(crate) struct VaultRow {
     pub path: String,
     pub created_at: String,
     pub updated_at: String,
+    #[sqlx(default)]
+    pub document_format: Option<String>,
 }
 
 impl From<VaultRow> for Vault {
@@ -52,6 +54,10 @@ impl From<VaultRow> for Vault {
                 .ok()
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(Utc::now),
+            document_format: row
+                .document_format
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "markdown".to_string()),
         }
     }
 }

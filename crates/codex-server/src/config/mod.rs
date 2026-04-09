@@ -44,6 +44,15 @@ pub struct VaultConfig {
 
     #[serde(default = "default_exclusions")]
     pub index_exclusions: Vec<String>,
+
+    /// Default document format for newly created vaults. Currently only
+    /// `"markdown"` is supported; reserved for a future `"mdx"` format.
+    #[serde(default = "default_document_format")]
+    pub document_format: String,
+}
+
+fn default_document_format() -> String {
+    "markdown".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,6 +255,7 @@ impl Default for AppConfig {
             vault: VaultConfig {
                 base_dir: default_vault_base_dir(),
                 index_exclusions: default_exclusions(),
+                document_format: default_document_format(),
             },
             auth: AuthConfig::default(),
             sync: SyncConfig {
@@ -284,6 +294,7 @@ impl Default for VaultConfig {
         Self {
             base_dir: default_vault_base_dir(),
             index_exclusions: default_exclusions(),
+            document_format: default_document_format(),
         }
     }
 }
@@ -616,5 +627,21 @@ mod tests {
             "vault.base_dir must not start with ./: {}",
             config.vault.base_dir
         );
+    }
+
+    #[test]
+    fn vault_config_document_format_defaults_to_markdown() {
+        let json = r#"{}"#;
+        let cfg: VaultConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.document_format, "markdown");
+    }
+
+    #[test]
+    fn vault_config_document_format_round_trips() {
+        let json = r#"{"document_format":"markdown"}"#;
+        let cfg: VaultConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.document_format, "markdown");
+        let serialized = serde_json::to_string(&cfg).unwrap();
+        assert!(serialized.contains("\"document_format\":\"markdown\""));
     }
 }

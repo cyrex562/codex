@@ -512,6 +512,23 @@ impl DocumentParser for MarkdownParser {
         }
     }
 
+    fn render_with_context(
+        &self,
+        source: &str,
+        vault_path: Option<&str>,
+        current_file: Option<&str>,
+    ) -> RenderedDocument {
+        let opts = RenderOptions {
+            vault_path,
+            current_file,
+            file_index: None,
+            enable_highlighting: true,
+        };
+        RenderedDocument {
+            html: MarkdownService::to_html_with_link_resolution(source, &opts),
+        }
+    }
+
     fn extract_frontmatter(&self, source: &str) -> Frontmatter {
         let trimmed = source.trim_start();
         if !trimmed.starts_with(FRONTMATTER_DELIM) {
@@ -815,5 +832,33 @@ mod tests {
         let parser: Arc<dyn DocumentParser> = Arc::new(MarkdownParser);
         let doc = parser.render("test");
         assert!(!doc.html.is_empty());
+    }
+
+    #[test]
+    fn markdown_parser_render_with_context_no_vault() {
+        // When no vault context is provided, render_with_context falls back to
+        // basic rendering (wiki links are left unresolved).
+        let parser = MarkdownParser;
+        let src = "Hello [[world]]";
+        let doc = parser.render_with_context(src, None, None);
+        assert!(!doc.html.is_empty());
+    }
+
+    #[test]
+    fn markdown_parser_render_with_context_matches_direct() {
+        // render_with_context with a vault path should produce the same HTML as
+        // calling to_html_with_link_resolution directly with the same options.
+        let parser = MarkdownParser;
+        let src = "**bold** text";
+        let vault_path = "/tmp/test-vault";
+        let doc = parser.render_with_context(src, Some(vault_path), None);
+        let opts = RenderOptions {
+            vault_path: Some(vault_path),
+            current_file: None,
+            file_index: None,
+            enable_highlighting: true,
+        };
+        let direct = MarkdownService::to_html_with_link_resolution(src, &opts);
+        assert_eq!(doc.html, direct);
     }
 }

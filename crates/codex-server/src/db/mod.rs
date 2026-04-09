@@ -477,6 +477,14 @@ impl Database {
         .execute(&self.pool)
         .await;
 
+        // Document format used by this vault. Currently always 'markdown';
+        // reserved for a future 'mdx' upgrade (Phase 5 — format abstraction).
+        let _ = sqlx::query(
+            "ALTER TABLE vaults ADD COLUMN document_format TEXT NOT NULL DEFAULT 'markdown'",
+        )
+        .execute(&self.pool)
+        .await;
+
         // ── Phase 4b: TOTP 2FA ──────────────────────────────────────────
         let _ = sqlx::query(
             "ALTER TABLE users ADD COLUMN totp_secret TEXT",
@@ -1153,9 +1161,9 @@ impl Database {
 
         let row = sqlx::query_as::<_, VaultRow>(
             r#"
-            INSERT INTO vaults (id, name, path, created_at, updated_at, owner_user_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-            RETURNING id, name, path, created_at, updated_at
+            INSERT INTO vaults (id, name, path, created_at, updated_at, owner_user_id, document_format)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            RETURNING id, name, path, created_at, updated_at, document_format
             "#,
         )
         .bind(&id)
@@ -1164,6 +1172,7 @@ impl Database {
         .bind(now.to_rfc3339())
         .bind(now.to_rfc3339())
         .bind(owner_user_id)
+        .bind("markdown")
         .fetch_one(&self.pool)
         .await
         .map_err(|e| match e {
@@ -1201,7 +1210,7 @@ impl Database {
     pub async fn list_vaults_for_user(&self, user_id: &str) -> AppResult<Vec<Vault>> {
         let rows = sqlx::query_as::<_, VaultRow>(
             r#"
-            SELECT DISTINCT v.id, v.name, v.path, v.created_at, v.updated_at
+            SELECT DISTINCT v.id, v.name, v.path, v.created_at, v.updated_at, v.document_format
             FROM vaults v
             LEFT JOIN vault_user_shares vus ON vus.vault_id = v.id AND vus.user_id = ?
             LEFT JOIN group_members gm ON gm.user_id = ?

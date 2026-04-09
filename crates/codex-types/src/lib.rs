@@ -11,6 +11,14 @@ pub struct Vault {
     pub path_exists: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Document format used by this vault. Currently always `"markdown"`;
+    /// reserved for a future `"mdx"` upgrade.
+    #[serde(default = "default_document_format")]
+    pub document_format: String,
+}
+
+fn default_document_format() -> String {
+    "markdown".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -556,6 +564,22 @@ pub type Frontmatter = Value;
 pub trait DocumentParser: Send + Sync {
     /// Render `source` to HTML.
     fn render(&self, source: &str) -> RenderedDocument;
+
+    /// Render `source` to HTML with optional vault-context link resolution.
+    ///
+    /// `vault_path` is the absolute path to the vault root (used to resolve
+    /// wiki links).  `current_file` is the path of the currently open file
+    /// relative to `vault_path`.  Implementations may ignore these parameters;
+    /// the default delegates to [`Self::render`].
+    fn render_with_context(
+        &self,
+        source: &str,
+        vault_path: Option<&str>,
+        current_file: Option<&str>,
+    ) -> RenderedDocument {
+        let _ = (vault_path, current_file);
+        self.render(source)
+    }
 
     /// Extract the frontmatter block from `source`.
     ///
