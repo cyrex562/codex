@@ -8,15 +8,16 @@
   - generic [ref=e10]:
     - generic [ref=e13]:
       - generic [ref=e15]: 󰀓
-      - textbox "Username" [active] [ref=e17]
+      - textbox "Username" [ref=e17]: admin
       - generic:
         - generic:
           - generic: Username
     - generic [ref=e20]:
       - generic [ref=e22]: 󰍁
-      - generic [ref=e23]:
-        - generic: Password
-        - textbox "Password" [ref=e24]
-  - button "Sign In" [ref=e26] [cursor=pointer]:
+      - textbox "Password" [ref=e24]: admin
+      - generic:
+        - generic:
+          - generic: Password
+  - button "Sign In" [active] [ref=e26] [cursor=pointer]:
     - generic [ref=e27]: Sign In
 ```

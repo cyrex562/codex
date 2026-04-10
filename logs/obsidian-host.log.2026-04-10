@@ -1,0 +1,37 @@
+[2m2026-04-10T18:14:01.381194Z[0m [33m WARN[0m [2mobsidian_host::middleware::logging[0m[2m:[0m API request failed [3mmethod[0m[2m=[0mPOST [3mpath[0m[2m=[0m/api/auth/login [3mquery[0m[2m=[0m [3mstatus[0m[2m=[0m500 [3mduration_ms[0m[2m=[0m21 [3mremote_addr[0m[2m=[0mSome("127.0.0.1:48020") [3muser_agent[0m[2m=[0mcurl/8.15.0 [3mrequest_id[0m[2m=[0ma98045b7-04cc-4ed7-9666-b90bdf970265
+[2m2026-04-10T18:42:27.157990Z[0m [33m WARN[0m [2mobsidian_host::middleware::logging[0m[2m:[0m API request failed [3mmethod[0m[2m=[0mPOST [3mpath[0m[2m=[0m/api/auth/login [3mquery[0m[2m=[0m [3mstatus[0m[2m=[0m500 [3mduration_ms[0m[2m=[0m0 [3mremote_addr[0m[2m=[0mSome("127.0.0.1:55362") [3muser_agent[0m[2m=[0mcurl/8.15.0 [3mrequest_id[0m[2m=[0mc2331c05-5d41-4442-97c2-bbbaf6d9c32a
+[2m2026-04-10T19:00:17.554672Z[0m [32m INFO[0m [2mactix_server::server[0m[2m:[0m SIGTERM received; starting graceful shutdown
+[2m2026-04-10T19:00:17.554818Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554806Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554794Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554797Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554801Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554811Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554814Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554814Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554811Z[0m [32m INFO[0m [2mactix_server::accept[0m[2m:[0m accept thread stopped
+[2m2026-04-10T19:00:17.554816Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554816Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554834Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554835Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554866Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554873Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554879Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554892Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554892Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554887Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554900Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554938Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554954Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.555002Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.554987Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.555000Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.555026Z[0m [32m INFO[0m [2mobsidian_host[0m[2m:[0m Shutdown signal received — notifying WebSocket clients and draining requests
+[2m2026-04-10T19:00:17.555026Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.555113Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.555874Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.558108Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.558358Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.559119Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.559510Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
+[2m2026-04-10T19:00:17.559512Z[0m [32m INFO[0m [2mactix_server::worker[0m[2m:[0m shutting down idle worker
