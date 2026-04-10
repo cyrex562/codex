@@ -1,0 +1,95 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e1]:
+  - generic [ref=e4]:
+    - navigation [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - combobox [ref=e10] [cursor=pointer]:
+            - generic [ref=e12]:
+              - combobox "Select vault…"
+            - generic [ref=e14]: 󰍝
+          - button [ref=e15] [cursor=pointer]:
+            - generic [ref=e17]: 󰒓
+        - generic [ref=e18]:
+          - button "Graph view" [ref=e19] [cursor=pointer]:
+            - generic [ref=e21]: 󱁊
+          - button "New entity" [ref=e22] [cursor=pointer]
+          - button "New note" [ref=e25] [cursor=pointer]:
+            - generic [ref=e27]: 󰻭
+          - button "New folder" [ref=e28] [cursor=pointer]:
+            - generic [ref=e30]: 󰮝
+          - button "Refresh file tree" [ref=e31] [cursor=pointer]:
+            - generic [ref=e33]: 󰑐
+          - button "Insert template" [ref=e34] [cursor=pointer]:
+            - generic [ref=e36]: 󱪞
+          - button "Import files or folders" [ref=e37] [cursor=pointer]:
+            - generic [ref=e39]: 󱃭
+          - button "Export vault or folder" [ref=e40] [cursor=pointer]:
+            - generic [ref=e42]: 󰈇
+          - button "Open random note" [ref=e43] [cursor=pointer]:
+            - generic [ref=e45]: 󱅎
+          - button "Open daily note" [ref=e46] [cursor=pointer]:
+            - generic [ref=e48]: 󰃶
+          - button "Sort A→Z" [ref=e49] [cursor=pointer]:
+            - generic [ref=e51]: 󰖽
+          - button "Sort Z→A" [ref=e52] [cursor=pointer]:
+            - generic [ref=e54]: 󰖿
+        - generic [ref=e56]: Select a vault to start.
+    - banner [ref=e57]:
+      - generic [ref=e58]:
+        - generic [ref=e60]: Codex
+        - generic [ref=e61]:
+          - generic [ref=e63]:
+            - generic [ref=e64]: 󰌙
+            - text: Offline
+          - generic [ref=e66]:
+            - generic [ref=e67]: 󱣫
+            - text: Saved
+        - generic [ref=e68]:
+          - button "Search (Ctrl+Shift+F)" [ref=e69] [cursor=pointer]:
+            - generic [ref=e71]: 󰍉
+          - button "Plugins" [ref=e72] [cursor=pointer]:
+            - generic [ref=e74]: 󰩦
+          - button "Theme" [ref=e75] [cursor=pointer]:
+            - generic [ref=e77]: 󰘥
+          - button "Account" [ref=e78] [cursor=pointer]:
+            - generic [ref=e80]: 󰭕
+            - generic [ref=e81]: Account
+    - main [ref=e82]:
+      - generic [ref=e84]:
+        - button "Split pane" [ref=e87] [cursor=pointer]:
+          - generic [ref=e89]: 󱃧
+        - generic [ref=e91]:
+          - generic [ref=e92]: 󱇗
+          - paragraph [ref=e93]: Open a file from the sidebar to start editing.
+  - generic:
+    - dialog:
+      - generic [ref=e97]:
+        - generic [ref=e98]:
+          - text: Vault Manager
+          - button [ref=e99] [cursor=pointer]:
+            - generic [ref=e101]: 󰅖
+        - generic [ref=e102]:
+          - list [ref=e103]
+          - separator [ref=e104]
+          - paragraph [ref=e105]: Add Vault
+          - generic [ref=e108]:
+            - textbox "Name" [active] [ref=e110]: test-vault-1775841013568
+            - generic:
+              - generic:
+                - generic: Name
+          - generic [ref=e111]:
+            - text: Vault directories are created automatically under the server-configured vault base directory.
+            - link "Set a custom path" [ref=e112] [cursor=pointer]:
+              - /url: "#"
+          - separator [ref=e113]
+          - paragraph [ref=e114]: Sharing & Groups
+          - generic [ref=e115]: Select a vault first to manage sharing.
+        - generic [ref=e116]:
+          - button "Close" [ref=e117] [cursor=pointer]:
+            - generic [ref=e118]: Close
+          - button "Add" [ref=e119] [cursor=pointer]:
+            - generic [ref=e120]: Add
+```

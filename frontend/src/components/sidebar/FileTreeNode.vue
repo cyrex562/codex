@@ -94,19 +94,22 @@
     <!-- Context menu -->
     <v-menu v-model="contextMenu" :style="{ top: cmY + 'px', left: cmX + 'px' }" style="position: fixed;">
       <v-list density="compact" min-width="180">
-        <v-list-item v-if="node.is_directory" title="Open folder note" prepend-icon="mdi-notebook-outline" @click="openFolderNote" />
-        <v-list-item v-if="node.is_directory" title="Create folder note" prepend-icon="mdi-note-plus-outline" @click="createFolderNote" />
+        <v-list-item v-if="node.is_directory" title="Open folder note" prepend-icon="mdi-notebook-outline" data-testid="ctx-open-folder-note" @click="openFolderNote" />
+        <v-list-item v-if="node.is_directory" title="Create folder note" prepend-icon="mdi-note-plus-outline" data-testid="ctx-create-folder-note" @click="createFolderNote" />
         <v-divider v-if="node.is_directory" />
-        <v-list-item v-if="!node.is_directory" title="Open" prepend-icon="mdi-file-outline" @click="openFile" />
-        <v-list-item v-if="!node.is_directory" title="Open in split" prepend-icon="mdi-flip-horizontal" @click="openSplit" />
-        <v-list-item title="Set custom icon" prepend-icon="mdi-emoticon-outline" @click="setCustomIcon" />
-        <v-list-item title="Clear custom icon" prepend-icon="mdi-emoticon-remove-outline" @click="clearCustomIcon" />
-        <v-list-item title="Rename" prepend-icon="mdi-pencil-outline" @click="startEdit" />
+        <v-list-item v-if="node.is_directory" title="New file" prepend-icon="mdi-file-plus-outline" data-testid="ctx-new-file" @click="newFileInFolder" />
+        <v-list-item v-if="node.is_directory" title="New folder" prepend-icon="mdi-folder-plus-outline" data-testid="ctx-new-folder" @click="newFolderInFolder" />
+        <v-divider v-if="node.is_directory" />
+        <v-list-item v-if="!node.is_directory" title="Open" prepend-icon="mdi-file-outline" data-testid="ctx-open-file" @click="openFile" />
+        <v-list-item v-if="!node.is_directory" title="Open in split" prepend-icon="mdi-flip-horizontal" data-testid="ctx-open-split" @click="openSplit" />
+        <v-list-item title="Set custom icon" prepend-icon="mdi-emoticon-outline" data-testid="ctx-set-icon" @click="setCustomIcon" />
+        <v-list-item title="Clear custom icon" prepend-icon="mdi-emoticon-remove-outline" data-testid="ctx-clear-icon" @click="clearCustomIcon" />
+        <v-list-item title="Rename" prepend-icon="mdi-pencil-outline" data-testid="ctx-rename" @click="startEdit" />
         <v-divider />
-        <v-list-item title="Export as ZIP" prepend-icon="mdi-folder-zip-outline" @click="exportAsZip" />
-        <v-list-item title="Export as tar.gz" prepend-icon="mdi-archive-arrow-down-outline" @click="exportAsTar" />
+        <v-list-item title="Export as ZIP" prepend-icon="mdi-folder-zip-outline" data-testid="ctx-export-zip" @click="exportAsZip" />
+        <v-list-item title="Export as tar.gz" prepend-icon="mdi-archive-arrow-down-outline" data-testid="ctx-export-tar" @click="exportAsTar" />
         <v-divider />
-        <v-list-item title="Delete" prepend-icon="mdi-delete-outline" base-color="error" @click="onDelete" />
+        <v-list-item title="Delete" prepend-icon="mdi-delete-outline" base-color="error" data-testid="ctx-delete" @click="onDelete" />
       </v-list>
     </v-menu>
   </div>
@@ -281,6 +284,8 @@ async function onDelete() {
   if (!confirm(`Delete "${props.node.name}"?`)) return;
   prefsStore.clearIconsUnderPath(props.node.path);
   await prefsStore.save();
+  // Close any tabs for this file/folder before deleting
+  tabsStore.closeTabsByPath(props.node.path);
   await filesStore.deleteFile(vaultId, props.node.path);
 }
 
@@ -297,6 +302,37 @@ async function setCustomIcon() {
 async function clearCustomIcon() {
   prefsStore.clearIcon(props.node.path);
   await prefsStore.save();
+}
+
+async function newFileInFolder() {
+  if (!props.node.is_directory) return;
+  const vaultId = vaultsStore.activeVaultId;
+  if (!vaultId) return;
+  
+  const fileName = prompt('Enter file name:', 'untitled.md');
+  if (!fileName || !fileName.trim()) return;
+  
+  const name = fileName.trim().endsWith('.md') ? fileName.trim() : fileName.trim() + '.md';
+  const filePath = `${props.node.path}/${name}`;
+  
+  const node = await filesStore.createFile(vaultId, filePath);
+  if (node) {
+    expanded.value = true;
+    tabsStore.openTab(tabsStore.activePaneId, node.path, node.path.split('/').pop()!);
+  }
+}
+
+async function newFolderInFolder() {
+  if (!props.node.is_directory) return;
+  const vaultId = vaultsStore.activeVaultId;
+  if (!vaultId) return;
+  
+  const folderName = prompt('Enter folder name:', 'New Folder');
+  if (!folderName || !folderName.trim()) return;
+  
+  const folderPath = `${props.node.path}/${folderName.trim()}`;
+  await filesStore.createDirectory(vaultId, folderPath);
+  expanded.value = true;
 }
 
 function importTargetPath() {

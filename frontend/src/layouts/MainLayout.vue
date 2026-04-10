@@ -17,9 +17,10 @@
         density="compact"
         variant="outlined"
         style="flex: 1; min-width: 0;"
+        data-testid="vault-selector"
         @update:model-value="onVaultChange"
       />
-      <v-btn icon="mdi-cog" size="small" @click="vaultManagerOpen = true" />
+      <v-btn icon="mdi-cog" size="small" data-testid="vault-settings-btn" @click="vaultManagerOpen = true" />
     </div>
 
     <SidebarActions />
@@ -157,6 +158,8 @@ onUnmounted(() => {
 
 async function onVaultChange(id: string) {
   vaultsStore.setActiveVault(id);
+  // Close all tabs when switching vaults
+  tabsStore.closeAllTabs();
   if (id) {
     await filesStore.loadTree(id);
     await filesStore.loadRecentFiles(id);

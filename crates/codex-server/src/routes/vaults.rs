@@ -73,7 +73,11 @@ fn resolve_vault_path(config: &AppConfig, body: &CreateVaultRequest) -> AppResul
         .map(str::trim)
         .filter(|p| !p.is_empty())
     {
-        return Ok(path.to_string());
+        // Canonicalize custom paths to make them absolute
+        let path_buf = PathBuf::from(path);
+        return path_buf.canonicalize()
+            .map(|p| p.to_string_lossy().to_string())
+            .or_else(|_| Ok(path.to_string()));
     }
 
     let slug = sanitize_vault_name(&body.name);
@@ -83,8 +87,16 @@ fn resolve_vault_path(config: &AppConfig, body: &CreateVaultRequest) -> AppResul
         ));
     }
 
-    let base_dir = PathBuf::from(config.vault.base_dir.trim());
-    Ok(base_dir.join(slug).to_string_lossy().to_string())
+    let base_dir = PathBuf::from(&config.vault.base_dir);
+    // Ensure base_dir is absolute
+    let absolute_base = if base_dir.is_absolute() {
+        base_dir
+    } else {
+        std::env::current_dir()
+            .map_err(|e| AppError::InternalError(format!("Failed to get current directory: {}", e)))?
+            .join(base_dir)
+    };
+    Ok(absolute_base.join(slug).to_string_lossy().to_string())
 }
 
 #[post("/api/vaults")]

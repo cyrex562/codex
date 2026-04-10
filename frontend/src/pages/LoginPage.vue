@@ -3,17 +3,18 @@
     <v-card min-width="360" max-width="420">
       <v-card-title class="text-center pa-6">
         <v-icon icon="mdi-notebook-outline" size="40" color="primary" />
-        <div class="mt-2 text-h6">Obsidian Host</div>
+        <div class="mt-2 text-h6">Codex</div>
       </v-card-title>
 
       <v-card-text>
-        <v-alert v-if="error" type="error" class="mb-4" closable @click:close="error = ''">{{ error }}</v-alert>
+        <v-alert v-if="error" type="error" class="mb-4" closable data-testid="login-error-alert" @click:close="error = ''">{{ error }}</v-alert>
 
         <v-text-field
           v-model="username"
           label="Username"
           prepend-inner-icon="mdi-account-outline"
           autofocus
+          data-testid="login-username-input"
           @keyup.enter="login"
         />
         <v-text-field
@@ -21,12 +22,13 @@
           label="Password"
           type="password"
           prepend-inner-icon="mdi-lock-outline"
+          data-testid="login-password-input"
           @keyup.enter="login"
         />
       </v-card-text>
 
       <v-card-actions class="px-4 pb-4">
-        <v-btn block color="primary" :loading="loading" @click="login">Sign In</v-btn>
+        <v-btn block color="primary" :loading="loading" data-testid="login-submit-btn" @click="login">Sign In</v-btn>
       </v-card-actions>
     </v-card>
   </v-container>

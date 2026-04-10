@@ -91,6 +91,13 @@ export const useTabsStore = defineStore('tabs', () => {
         }
     }
 
+    function closeAllTabs() {
+        tabs.value.clear();
+        panes.value.forEach((pane) => {
+            pane.activeTabId = null;
+        });
+    }
+
     function activateTab(tabId: string, paneId?: string) {
         const tab = tabs.value.get(tabId);
         if (!tab) return;
@@ -158,6 +165,16 @@ export const useTabsStore = defineStore('tabs', () => {
                 pane.activeTabId = remappedIds.get(pane.activeTabId) ?? pane.activeTabId;
             }
         });
+    }
+
+    function closeTabsByPath(filePath: string) {
+        const tabIdsToClose: string[] = [];
+        tabs.value.forEach((tab, tabId) => {
+            if (tab.filePath === filePath || tab.filePath.startsWith(`${filePath}/`)) {
+                tabIdsToClose.push(tabId);
+            }
+        });
+        tabIdsToClose.forEach((tabId) => closeTab(tabId));
     }
 
     // ── Pane management ──────────────────────────────────────────────────────
@@ -230,11 +247,13 @@ export const useTabsStore = defineStore('tabs', () => {
         openTab,
         openGraphTab,
         closeTab,
+        closeAllTabs,
         activateTab,
         updateTabContent,
         markTabClean,
         updateTabFrontmatter,
         remapTabPaths,
+        closeTabsByPath,
         splitPane,
         closePane,
         setActivePaneId,

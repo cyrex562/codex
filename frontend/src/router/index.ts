@@ -58,10 +58,6 @@ router.beforeEach(async (to) => {
             return { path: '/change-password', query: { redirect: to.fullPath } };
         }
 
-        if (!auth.mustChangePassword && to.name === 'change-password') {
-            return { path: '/' };
-        }
-
         if (to.name === 'admin-users' && !auth.isAdmin) {
             return { path: '/' };
         }

@@ -4,7 +4,7 @@
       <v-card-title class="d-flex align-center">
         Vault Manager
         <v-spacer />
-        <v-btn icon="mdi-close" size="small" variant="plain" @click="close" />
+        <v-btn icon="mdi-close" size="small" variant="plain" data-testid="vault-manager-close-btn" @click="close" />
       </v-card-title>
 
       <v-card-text style="max-height: 400px; overflow-y: auto;">
@@ -35,7 +35,7 @@
 
         <!-- Add vault form -->
         <p class="text-caption font-weight-bold mb-2">Add Vault</p>
-        <v-text-field v-model="newName" label="Name" density="compact" />
+        <v-text-field v-model="newName" label="Name" density="compact" data-testid="vault-name-input" />
         <div v-if="showPathField" class="d-flex align-center gap-2 mb-1">
           <v-text-field
             v-model="newPath"
@@ -65,6 +65,10 @@
             <a href="#" class="text-primary" @click.prevent="showPathField = false; newPath = ''">Use default</a>
           </template>
         </div>
+
+        <v-alert v-if="vaultError" type="error" density="compact" variant="tonal" class="mb-2" closable @click:close="vaultError = ''">
+          {{ vaultError }}
+        </v-alert>
 
         <v-divider class="my-3" />
 
@@ -281,6 +285,7 @@ const newPath = ref('');
 const showPathField = ref(false);
 const isTauriEnv = isTauri();
 const saving = ref(false);
+const vaultError = ref('');
 const sharingBusy = ref(false);
 const sharingError = ref('');
 
@@ -331,6 +336,7 @@ watch(memberGroupId, async (groupId) => {
 async function addVault() {
   if (!newName.value) return;
   saving.value = true;
+  vaultError.value = '';
   try {
     await vaultsStore.createVault({
       name: newName.value,
@@ -339,6 +345,8 @@ async function addVault() {
     newName.value = '';
     newPath.value = '';
     showPathField.value = false;
+  } catch (e: any) {
+    vaultError.value = e?.message ?? 'Failed to create vault.';
   } finally {
     saving.value = false;
   }

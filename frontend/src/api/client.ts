@@ -79,7 +79,22 @@ async function request<T>(
     if (!response.ok) {
         let body: unknown;
         try { body = await response.json(); } catch { /* empty */ }
-        const message = (body as { error?: string })?.error ?? `HTTP ${response.status}`;
+        const message = (body as { message?: string })?.message ?? `HTTP ${response.status}`;
+        
+        // Handle authentication expiration
+        if (response.status === 401) {
+            try {
+                const auth = useAuthStore();
+                await auth.logout();
+                // Redirect to login page
+                if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+                    window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+                }
+            } catch {
+                // Ignore errors during logout/redirect
+            }
+        }
+        
         throw new ApiError(response.status, message, body);
     }
 

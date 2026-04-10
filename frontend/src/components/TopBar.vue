@@ -5,7 +5,7 @@
     style="background: rgb(var(--v-theme-surface)); border-bottom: 1px solid rgb(var(--v-theme-border));"
   >
     <v-app-bar-title class="text-caption font-weight-medium" style="color: rgb(var(--v-theme-on-background));">
-      {{ vaultsStore.getActive()?.name ?? 'Obsidian Host' }}
+      {{ vaultsStore.getActive()?.name ?? 'Codex' }}
     </v-app-bar-title>
 
     <div class="d-flex align-center ga-2 mr-2">
@@ -25,6 +25,7 @@
         size="small"
         density="compact"
         title="Search (Ctrl+Shift+F)"
+        data-testid="topbar-search-btn"
         @click="emit('open-search')"
       />
       <v-btn
@@ -32,6 +33,7 @@
         size="small"
         density="compact"
         title="Plugins"
+        data-testid="topbar-plugins-btn"
         @click="emit('open-plugins')"
       />
       <v-btn
@@ -39,6 +41,7 @@
         size="small"
         density="compact"
         title="Theme"
+        data-testid="topbar-theme-btn"
         @click="toggleTheme"
       />
 
@@ -49,6 +52,7 @@
             size="small"
             variant="text"
             prepend-icon="mdi-account-circle-outline"
+            data-testid="topbar-user-menu-btn"
           >
             {{ username }}
           </v-btn>
@@ -58,18 +62,21 @@
           <v-list-item
             prepend-icon="mdi-lock-reset"
             title="Change password"
+            data-testid="user-menu-change-password"
             @click="goToChangePassword"
           />
           <v-list-item
             v-if="authStore.isAdmin"
             prepend-icon="mdi-account-multiple-plus-outline"
             title="Manage users"
+            data-testid="user-menu-manage-users"
             @click="goToAdminUsers"
           />
           <v-divider class="my-1" />
           <v-list-item
             prepend-icon="mdi-logout"
             title="Sign out"
+            data-testid="user-menu-sign-out"
             @click="signOut"
           />
         </v-list>
