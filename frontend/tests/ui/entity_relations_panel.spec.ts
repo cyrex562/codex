@@ -18,28 +18,33 @@ const entityResponse = {
         vault_id: defaultVault.id,
         path: entityFile,
         entity_type: 'character',
-        labels: ['graphable'],
+        plugin_id: 'worldbuilding',
+        labels: JSON.stringify(['graphable']),
         fields: JSON.stringify({ name: 'Aria' }),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        modified_at: new Date().toISOString(),
+        indexed_at: new Date().toISOString(),
     },
     relations: [
         {
             id: 'r1',
-            source_id: 'e1',
-            source_path: entityFile,
-            target_id: 'e2',
+            source_entity_id: 'e1',
+            target_entity_id: 'e2',
             target_path: 'lyra.md',
             relation_type: 'knows',
+            label: 'knows',
+            directed: true,
+            metadata: {},
             is_inverse: false,
         },
         {
             id: 'r2',
-            source_id: 'e3',
-            source_path: 'elder.md',
-            target_id: 'e1',
-            target_path: entityFile,
+            source_entity_id: 'e3',
+            target_entity_id: 'e1',
+            target_path: 'elder.md',
             relation_type: 'mentors',
+            label: 'mentors',
+            directed: true,
+            metadata: {},
             is_inverse: true,
         },
     ],
@@ -186,7 +191,7 @@ test.describe('Entity relations panel', () => {
             fileContentsByVaultId: {
                 [defaultVault.id]: {
                     [entityFile]: entityFileContent,
-                    'World/Characters/lyra.md': '---\ncodex_type: character\nname: Lyra\n---\n',
+                    'lyra.md': '---\ncodex_type: character\nname: Lyra\n---\n',
                 },
             },
             entityByPathByVaultId: {
@@ -205,7 +210,7 @@ test.describe('Entity relations panel', () => {
         // Click the lyra relation to navigate
         await relationsPanel.getByText('lyra').click();
 
-        // A new tab for lyra.md should open
-        await expect(page.locator('.tab-item')).toContainText('lyra');
+        // A new active tab for lyra.md should open
+        await expect(page.locator('.tab-item.tab-active')).toContainText('lyra');
     });
 });

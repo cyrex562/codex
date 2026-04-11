@@ -6,6 +6,7 @@ use crate::services::TemplateService;
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 
 #[derive(Deserialize)]
 pub struct EntityListQuery {
@@ -116,12 +117,19 @@ async fn get_entity_relations(
     path: web::Path<(String, String)>,
     state: web::Data<AppState>,
 ) -> HttpResponse {
-    let (_vault_id, entity_id) = path.into_inner();
+    let (vault_id, entity_id) = path.into_inner();
 
-    match RelationService::get_for_entity(&state.db, &entity_id).await {
-        Ok(relations) => HttpResponse::Ok().json(json!({ "relations": relations })),
+    match EntityService::get(&state.db, &entity_id).await {
+        Ok(Some(entity)) => match build_entity_relations_payload(&state, &vault_id, &entity).await {
+            Ok(relations) => HttpResponse::Ok().json(json!({ "relations": relations })),
+            Err(e) => {
+                tracing::error!("get_entity_relations error: {e}");
+                HttpResponse::InternalServerError().json(json!({ "error": e.to_string() }))
+            }
+        },
+        Ok(None) => HttpResponse::NotFound().json(json!({ "error": "Entity not found" })),
         Err(e) => {
-            tracing::error!("get_entity_relations error: {e}");
+            tracing::error!("get_entity_relations entity lookup error: {e}");
             HttpResponse::InternalServerError().json(json!({ "error": e.to_string() }))
         }
     }
@@ -310,8 +318,7 @@ async fn get_entity_by_path(
     let vault_id = vault_path_param.into_inner();
     match EntityService::get_by_path(&state.db, &vault_id, &query.path).await {
         Ok(Some(entity)) => {
-            let entity_id = entity.id.clone();
-            match RelationService::get_for_entity(&state.db, &entity_id).await {
+            match build_entity_relations_payload(&state, &vault_id, &entity).await {
                 Ok(relations) => HttpResponse::Ok().json(json!({
                     "entity": entity,
                     "relations": relations,
@@ -325,4 +332,44 @@ async fn get_entity_by_path(
         Ok(None) => HttpResponse::NotFound().json(json!({ "entity": null, "relations": [] })),
         Err(_) => HttpResponse::NotFound().json(json!({ "entity": null, "relations": [] })),
     }
+}
+
+async fn build_entity_relations_payload(
+    state: &web::Data<AppState>,
+    vault_id: &str,
+    entity: &crate::services::entity_service::Entity,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let related_entities = EntityService::list_all_in_vault(&state.db, vault_id).await?;
+    let path_by_id: HashMap<_, _> = related_entities
+        .into_iter()
+        .map(|related| (related.id, related.path))
+        .collect();
+
+    let relations = RelationService::get_for_entity(&state.db, &entity.id).await?;
+
+    Ok(relations
+        .into_iter()
+        .filter(|relation| relation.from_entity_id == entity.id)
+        .filter_map(|relation| {
+            let target_path = path_by_id.get(&relation.to_entity_id)?.clone();
+            let metadata = relation
+                .metadata
+                .as_deref()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                .unwrap_or_else(|| json!({}));
+
+            Some(json!({
+                "id": relation.id,
+                "source_entity_id": relation.from_entity_id,
+                "target_entity_id": relation.to_entity_id,
+                "target_path": target_path,
+                "relation_type": relation.relation_type,
+                "label": relation.relation_type,
+                "directed": true,
+                "metadata": metadata,
+                "plugin_id": serde_json::Value::Null,
+                "is_inverse": relation.direction == "inverse",
+            }))
+        })
+        .collect())
 }

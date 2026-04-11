@@ -90,10 +90,10 @@ test.describe('Editor toolbar', () => {
 
         await page.getByTitle('More options').click();
         await expect(page.getByText('Extract selection to note')).toBeVisible();
-        await expect(page.getByText('a, b, c \u2026')).toBeVisible();
-        await expect(page.getByText('A, B, C \u2026')).toBeVisible();
-        await expect(page.getByText('i, ii, iii \u2026')).toBeVisible();
-        await expect(page.getByText('I, II, III \u2026')).toBeVisible();
+        await expect(page.getByText('a, b, c \u2026', { exact: true })).toBeVisible();
+        await expect(page.getByText('A, B, C \u2026', { exact: true })).toBeVisible();
+        await expect(page.getByText('i, ii, iii \u2026', { exact: true })).toBeVisible();
+        await expect(page.getByText('I, II, III \u2026', { exact: true })).toBeVisible();
     });
 
     test('clicking Bold button triggers save-debounce (tab remains or goes dirty)', async ({ page }) => {

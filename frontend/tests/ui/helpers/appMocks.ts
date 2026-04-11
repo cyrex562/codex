@@ -23,8 +23,23 @@ type MockOptions = {
     tagsByVaultId?: Record<string, Array<{ tag: string; count: number }>>;
     /** Backlinks keyed by vault id, then by file path */
     backlinksByVaultId?: Record<string, Array<{ path: string; title: string }>>;
-    /** Generate-outline mock result */
-    outlineResult?: { summary: string; sections: Array<{ line_number: number; level: number; title: string; summary: string }> };
+    /** ML outline mock result */
+    outlineResult?: { file_path?: string; summary: string; sections: Array<{ line_number: number; level: number; title: string; summary: string }>; generated_at?: string };
+    /** ML suggestions mock result */
+    suggestionsResult?: {
+        file_path?: string;
+        suggestions: Array<{
+            id: string;
+            kind: 'tag' | 'category' | 'move_to_folder';
+            confidence: number;
+            rationale: string;
+            tag?: string;
+            category?: string;
+            target_folder?: string;
+        }>;
+        existing_tags?: string[];
+        generated_at?: string;
+    };
     /** Entity types returned from /api/plugins/entity-types */
     entityTypes?: Array<{ id: string; name: string; plugin_id: string; color?: string; icon?: string; fields: unknown[]; labels?: string[]; show_on_create?: string[]; display_field?: string }>;
     /** Relation types returned from /api/plugins/relation-types */
@@ -631,15 +646,50 @@ export async function installCommonAppMocks(page: Page, options: MockOptions = {
     });
 
     // ── AI outline / suggestions ───────────────────────────────────────────────
-    const outlineResult = options.outlineResult ?? {
-        summary: 'Test outline summary',
-        sections: [{ line_number: 1, level: 1, title: 'Section One', summary: 'intro' }],
-    };
-    await page.route(/.*\/api\/vaults\/[^/]+\/generate-outline$/, async (route) => {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(outlineResult) });
+    await page.route(/.*\/api\/vaults\/[^/]+\/ml\/outline$/, async (route) => {
+        const payload = route.request().postDataJSON() as { file_path?: string };
+        const outlineResult = options.outlineResult ?? {
+            file_path: payload.file_path ?? '',
+            summary: 'Test outline summary',
+            sections: [{ line_number: 1, level: 1, title: 'Section One', summary: 'intro' }],
+            generated_at: new Date().toISOString(),
+        };
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+            file_path: outlineResult.file_path ?? payload.file_path ?? '',
+            summary: outlineResult.summary,
+            sections: outlineResult.sections,
+            generated_at: outlineResult.generated_at ?? new Date().toISOString(),
+        }) });
     });
-    await page.route(/.*\/api\/vaults\/[^/]+\/suggest-organization$/, async (route) => {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ suggestions: ['Move to subfolder', 'Add tags'] }) });
+    await page.route(/.*\/api\/vaults\/[^/]+\/ml\/suggestions$/, async (route) => {
+        const payload = route.request().postDataJSON() as { file_path?: string };
+        const suggestionsResult = options.suggestionsResult ?? {
+            file_path: payload.file_path ?? '',
+            suggestions: [
+                {
+                    id: 'suggest-move',
+                    kind: 'move_to_folder' as const,
+                    confidence: 0.87,
+                    rationale: 'Move to subfolder',
+                    target_folder: 'Projects',
+                },
+                {
+                    id: 'suggest-tag',
+                    kind: 'tag' as const,
+                    confidence: 0.74,
+                    rationale: 'Add tags',
+                    tag: 'project',
+                },
+            ],
+            existing_tags: [],
+            generated_at: new Date().toISOString(),
+        };
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+            file_path: suggestionsResult.file_path ?? payload.file_path ?? '',
+            suggestions: suggestionsResult.suggestions,
+            existing_tags: suggestionsResult.existing_tags ?? [],
+            generated_at: suggestionsResult.generated_at ?? new Date().toISOString(),
+        }) });
     });
 
     // ── Entity / Schema / Graph routes ────────────────────────────────────────

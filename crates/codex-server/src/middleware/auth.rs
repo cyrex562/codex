@@ -349,21 +349,11 @@ fn should_skip_auth(req: &ServiceRequest) -> bool {
         return true;
     }
 
-    if !path.starts_with("/api") && has_static_extension(path) {
+    if !path.starts_with("/api") {
         return true;
     }
 
     false
-}
-
-fn has_static_extension(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    [
-        ".html", ".js", ".mjs", ".css", ".map", ".json", ".ico", ".svg", ".png", ".jpg", ".jpeg",
-        ".gif", ".webp", ".woff", ".woff2", ".ttf", ".eot", ".txt",
-    ]
-    .iter()
-    .any(|ext| lower.ends_with(ext))
 }
 
 fn extract_bearer(auth_header: Option<&header::HeaderValue>) -> Option<&str> {

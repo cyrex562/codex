@@ -39,16 +39,22 @@ async function setup(page: Parameters<typeof installCommonAppMocks>[0]) {
     await page.goto('/');
 }
 
+async function openSearch(page: Parameters<typeof installCommonAppMocks>[0]) {
+    await page.locator('button[title="Search (Ctrl+Shift+F)"]').click();
+    const input = page.getByRole('textbox', { name: 'Search', exact: true });
+    await expect(input).toBeVisible();
+    return input;
+}
+
 test.describe('Search modal — advanced', () => {
     test('shows result count and match lines', async ({ page }) => {
         await setup(page);
-        await page.keyboard.press('Control+f');
+        const input = await openSearch(page);
+        const dialog = input.locator('xpath=ancestor::div[contains(@class,"v-overlay")]').first();
 
-        const dialog = page.locator('.v-dialog:visible');
-        await expect(dialog).toBeVisible();
-
-        await page.getByPlaceholder(/search/i).fill('content');
-        await expect(dialog.getByText('Search A')).toBeVisible();
+        await input.fill('content');
+        await input.press('Enter');
+        await expect(dialog.getByText('search-a.md')).toBeVisible();
         await expect(dialog.getByText('Some content to find')).toBeVisible();
     });
 
@@ -64,31 +70,31 @@ test.describe('Search modal — advanced', () => {
         });
         await page.goto('/');
 
-        await page.keyboard.press('Control+f');
-        await page.getByPlaceholder(/search/i).fill('zzznoresults');
-        await expect(page.getByText(/no results|nothing found/i)).toBeVisible({ timeout: 3000 });
+        const input = await openSearch(page);
+        await input.fill('zzznoresults');
+        await input.press('Enter');
+        await expect(page.getByText('No results found.')).toBeVisible({ timeout: 3000 });
     });
 
     test('tag-based search (#tag syntax) sends query with hash', async ({ page }) => {
         await setup(page);
 
-        // Open search and type a tag query
-        await page.keyboard.press('Control+f');
-        await page.getByPlaceholder(/search/i).fill('#important');
+        const input = await openSearch(page);
+        await input.fill('#important');
+        await input.press('Enter');
 
-        // Results are shown (mock returns same results regardless of query)
-        await expect(page.locator('.v-dialog:visible')).toBeVisible();
-        const input = page.getByPlaceholder(/search/i);
         await expect(input).toHaveValue('#important');
     });
 
     test('clicking a search result opens the file in a tab', async ({ page }) => {
         await setup(page);
-        await page.keyboard.press('Control+f');
-        await page.getByPlaceholder(/search/i).fill('content');
+        const input = await openSearch(page);
+        await input.fill('content');
+        await input.press('Enter');
 
-        await page.locator('.v-dialog:visible').getByText('Search A').click();
-        await expect(page.locator('.tab-item')).toContainText('search-a.md');
+        const dialog = input.locator('xpath=ancestor::div[contains(@class,"v-overlay")]').first();
+        await dialog.getByText('search-a.md').click();
+        await expect(page.locator('.tab-item.tab-active')).toContainText('search-a.md');
     });
 
     test('tag panel click populates search with tag query', async ({ page }) => {
@@ -98,7 +104,8 @@ test.describe('Search modal — advanced', () => {
         await expect(page.getByText('TAGS')).toBeVisible();
         await page.locator('.tag-item', { hasText: 'important' }).click();
 
-        // The search dialog should open with the tag
-        await expect(page.locator('.v-dialog:visible')).toBeVisible();
+        const input = page.getByRole('textbox', { name: 'Search', exact: true });
+        await expect(input).toBeVisible();
+        await expect(input).toHaveValue('#important');
     });
 });

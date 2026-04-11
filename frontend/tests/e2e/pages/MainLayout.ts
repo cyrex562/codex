@@ -54,6 +54,10 @@ export class MainLayout {
   }
 
   async waitForMainUI() {
-    await this.vaultSettingsBtn.waitFor({ state: 'visible', timeout: 10000 });
+    await Promise.race([
+      this.vaultSettingsBtn.waitFor({ state: 'visible', timeout: 10000 }),
+      this.userMenuBtn.waitFor({ state: 'visible', timeout: 10000 }),
+      this.page.getByText('Select a vault to start.').waitFor({ state: 'visible', timeout: 10000 }),
+    ]);
   }
 }

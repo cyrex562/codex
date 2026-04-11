@@ -28,6 +28,18 @@ test.describe('Core interface elements smoke coverage', () => {
             plugins: [
                 { id: 'word-count', name: 'Word Count', description: 'Counts words', enabled: true },
             ],
+            entityIndexStats: {
+                vaults: [
+                    {
+                        vault_id: defaultVault.id,
+                        vault_name: defaultVault.name,
+                        entity_count: 0,
+                        relation_count: 0,
+                        last_reindexed: null,
+                        reindex_duration_ms: null,
+                    },
+                ],
+            },
             searchResults: [
                 {
                     path: 'README.md',
@@ -36,6 +48,22 @@ test.describe('Core interface elements smoke coverage', () => {
                     score: 1,
                 },
             ],
+        });
+
+        await page.route('**/api/admin/users', async (route) => {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([
+                    {
+                        id: 'u-admin',
+                        username: 'ui-admin',
+                        is_admin: true,
+                        must_change_password: false,
+                        created_at: new Date().toISOString(),
+                    },
+                ]),
+            });
         });
 
         await page.goto('/');
@@ -68,5 +96,6 @@ test.describe('Core interface elements smoke coverage', () => {
 
         await page.getByText('Manage users').click();
         await expect(page).toHaveURL('/admin/users');
+        await expect(page.getByRole('heading', { name: 'Admin · User Management' })).toBeVisible();
     });
 });

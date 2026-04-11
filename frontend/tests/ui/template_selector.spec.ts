@@ -14,8 +14,15 @@ async function setupWithTemplate(page: Parameters<typeof installCommonAppMocks>[
         treeByVaultId: {
             [defaultVault.id]: [
                 { name: NOTE_PATH, path: NOTE_PATH, is_directory: false, modified: new Date().toISOString() },
-                { name: 'Templates', path: 'Templates', is_directory: true, modified: new Date().toISOString() },
-                { name: 'daily.md', path: TEMPLATE_PATH, is_directory: false, modified: new Date().toISOString() },
+                {
+                    name: 'Templates',
+                    path: 'Templates',
+                    is_directory: true,
+                    modified: new Date().toISOString(),
+                    children: [
+                        { name: 'daily.md', path: TEMPLATE_PATH, is_directory: false, modified: new Date().toISOString() },
+                    ],
+                },
             ],
         },
         fileContentsByVaultId: {
@@ -42,19 +49,23 @@ test.describe('Template selector', () => {
         await setupWithTemplate(page);
 
         await page.locator('button[title="Insert template"]').click();
-        await expect(page.getByText('Insert Template')).toBeVisible();
-        await expect(page.getByText('daily.md')).toBeVisible();
-        await expect(page.getByText(TEMPLATE_PATH)).toBeVisible();
+        const dialog = page.getByRole('dialog');
+        const templateItem = dialog.getByRole('listitem').filter({ hasText: 'daily.md' });
+        await expect(dialog.getByText('Insert Template')).toBeVisible();
+        await expect(templateItem).toBeVisible();
+        await expect(templateItem.getByText(TEMPLATE_PATH)).toBeVisible();
     });
 
     test('inserts template content into the active note', async ({ page }) => {
         await setupWithTemplate(page);
 
         await page.locator('button[title="Insert template"]').click();
-        await expect(page.getByText('daily.md')).toBeVisible();
+        const dialog = page.getByRole('dialog');
+        const templateItem = dialog.getByRole('listitem').filter({ hasText: 'daily.md' });
+        await expect(templateItem).toBeVisible();
 
         // Click the template to insert it
-        await page.locator('.v-list-item', { hasText: 'daily.md' }).click();
+        await templateItem.click();
 
         // Dialog closes after insertion
         await expect(page.getByText('Insert Template')).not.toBeVisible();
@@ -81,8 +92,15 @@ test.describe('Template selector', () => {
             treeByVaultId: {
                 [defaultVault.id]: [
                     { name: 'photo.png', path: 'photo.png', is_directory: false, modified: new Date().toISOString() },
-                    { name: 'Templates', path: 'Templates', is_directory: true, modified: new Date().toISOString() },
-                    { name: 'daily.md', path: TEMPLATE_PATH, is_directory: false, modified: new Date().toISOString() },
+                    {
+                        name: 'Templates',
+                        path: 'Templates',
+                        is_directory: true,
+                        modified: new Date().toISOString(),
+                        children: [
+                            { name: 'daily.md', path: TEMPLATE_PATH, is_directory: false, modified: new Date().toISOString() },
+                        ],
+                    },
                 ],
             },
             fileContentsByVaultId: { [defaultVault.id]: { [TEMPLATE_PATH]: TEMPLATE_CONTENT } },

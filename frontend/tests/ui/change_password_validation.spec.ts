@@ -1,20 +1,12 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { defaultProfile, installCommonAppMocks, seedAuthTokens } from './helpers/appMocks';
 
 async function gotoChangePw(page: Page) {
-    await page.route('**/api/auth/me', async (route) => {
-        await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-                id: 'u1',
-                username: 'alice',
-                is_admin: false,
-                must_change_password: false,
-                groups: [],
-                auth_method: 'password',
-            }),
-        });
+    await seedAuthTokens(page, 'tok', 'ref');
+    await installCommonAppMocks(page, {
+        profile: { ...defaultProfile, must_change_password: false },
+        vaults: [],
     });
     await page.route('**/api/auth/change-password', async (route) => {
         const payload = route.request().postDataJSON() as { current_password?: string; new_password?: string };
@@ -24,39 +16,34 @@ async function gotoChangePw(page: Page) {
             await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) });
         }
     });
-    await page.addInitScript(() => {
-        localStorage.setItem('obsidian_access_token', 'tok');
-        localStorage.setItem('obsidian_refresh_token', 'ref');
-        localStorage.setItem('obsidian_token_expires_at', String(Date.now() + 3600_000));
-    });
-    await page.goto('/settings/password');
+    await page.goto('/change-password');
 }
 
 test.describe('Change password page', () => {
     test('shows the change password form', async ({ page }) => {
         await gotoChangePw(page);
         await expect(page.getByLabel('Current password')).toBeVisible();
-        await expect(page.getByLabel('New password')).toBeVisible();
+        await expect(page.getByLabel('New password', { exact: true })).toBeVisible();
         await expect(page.getByLabel('Confirm new password')).toBeVisible();
-        await expect(page.getByRole('button', { name: 'Change Password' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Update password' })).toBeVisible();
     });
 
     test('shows error when passwords do not match', async ({ page }) => {
         await gotoChangePw(page);
         await page.getByLabel('Current password').fill('OldPass123!');
-        await page.getByLabel('New password').fill('NewSecurePass1!');
+        await page.getByLabel('New password', { exact: true }).fill('NewSecurePass1!');
         await page.getByLabel('Confirm new password').fill('Mismatch1234!');
-        await page.getByRole('button', { name: 'Change Password' }).click();
+        await page.getByRole('button', { name: 'Update password' }).click();
         await expect(page.getByText(/do not match|mismatch/i)).toBeVisible();
     });
 
     test('shows error when new password is too short', async ({ page }) => {
         await gotoChangePw(page);
         await page.getByLabel('Current password').fill('OldPass123!');
-        await page.getByLabel('New password').fill('short');
+        await page.getByLabel('New password', { exact: true }).fill('short');
         await page.getByLabel('Confirm new password').fill('short');
-        await page.getByRole('button', { name: 'Change Password' }).click();
-        await expect(page.getByText(/12 characters|too short|minimum/i)).toBeVisible();
+        await page.getByRole('button', { name: 'Update password' }).click();
+        await expect(page.getByText('New password must be at least 12 characters.')).toBeVisible();
     });
 
     test('shows a sign out link', async ({ page }) => {

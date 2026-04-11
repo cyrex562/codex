@@ -52,10 +52,10 @@ test.describe('Bookmarks panel', () => {
         await page.getByText(FILE_A.split('/').pop()!).click(); // open alpha
 
         await expect(page.getByText('BOOKMARKS')).toBeVisible();
-        await expect(page.getByText('beta')).toBeVisible();
+        await expect(page.locator('.bookmark-item')).toContainText('beta');
 
         await page.locator('.bookmark-item').first().click();
-        await expect(page.locator('.tab-item')).toContainText('beta.md');
+        await expect(page.locator('.tab-item.tab-active')).toContainText('beta');
     });
 
     test('adds a bookmark for the current file', async ({ page }) => {
@@ -106,8 +106,9 @@ test.describe('Tags panel', () => {
         await setupWithPanels(page);
         // Click a tag — the sidebar emits a 'search' event which should open the search modal
         await page.locator('.tag-item', { hasText: 'research' }).click();
-        // The search modal should open with the tag query
-        await expect(page.locator('.v-dialog:visible')).toBeVisible();
+        const input = page.getByRole('textbox', { name: 'Search', exact: true });
+        await expect(input).toBeVisible();
+        await expect(input).toHaveValue('#research');
     });
 
     test('collapses on header click', async ({ page }) => {
@@ -133,7 +134,7 @@ test.describe('Backlinks panel', () => {
         await page.getByText('alpha.md').click();
 
         await page.locator('.backlink-item').first().click();
-        await expect(page.locator('.tab-item')).toContainText('beta.md');
+        await expect(page.locator('.tab-item.tab-active')).toContainText('beta');
     });
 
     test('collapses backlinks panel on header click', async ({ page }) => {
@@ -179,10 +180,11 @@ test.describe('Outline panel', () => {
         await page.goto('/');
         await page.getByText('outline-note.md').click();
 
-        await expect(page.getByText('OUTLINE')).toBeVisible();
-        await expect(page.locator('.outline-item', { hasText: 'Introduction' })).toBeVisible();
-        await expect(page.locator('.outline-item', { hasText: 'Background' })).toBeVisible();
-        await expect(page.locator('.outline-item', { hasText: 'Detail' })).toBeVisible();
+        const outlinePanel = page.locator('.outline-panel');
+        await expect(outlinePanel.getByText('OUTLINE', { exact: true })).toBeVisible();
+        await expect(outlinePanel.locator('.outline-item', { hasText: 'Introduction' })).toBeVisible();
+        await expect(outlinePanel.locator('.outline-item', { hasText: 'Background' })).toBeVisible();
+        await expect(outlinePanel.locator('.outline-item', { hasText: 'Detail' })).toBeVisible();
     });
 
     test('shows empty state when no headings', async ({ page }) => {
@@ -197,7 +199,7 @@ test.describe('Outline panel', () => {
         await page.goto('/');
         await page.getByText('plain.md').click();
 
-        await expect(page.getByText('No headings')).toBeVisible();
+        await expect(page.locator('.outline-panel').getByText('No headings')).toBeVisible();
     });
 });
 
@@ -218,9 +220,10 @@ test.describe('Outgoing links panel', () => {
         await page.goto('/');
         await page.getByText('links.md').click();
 
-        await expect(page.getByText('OUTGOING LINKS')).toBeVisible();
-        await expect(page.locator('.link-item', { hasText: 'internal-note' })).toBeVisible();
-        await expect(page.locator('.link-item', { hasText: 'External' })).toBeVisible();
+        const outgoingPanel = page.locator('.outgoing-links-panel');
+        await expect(outgoingPanel.getByText('OUTGOING LINKS', { exact: true })).toBeVisible();
+        await expect(outgoingPanel.locator('.link-item', { hasText: 'internal-note' })).toBeVisible();
+        await expect(outgoingPanel.locator('.link-item', { hasText: 'External' })).toBeVisible();
     });
 
     test('opens internal wiki-link file on click', async ({ page }) => {
@@ -231,7 +234,7 @@ test.describe('Outgoing links panel', () => {
         const betaLink = page.locator('.link-item', { hasText: 'beta' }).first();
         await expect(betaLink).toBeVisible();
         await betaLink.click();
-        await expect(page.locator('.tab-item')).toContainText('beta.md');
+        await expect(page.locator('.tab-item.tab-active')).toContainText('beta.md');
     });
 });
 
@@ -251,7 +254,7 @@ test.describe('Neighboring files panel', () => {
         await page.getByText('beta.md').click();
 
         await page.locator('.neighbor-item', { hasText: 'alpha' }).click();
-        await expect(page.locator('.tab-item')).toContainText('alpha.md');
+        await expect(page.locator('.tab-item.tab-active')).toContainText('alpha');
     });
 });
 
@@ -263,9 +266,9 @@ test.describe('Recent files panel', () => {
         await page.getByText('alpha.md').click();
         await page.getByText('beta.md').click();
 
-        await expect(page.getByText('RECENT FILES')).toBeVisible();
+        await expect(page.locator('.recent-files-panel').getByText('RECENT FILES', { exact: true })).toBeVisible();
         // Recent files should include the opened files
-        await expect(page.locator('.recent-item')).not.toHaveCount(0);
+        await expect(page.locator('.recent-item')).toHaveCount(2);
     });
 
     test('opens file from recent list', async ({ page }) => {
@@ -277,7 +280,6 @@ test.describe('Recent files panel', () => {
         const recentItem = page.locator('.recent-item').first();
         await expect(recentItem).toBeVisible();
         await recentItem.click();
-        // a tab should be active after clicking
-        await expect(page.locator('.tab-item')).not.toHaveCount(0);
+        await expect(page.locator('.tab-item.tab-active')).toContainText('beta.md');
     });
 });

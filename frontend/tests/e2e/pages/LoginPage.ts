@@ -25,11 +25,19 @@ export class LoginPage {
   async login(username: string, password: string) {
     await this.usernameInput.fill(username);
     await this.passwordInput.fill(password);
+    const loginResponse = this.page.waitForResponse((response) =>
+      response.url().includes('/api/auth/login') &&
+      response.request().method() === 'POST'
+    );
     await this.submitButton.click();
-    // Wait for login request to complete
-    await this.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {
-      // Ignore timeout - might already be loaded
-    });
+    await loginResponse.catch(() => null);
+    await this.page.waitForFunction(
+      () =>
+        window.location.pathname !== '/login' ||
+        !!document.querySelector('[data-testid="login-error-alert"]'),
+      null,
+      { timeout: 10000 }
+    ).catch(() => null);
   }
 
   async waitForError() {

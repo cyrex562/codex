@@ -103,7 +103,7 @@ test.describe('Graph view', () => {
         await page.locator('button[title="Graph view"]').click();
 
         await expect(page.locator('.graph-view')).toBeVisible({ timeout: 8000 });
-        await expect(page.locator('.graph-view').getByText('No entities')).toBeVisible();
+        await expect(page.locator('.graph-view').getByText('No entities', { exact: true })).toBeVisible();
     });
 
     test('filter search box is visible in graph sidebar', async ({ page }) => {

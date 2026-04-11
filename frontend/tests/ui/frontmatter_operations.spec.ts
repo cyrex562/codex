@@ -17,7 +17,7 @@ async function setup(page: Parameters<typeof installCommonAppMocks>[0], frontmat
     });
     await page.goto('/');
     await page.getByText(NOTE).click();
-    await expect(page.getByText('Frontmatter')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Frontmatter' })).toBeVisible();
 }
 
 test.describe('Frontmatter panel operations', () => {
@@ -47,7 +47,7 @@ test.describe('Frontmatter panel operations', () => {
         await expect(page.getByPlaceholder('field')).toBeVisible();
 
         await page.getByPlaceholder('field').fill('newkey');
-        await page.locator('.v-expansion-panel-text .v-btn', { hasText: 'Save' }).click();
+        await page.getByPlaceholder('field').press('Enter');
 
         // New field appears in the form
         await expect(page.locator('.v-expansion-panel-text input[value="newkey"]')).toBeVisible();
@@ -56,13 +56,13 @@ test.describe('Frontmatter panel operations', () => {
     test('deletes a frontmatter field', async ({ page }) => {
         await setup(page, { title: 'Hello', removable: 'yes' });
 
-        const fields = page.locator('.v-expansion-panel-text .d-flex.align-center.ga-2');
-        const initialCount = await fields.count();
+        const removableField = page.locator('.v-expansion-panel-text .d-flex.align-center.ga-2').filter({
+            has: page.locator('input[value="removable"]'),
+        });
 
-        // Click the delete icon on the first row
-        await fields.first().locator('button[title], .v-btn[icon]').last().click();
+        await removableField.getByRole('button').click();
 
-        await expect(page.locator('.v-expansion-panel-text .d-flex.align-center.ga-2')).toHaveCount(initialCount - 1);
+        await expect(page.locator('.v-expansion-panel-text input[value="removable"]')).toHaveCount(0);
     });
 
     test('switches between Form and Raw modes', async ({ page }) => {
@@ -73,7 +73,7 @@ test.describe('Frontmatter panel operations', () => {
 
         // Switch to Raw
         await page.locator('.v-expansion-panel-text').getByRole('button', { name: 'Raw' }).click();
-        await expect(page.locator('.v-expansion-panel-text textarea')).toBeVisible();
+        await expect(page.getByRole('textbox', { name: 'Frontmatter (YAML/JSON object)' })).toBeVisible();
         await expect(page.locator('.v-expansion-panel-text input[value="status"]')).not.toBeVisible();
 
         // Switch back to Form
@@ -93,7 +93,7 @@ test.describe('Frontmatter panel operations', () => {
 
         await page.locator('.v-expansion-panel-text').getByRole('button', { name: 'Raw' }).click();
 
-        const rawArea = page.locator('.v-expansion-panel-text textarea');
+        const rawArea = page.getByRole('textbox', { name: 'Frontmatter (YAML/JSON object)' });
         await rawArea.fill('category: programming\nlang: rust');
         await rawArea.blur();
 

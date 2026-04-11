@@ -80,21 +80,31 @@ async function request<T>(
         let body: unknown;
         try { body = await response.json(); } catch { /* empty */ }
         const message = (body as { message?: string })?.message ?? `HTTP ${response.status}`;
-        
+
         // Handle authentication expiration
         if (response.status === 401) {
+            const path = url.startsWith('http')
+                ? new URL(url).pathname
+                : url;
+            const isAuthLifecycleRequest =
+                path === '/api/auth/login' ||
+                path === '/api/auth/refresh' ||
+                path === '/api/auth/logout';
+
             try {
-                const auth = useAuthStore();
-                await auth.logout();
-                // Redirect to login page
-                if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-                    window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+                if (!isAuthLifecycleRequest) {
+                    const auth = useAuthStore();
+                    await auth.logout();
+                    // Redirect to login page
+                    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+                        window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+                    }
                 }
             } catch {
                 // Ignore errors during logout/redirect
             }
         }
-        
+
         throw new ApiError(response.status, message, body);
     }
 

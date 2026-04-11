@@ -68,7 +68,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ApiError } from '@/api/client';
 import { useAuthStore } from '@/stores/auth';
@@ -79,6 +79,7 @@ import { useUiStore } from '@/stores/ui';
 import { usePreferencesStore } from '@/stores/preferences';
 import { useEditorStore } from '@/stores/editor';
 import { useWebSocket } from '@/composables/useWebSocket';
+import type { EditorMode } from '@/api/types';
 
 import TopBar from '@/components/TopBar.vue';
 import SidebarActions from '@/components/sidebar/SidebarActions.vue';
@@ -173,7 +174,27 @@ function onGlobalKeydown(e: KeyboardEvent) {
     return;
   }
 
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && ['1', '2', '3'].includes(e.key)) {
+    e.preventDefault();
+    const modeByShortcut: Record<string, EditorMode> = {
+      '1': 'raw',
+      '2': 'formatted_raw',
+      '3': 'fully_rendered',
+    };
+    const mode = modeByShortcut[e.key];
+    editorStore.setMode(mode);
+    prefsStore.set('editor_mode', mode);
+    void prefsStore.save();
+    return;
+  }
+
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+    e.preventDefault();
+    searchOpen.value = true;
+    return;
+  }
+
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && ['p', 'k'].includes(e.key.toLowerCase())) {
     e.preventDefault();
     quickSwitcherOpen.value = true;
   }
@@ -183,6 +204,21 @@ function openTagSearch(query: string) {
   searchInitialQuery.value = query;
   searchOpen.value = true;
 }
+
+watch(
+  () => [vaultsStore.activeVaultId, tabsStore.activeTab?.filePath] as const,
+  ([vaultId, filePath], [previousVaultId, previousFilePath]) => {
+    if (!vaultId || !filePath || filePath.startsWith('__')) {
+      return;
+    }
+
+    if (vaultId === previousVaultId && filePath === previousFilePath) {
+      return;
+    }
+
+    filesStore.recordRecentFile(vaultId, filePath);
+  },
+);
 
 async function saveActiveTabNow() {
   const vaultId = vaultsStore.activeVaultId;

@@ -24,20 +24,20 @@ test.describe('Keyboard shortcuts', () => {
         await setup(page);
 
         // Type into editor to make it dirty
-        const editor = page.locator('.cm-content, .CodeJar, [contenteditable="true"]').first();
+        const editor = page.locator('.markdown-editor');
         await editor.click();
-        await editor.type(' extra');
-        await expect(page.locator('.tab-item')).toContainText('●');
+        await page.keyboard.type(' extra');
+        await expect(page.getByText('1 unsaved')).toBeVisible();
 
         await page.keyboard.press('Control+s');
-        // After save the dirty indicator should clear within 2s
-        await expect(page.locator('.tab-item')).not.toContainText('●', { timeout: 2000 });
+        await expect(page.getByText('Saved')).toBeVisible({ timeout: 5000 });
+        await expect(page.getByText('1 unsaved')).not.toBeVisible();
     });
 
-    test('Ctrl+F opens the search modal', async ({ page }) => {
+    test('Ctrl+Shift+F opens the search modal', async ({ page }) => {
         await setup(page);
-        await page.keyboard.press('Control+f');
-        await expect(page.locator('.v-dialog:visible')).toBeVisible();
+        await page.keyboard.press('Control+Shift+f');
+        await expect(page.getByRole('textbox', { name: 'Search', exact: true })).toBeVisible();
     });
 
     test('Ctrl+P opens the quick switcher', async ({ page }) => {
@@ -75,9 +75,10 @@ test.describe('Keyboard shortcuts', () => {
 
     test('Escape closes the search modal', async ({ page }) => {
         await setup(page);
-        await page.keyboard.press('Control+f');
-        await expect(page.locator('.v-dialog:visible')).toBeVisible();
-        await page.keyboard.press('Escape');
-        await expect(page.locator('.v-dialog:visible')).not.toBeVisible({ timeout: 2000 });
+        await page.keyboard.press('Control+Shift+f');
+        const searchInput = page.getByRole('textbox', { name: 'Search', exact: true });
+        await expect(searchInput).toBeVisible();
+        await searchInput.press('Escape');
+        await expect(searchInput).not.toBeVisible({ timeout: 2000 });
     });
 });

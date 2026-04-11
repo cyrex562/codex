@@ -15,6 +15,7 @@
           prepend-inner-icon="mdi-magnify"
           autofocus
           clearable
+          @keydown.esc="close"
           @keyup.enter="search"
           @click:clear="results = []"
         />

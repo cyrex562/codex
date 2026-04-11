@@ -33,10 +33,12 @@ use rustls_pemfile::{certs, private_key};
 
 #[cfg(not(debug_assertions))]
 use actix_web::{HttpResponse, Result as WebResult};
+#[cfg(debug_assertions)]
+use actix_files::NamedFile;
+#[cfg(debug_assertions)]
+use actix_web::Result as WebResult;
 #[cfg(not(debug_assertions))]
 use assets::Assets;
-#[cfg(debug_assertions)]
-use actix_files as fs;
 #[cfg(not(debug_assertions))]
 use mime_guess::from_path;
 
@@ -71,8 +73,36 @@ fn configure_static(cfg: &mut web::ServiceConfig) {
 }
 
 #[cfg(debug_assertions)]
+async fn serve_dev_file(path: web::Path<String>) -> WebResult<NamedFile> {
+    let base = std::fs::canonicalize("./target/frontend")
+        .context("Failed to resolve frontend build output directory")
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    let requested = path.into_inner();
+    let candidate = if requested.is_empty() {
+        base.join("index.html")
+    } else {
+        base.join(&requested)
+    };
+
+    if let Ok(resolved) = std::fs::canonicalize(&candidate) {
+        if resolved.starts_with(&base) && resolved.is_file() {
+            return NamedFile::open(resolved).map_err(actix_web::error::ErrorInternalServerError);
+        }
+    }
+
+    NamedFile::open(base.join("index.html")).map_err(actix_web::error::ErrorInternalServerError)
+}
+
+#[cfg(debug_assertions)]
+async fn serve_dev_index() -> WebResult<NamedFile> {
+    serve_dev_file(web::Path::from(String::new())).await
+}
+
+#[cfg(debug_assertions)]
 fn configure_static(cfg: &mut web::ServiceConfig) {
-    cfg.service(fs::Files::new("/", "./target/frontend").index_file("index.html"));
+    cfg.route("/", web::get().to(serve_dev_index))
+        .route("/{filename:.*}", web::get().to(serve_dev_file));
 }
 
 /// Start the Codex HTTP server with the given configuration.

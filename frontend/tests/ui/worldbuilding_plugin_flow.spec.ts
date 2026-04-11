@@ -132,8 +132,8 @@ const ariaEntityResponse = {
         indexed_at: new Date().toISOString(),
     },
     relations: [
-        { id: 'r1', vault_id: defaultVault.id, from_entity_id: 'e1', to_entity_id: 'e2', relation_type: 'knows', direction: 'forward', source: 'field', source_field: 'knows', created_at: new Date().toISOString() },
-        { id: 'r3', vault_id: defaultVault.id, from_entity_id: 'e1', to_entity_id: 'e4', relation_type: 'member_of', direction: 'forward', source: 'field', source_field: 'faction', created_at: new Date().toISOString() },
+        { id: 'r1', source_entity_id: 'e1', target_entity_id: 'e2', target_path: 'lyra.md', relation_type: 'knows', label: 'knows', directed: true, metadata: {}, is_inverse: false },
+        { id: 'r3', source_entity_id: 'e1', target_entity_id: 'e4', target_path: 'order.md', relation_type: 'member_of', label: 'member_of', directed: true, metadata: {}, is_inverse: false },
     ],
 };
 
@@ -321,8 +321,8 @@ test.describe('Worldbuilding — New Entity dialog', () => {
 
         await dialog.getByRole('button', { name: 'Cancel' }).click();
         await expect(dialog).not.toBeVisible({ timeout: 3000 });
-        // No new tabs should have been created
-        await expect(page.locator('.tab-item')).not.toContainText(/character|location|faction/i);
+        await expect(page.locator('.tab-item')).toHaveCount(0);
+        await expect(page.getByText('Open a file from the sidebar to start editing.')).toBeVisible();
     });
 
     test('shows all three worldbuilding types in the type selector', async ({ page }) => {
@@ -359,25 +359,16 @@ test.describe('Worldbuilding — Entity templates', () => {
         await seedAuthTokens(page);
         await seedActiveVault(page, defaultVault.id);
 
-        let capturedContent = '';
+        const fileContentsByVaultId: Record<string, Record<string, string>> = {
+            [defaultVault.id]: {},
+        };
         await installCommonAppMocks(page, {
             profile: defaultProfile,
             vaults: [defaultVault],
             treeByVaultId: { [defaultVault.id]: [] },
-            fileContentsByVaultId: { [defaultVault.id]: {} },
+            fileContentsByVaultId,
             entityTypes: [characterType],
             entityTemplatesByTypeId: { character: characterTemplate },
-        });
-
-        // Intercept the file creation PUT to capture content
-        await page.route(/.*\/api\/vaults\/[^/]+\/files\/.*\.md$/, async (route) => {
-            if (route.request().method() === 'PUT') {
-                const body = route.request().postDataJSON() as { content?: string };
-                capturedContent = body?.content ?? '';
-                await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
-            } else {
-                await route.continue();
-            }
         });
 
         await page.goto('/');
@@ -390,7 +381,7 @@ test.describe('Worldbuilding — Entity templates', () => {
         await expect(dialog).not.toBeVisible({ timeout: 8000 });
 
         // The saved content should come from the character template
-        expect(capturedContent).toContain('codex_type: character');
+        expect(fileContentsByVaultId[defaultVault.id]['Aria.md']).toContain('codex_type: character');
     });
 });
 
@@ -479,7 +470,7 @@ test.describe('Worldbuilding — Graph view', () => {
 
         const graphView = page.locator('.graph-view');
         await expect(graphView).toBeVisible({ timeout: 8000 });
-        await expect(graphView.getByText('No entities')).toBeVisible();
+        await expect(graphView.getByText('No entities', { exact: true })).toBeVisible();
     });
 
     test('search box is visible in graph sidebar', async ({ page }) => {
@@ -670,8 +661,8 @@ test.describe('Worldbuilding — Relations panel', () => {
 
         await relationsPanel.getByText(/lyra/i).click();
 
-        // A new tab for lyra should open
-        await expect(page.locator('.tab-item')).toContainText(/lyra/i, { timeout: 8000 });
+        // A new active tab for lyra should open
+        await expect(page.locator('.tab-item.tab-active')).toContainText(/lyra/i, { timeout: 8000 });
     });
 });
 
@@ -699,8 +690,11 @@ test.describe('Worldbuilding — Structural editor entity fields', () => {
         await page.getByText('aria.md').click();
         await expect(page.locator('.tab-item')).toContainText('aria.md', { timeout: 8000 });
 
-        // Entity's codex_type key should be visible in the frontmatter / structural view
-        // The editor should show the raw frontmatter or the structured fields
-        await expect(page.locator('.editor-container')).toBeVisible({ timeout: 8000 });
+        await page.locator('button[title="Structural entity editor"]').click();
+
+        const structuralEditor = page.locator('.structural-editor');
+        await expect(structuralEditor).toBeVisible({ timeout: 8000 });
+        await expect(structuralEditor.getByText('Full name')).toBeVisible();
+        await expect(structuralEditor.getByText('Status')).toBeVisible();
     });
 });

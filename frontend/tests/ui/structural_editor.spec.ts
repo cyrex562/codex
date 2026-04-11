@@ -95,8 +95,10 @@ test.describe('Structural editor', () => {
         await page.locator('button[title="Structural entity editor"]').click();
 
         // Should show the "no_type" error state
-        await expect(page.locator('.structural-editor')).toBeVisible();
-        await expect(page.getByText(/codex_type/i)).toBeVisible();
+        const structuralEditor = page.locator('.structural-editor');
+        await expect(structuralEditor).toBeVisible();
+        await expect(structuralEditor.getByRole('heading', { name: 'Not a typed entity' })).toBeVisible();
+        await expect(structuralEditor.getByText('codex_type', { exact: true })).toBeVisible();
     });
 
     test('structural editor shows prose zone below fields', async ({ page }) => {
@@ -122,8 +124,9 @@ test.describe('Structural editor', () => {
         await expect(page.locator('.tab-item')).toContainText('aria.md', { timeout: 8000 });
         await page.locator('button[title="Structural entity editor"]').click();
 
-        await expect(page.locator('.structural-editor')).toBeVisible();
-        // Prose zone section should be present
-        await expect(page.locator('.prose-zone, [class*="prose"]')).toBeVisible();
+        const structuralEditor = page.locator('.structural-editor');
+        await expect(structuralEditor).toBeVisible();
+        await expect(structuralEditor.locator('.prose-zone-wrapper')).toBeVisible();
+        await expect(structuralEditor.getByText('A skilled ranger from the northern wilds.')).toBeVisible();
     });
 });

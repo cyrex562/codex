@@ -26,27 +26,38 @@ async function setup(page: Parameters<typeof installCommonAppMocks>[0]) {
     await page.getByText(NOTE).click();
 }
 
+async function openAiInsights(page: Parameters<typeof installCommonAppMocks>[0]) {
+    const header = page.locator('.ml-insights-panel .ml-header');
+    await expect(header).toBeVisible();
+    await header.click();
+}
+
 test.describe('AI Insights panel', () => {
     test('shows the AI INSIGHTS panel with Generate outline button', async ({ page }) => {
         await setup(page);
         await expect(page.getByText('AI INSIGHTS')).toBeVisible();
+        await openAiInsights(page);
         await expect(page.getByRole('button', { name: 'Generate outline' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Suggest organization' })).toBeVisible();
     });
 
     test('clicking Generate outline shows summary and sections', async ({ page }) => {
         await setup(page);
+        await openAiInsights(page);
         await page.getByRole('button', { name: 'Generate outline' }).click();
 
-        await expect(page.getByText('This note introduces a concept and provides details.')).toBeVisible();
-        await expect(page.getByText('Intro')).toBeVisible();
-        await expect(page.getByText('Details')).toBeVisible();
+        const panel = page.locator('.ml-insights-panel');
+        await expect(panel.getByText('This note introduces a concept and provides details.')).toBeVisible();
+        await expect(panel.locator('.outline-item')).toContainText(['Intro', 'Details']);
     });
 
     test('clicking Suggest organization shows suggestions', async ({ page }) => {
         await setup(page);
+        await openAiInsights(page);
         await page.getByRole('button', { name: 'Suggest organization' }).click();
 
-        await expect(page.getByText('Move to subfolder').or(page.getByText('Add tags'))).toBeVisible();
+        const panel = page.locator('.ml-insights-panel');
+        await expect(panel.getByText('Move to subfolder')).toBeVisible();
+        await expect(panel.getByText('Add tags')).toBeVisible();
     });
 });

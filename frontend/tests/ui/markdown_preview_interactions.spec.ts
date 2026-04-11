@@ -48,8 +48,8 @@ test.describe('Markdown preview interactions', () => {
         const link = page.locator('.markdown-preview a.wiki-link');
         await expect(link).toBeVisible();
         await link.click();
-        // A new tab for target.md should open
-        await expect(page.locator('.tab-item')).toContainText('target.md');
+        await expect(page.locator('.tab-item')).toContainText(['note.md', 'target.md']);
+        await expect(page.locator('.tab-item.tab-active')).toContainText('target.md');
     });
 
     test('copy button appears on fenced code blocks', async ({ page }) => {
