@@ -1,0 +1,13 @@
+# Runtime dependencies for scripts/librarium.py — the build / deploy / status CLI
+# that `cargo xtask deploy|status|logs|doctor` shells out to.
+#
+# Install (any platform):
+#     python -m pip install -r scripts/requirements.txt
+#
+# Poetry users:  poetry add $(cat scripts/requirements.txt | grep -v '^#')
+# uv users:      uv pip install -r scripts/requirements.txt
+#
+# Everything else the script imports (sqlite3, tarfile, subprocess, pathlib, …)
+# is in the Python 3.9+ standard library.
+click>=8.1
+rich>=13.0

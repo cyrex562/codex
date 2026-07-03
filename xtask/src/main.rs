@@ -63,7 +63,7 @@ fn help() {
          \n    cargo xtask build-desktop [--debug]   Build the desktop app (frontend + Tauri)\
          \n    cargo xtask run-desktop   [--debug]   Build then launch the desktop app\
          \n    cargo xtask build-frontend            Build only the Vue SPA into target/frontend\
-         \n  Deploy / observe (via scripts/librarium.py; needs Python 3):\
+         \n  Deploy / observe (via scripts/librarium.py; needs: pip install -r scripts/requirements.txt):\
          \n    cargo xtask deploy [TARGET] [flags]   Deploy the server to a remote target\
          \n    cargo xtask status [TARGET]           Show a target's running version/health\
          \n    cargo xtask logs   [TARGET]           Stream a target's logs\
