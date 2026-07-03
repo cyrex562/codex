@@ -1,0 +1,43 @@
+# Docker build context excludes.
+#
+# Critically, this keeps host-installed node_modules OUT of the context: when the
+# repo is built on Windows (e.g. `cargo xtask build-desktop`) the .bin scripts
+# lack the Unix execute bit, and `COPY frontend/ .` would overlay the image's
+# freshly-installed node_modules with them — causing `vue-tsc: Permission denied`
+# (exit 126). Excluding them here means the image always uses its own `npm ci`
+# install. It also slims the context from hundreds of MB to a few.
+
+# Dependencies — installed inside the image by `npm ci` / `cargo build`.
+**/node_modules
+
+# Rust build output — recompiled in the image (target/frontend is copied from
+# the frontend build STAGE, not the context, so excluding target here is safe).
+target
+
+# Frontend build artifacts — regenerated in the image.
+frontend/dist
+frontend/test-results
+frontend/logs
+
+# Version control & CI.
+.git
+.gitignore
+.github
+
+# Local runtime data and user vaults — must never ship inside the image
+# (the runtime uses the /data volume, not these repo fixtures).
+data
+vaults
+test_vaults
+test-results
+logs
+*.log
+
+# Packaged / deploy artifacts and scratch.
+dist
+plugins/**/node_modules
+
+# Editor / OS cruft.
+.DS_Store
+.idea
+.vscode

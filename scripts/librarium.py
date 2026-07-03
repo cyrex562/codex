@@ -1501,7 +1501,12 @@ def _create_source_archive(archive_path: Path) -> None:
                 continue
             if any(rel_posix == s or rel_posix.startswith(f"{s}/") for s in exclude_sub):
                 continue
-            arc.add(path, arcname=rel_posix)
+            # recursive=False is essential: rglob already yields every path, so we
+            # add each entry individually. Without it, adding a directory (e.g.
+            # `frontend`) would recursively pull in excluded subtrees like
+            # node_modules before the loop can skip them — bloating the archive
+            # to hundreds of MB.
+            arc.add(path, arcname=rel_posix, recursive=False)
 
 
 # ---------------------------------------------------------------------------
