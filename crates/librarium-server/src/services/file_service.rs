@@ -1,5 +1,5 @@
 use crate::error::{AppError, AppResult};
-use crate::models::{FileContent, FileNode};
+use crate::models::{FileContent, FileManifestEntry, FileNode};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -191,6 +191,32 @@ impl FileService {
 
         let content = fs::read(&full_path)?;
         Ok(content)
+    }
+
+    /// Hash raw bytes to a lowercase-hex SHA-256 digest.
+    ///
+    /// This is the canonical content identity used by the sync machinery. It
+    /// must be computed identically everywhere (API handlers, watcher, manifest,
+    /// and the desktop sync engine) so a file that is byte-for-byte equal on two
+    /// machines produces the same hash.
+    pub fn hash_bytes(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        format!("{:x}", hasher.finalize())
+    }
+
+    /// Compute the content hash of a file on disk over its raw bytes.
+    ///
+    /// Returns `Ok(None)` when the path does not resolve to a regular file
+    /// (missing or a directory), which the sync layer treats as a tombstone.
+    pub fn content_hash(vault_path: &str, file_path: &str) -> AppResult<Option<String>> {
+        let full_path = Self::resolve_path(vault_path, file_path)?;
+        if !full_path.is_file() {
+            return Ok(None);
+        }
+        let bytes = fs::read(&full_path)?;
+        Ok(Some(Self::hash_bytes(&bytes)))
     }
 
     /// Write file content with conflict detection
@@ -772,6 +798,62 @@ impl FileService {
             }
         }
         Ok(files)
+    }
+
+    /// Build a content manifest of every regular file in the vault: its
+    /// vault-relative path, content hash, size, and mtime in Unix millis.
+    ///
+    /// Files or directories whose name starts with `.` (e.g. `.obsidian`,
+    /// `.trash`, `.git`) are skipped so the manifest matches what the watcher
+    /// and sync engine consider syncable. Binary files are included.
+    pub fn build_manifest(vault_path: &str) -> AppResult<Vec<FileManifestEntry>> {
+        use walkdir::WalkDir;
+        let mut entries = Vec::new();
+        for entry in WalkDir::new(vault_path)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| {
+                // Prune dot-directories and dot-files so we never descend into
+                // `.git`, `.obsidian`, etc. Always allow the root itself (depth
+                // 0), whose own name is irrelevant and may legitimately start
+                // with a dot (e.g. a vault under a hidden or temp directory).
+                e.depth() == 0
+                    || e
+                        .file_name()
+                        .to_str()
+                        .map(|n| !n.starts_with('.'))
+                        .unwrap_or(false)
+            })
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let bytes = match std::fs::read(path) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            let metadata = entry.metadata().ok();
+            let size = metadata.as_ref().map(|m| m.len()).unwrap_or(bytes.len() as u64);
+            let mtime_ms = metadata
+                .and_then(|m| m.modified().ok())
+                .and_then(system_time_to_datetime)
+                .map(|dt| dt.timestamp_millis())
+                .unwrap_or(0);
+            let rel = path
+                .strip_prefix(vault_path)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            entries.push(FileManifestEntry {
+                path: rel,
+                content_hash: Self::hash_bytes(&bytes),
+                size,
+                mtime_ms,
+            });
+        }
+        Ok(entries)
     }
 }
 

@@ -17,6 +17,43 @@ This file is the top-level backlog for unfinished tasks, near-term follow-up wor
 - [x] **LIB-005** Decide whether `/api/auth/logout` should revoke only the supplied session or all sessions when no refresh token is provided, then document that contract clearly.
 - [x] **LIB-006** Decide whether API-key-authenticated requests should be allowed to complete TOTP-gated login flows or remain excluded by design.
 
+## UI: API Keys & Sync Configuration
+
+Two new UI features to make the desktop↔server sync usable without hand-editing
+config files or `curl`. The backend and the desktop sync engine already exist
+(`routes/api_keys.rs`; the `librarium-sync` crate and the `sync_*` Tauri
+commands); these tickets add the missing user-facing surfaces. Do LIB-109 first
+— it is smaller, pure web frontend, and mints the API keys LIB-110 depends on.
+
+- [x] **LIB-109** API-key management UI (web frontend). Backend endpoints
+  (`POST/GET /api/auth/api-keys`, `DELETE /api/auth/api-keys/{id}`) and types
+  (`ApiKeyInfo`, `CreateApiKeyRequest`, `CreateApiKeyResponse` in
+  `src/api/types.ts`) already existed; the client methods and UI were added.
+  - [x] **LIB-109a** Added `apiListApiKeys` / `apiCreateApiKey` / `apiRevokeApiKey`
+    to `src/api/client.ts`.
+  - [x] **LIB-109b** Built `src/components/settings/ApiKeysPanel.vue`: list, create
+    dialog (name + optional expiry), one-time secret reveal with copy, revoke.
+  - [x] **LIB-109c** Surfaced via `SettingsModal.vue` (tabbed) opened from a cog
+    button in `TopBar.vue`.
+  - [x] **LIB-109d** Vitest for the three client methods (`src/api/apiKeys.test.ts`).
+    NOTE: a Vuetify component-mount test was skipped — `vitest.config.ts` lacks the
+    `vite-plugin-vuetify` auto-import that the SFCs rely on, and there is no
+    component-mount test precedent in the repo. Follow-up: add Vuetify to the
+    vitest config to enable component tests.
+- [x] **LIB-110** Desktop sync-configuration UI (Tauri). Implementation complete;
+  **manual verification on a running desktop build is still pending** (launch the
+  app, open Settings → Sync, add the remote + API key, map a vault, watch it sync).
+  - [x] **LIB-110a** Added Tauri commands `sync_list_remote_vaults`,
+    `sync_create_remote_vault`, `sync_remove_remote`, `sync_unmap_vault` (+ engine
+    and `SyncStore` cascade-delete methods, with tests).
+  - [x] **LIB-110b** Typed `sync*` wrappers in `src/utils/tauri.ts`, `isTauri()`-gated.
+  - [x] **LIB-110c** `RemotesSection.vue` — add / list / remove a remote.
+  - [x] **LIB-110d** `VaultMappingSection.vue` — local vault → pick-or-create remote vault.
+  - [x] **LIB-110e** `SyncStatusSection.vue` — polls `sync_status`, start/stop, unmap.
+  - [x] **LIB-110f** Composed into `SyncSettingsPanel.vue` + an `isTauri()`-gated
+    "Sync" tab in `SettingsModal.vue`; invoke-arg-mapping tests in `tauri.test.ts`.
+    Manual desktop click-through still to do.
+
 ## Security And Correctness
 
 - [x] **LIB-007** Review all non-`/api/vaults/...` routes for missing resource-scoped authorization checks, especially plugin, label, relation-type, and admin-adjacent endpoints.

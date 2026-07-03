@@ -2,10 +2,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod paths;
+mod sync_bridge;
 
 use anyhow::Context;
 use librarium::config::AppConfig;
 use paths::{create_dirs, resolve_paths};
+use sync_bridge::{RemoteDto, SyncHandle};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
@@ -51,6 +53,111 @@ async fn notify(app: AppHandle, title: String, body: String) -> Result<(), Strin
         .map_err(|e| e.to_string())
 }
 
+// ── Sync commands ───────────────────────────────────────────────────────────
+
+/// Register a remote server to sync with. Returns the generated remote id.
+#[tauri::command]
+async fn sync_add_remote(
+    handle: tauri::State<'_, SyncHandle>,
+    base_url: String,
+    api_key: String,
+) -> Result<String, String> {
+    handle
+        .add_remote(base_url, api_key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Map a local vault to a remote vault under a registered remote.
+#[tauri::command]
+async fn sync_map_vault(
+    handle: tauri::State<'_, SyncHandle>,
+    remote_id: String,
+    local_vault_id: String,
+    remote_vault_id: String,
+) -> Result<(), String> {
+    handle
+        .map_vault(remote_id, local_vault_id, remote_vault_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// List configured remotes (never exposes API keys).
+#[tauri::command]
+async fn sync_list_remotes(
+    handle: tauri::State<'_, SyncHandle>,
+) -> Result<Vec<RemoteDto>, String> {
+    handle.list_remotes().await.map_err(|e| e.to_string())
+}
+
+/// List the vaults available on a registered remote.
+#[tauri::command]
+async fn sync_list_remote_vaults(
+    handle: tauri::State<'_, SyncHandle>,
+    remote_id: String,
+) -> Result<Vec<librarium::models::Vault>, String> {
+    handle
+        .list_remote_vaults(remote_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Create a new vault on a registered remote.
+#[tauri::command]
+async fn sync_create_remote_vault(
+    handle: tauri::State<'_, SyncHandle>,
+    remote_id: String,
+    name: String,
+) -> Result<librarium::models::Vault, String> {
+    handle
+        .create_remote_vault(remote_id, name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Remove a registered remote and everything mapped to it.
+#[tauri::command]
+async fn sync_remove_remote(
+    handle: tauri::State<'_, SyncHandle>,
+    remote_id: String,
+) -> Result<(), String> {
+    handle.remove_remote(remote_id).await.map_err(|e| e.to_string())
+}
+
+/// Remove a single local-to-remote vault mapping.
+#[tauri::command]
+async fn sync_unmap_vault(
+    handle: tauri::State<'_, SyncHandle>,
+    remote_id: String,
+    local_vault_id: String,
+) -> Result<(), String> {
+    handle
+        .unmap_vault(remote_id, local_vault_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Per-vault sync status snapshots.
+#[tauri::command]
+async fn sync_status(
+    handle: tauri::State<'_, SyncHandle>,
+) -> Result<Vec<librarium_sync::VaultStatus>, String> {
+    Ok(handle.status().await)
+}
+
+/// (Re)start the background sync tasks.
+#[tauri::command]
+async fn sync_start(handle: tauri::State<'_, SyncHandle>) -> Result<(), String> {
+    handle.start().await.map_err(|e| e.to_string())
+}
+
+/// Stop the background sync tasks.
+#[tauri::command]
+async fn sync_stop(handle: tauri::State<'_, SyncHandle>) -> Result<(), String> {
+    handle.stop().await;
+    Ok(())
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 fn main() {
@@ -58,7 +165,20 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_deep_link::init())
-        .invoke_handler(tauri::generate_handler![open_directory_dialog, notify])
+        .invoke_handler(tauri::generate_handler![
+            open_directory_dialog,
+            notify,
+            sync_add_remote,
+            sync_map_vault,
+            sync_list_remotes,
+            sync_list_remote_vaults,
+            sync_create_remote_vault,
+            sync_remove_remote,
+            sync_unmap_vault,
+            sync_status,
+            sync_start,
+            sync_stop
+        ])
         .setup(|app| run_setup(app).map_err(|e| e.into()))
         .run(tauri::generate_context!())
         .expect("error while running Librarium");
@@ -146,7 +266,50 @@ fn run_setup(app: &mut tauri::App) -> anyhow::Result<()> {
         poll_until_healthy_then_navigate(port, window, handle_for_poll, err_rx).await;
     });
 
+    // 9. Set up the background sync engine. Its state DB lives alongside the
+    //    metadata DB but is kept separate from it. The engine is started only
+    //    once the embedded server is healthy, so local vault paths can be
+    //    resolved from librarium.db.
+    let sync_db_path = paths.data_dir.join("sync.db");
+    let db_url = format!("sqlite:{}", config.database.path);
+    let sync_handle = SyncHandle::new(sync_db_path, db_url);
+    app.manage(sync_handle.clone());
+
+    let remotes = config.sync.remotes.clone();
+    tauri::async_runtime::spawn(async move {
+        wait_for_health(port).await;
+        if let Err(e) = sync_handle.init_and_start(&remotes).await {
+            warn!("Sync engine failed to start: {e:#}");
+        }
+    });
+
     Ok(())
+}
+
+/// Block until the embedded server answers `GET /api/health`, or a 30s deadline
+/// passes. Used to gate sync startup on the metadata DB being ready.
+async fn wait_for_health(port: u16) {
+    let url = format!("http://127.0.0.1:{port}/api/health");
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        if client
+            .get(&url)
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
 }
 
 // ── System tray ───────────────────────────────────────────────────────────────

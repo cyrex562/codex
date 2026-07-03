@@ -9,6 +9,26 @@
  * Import from this module instead.
  */
 
+import type { Vault } from '@/api/types';
+
+// ── Sync API types ──────────────────────────────────────────────────────────
+export interface SyncRemoteDto {
+  id: string;
+  base_url: string;
+  enabled: boolean;
+}
+
+export type SyncVaultState = 'offline' | 'connecting' | 'catching_up' | 'live';
+
+export interface SyncVaultStatus {
+  remote_id: string;
+  local_vault_id: string;
+  state: SyncVaultState;
+  last_synced_seq: number;
+  pending_outbox: number;
+  last_error: string | null;
+}
+
 /**
  * Returns `true` when the app is running inside a Tauri WebView.
  *
@@ -78,4 +98,146 @@ export const saveFileDialog = async (
   } catch {
     return null;
   }
+};
+
+// ── Desktop sync API wrappers ───────────────────────────────────────────────
+
+/**
+ * Add a new sync remote.
+ *
+ * @param baseUrl - The base URL of the sync server
+ * @param apiKey - The API key for authentication
+ * @returns The ID of the created remote
+ * @throws Error in browser context
+ */
+export const syncAddRemote = async (
+  baseUrl: string,
+  apiKey: string,
+): Promise<string> => {
+  if (!isTauri()) throw new Error('sync is only available in the desktop app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('sync_add_remote', { baseUrl, apiKey });
+};
+
+/**
+ * Map a remote vault to a local vault.
+ *
+ * @param remoteId - The ID of the remote
+ * @param localVaultId - The ID of the local vault
+ * @param remoteVaultId - The ID of the remote vault
+ * @throws Error in browser context
+ */
+export const syncMapVault = async (
+  remoteId: string,
+  localVaultId: string,
+  remoteVaultId: string,
+): Promise<void> => {
+  if (!isTauri()) throw new Error('sync is only available in the desktop app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('sync_map_vault', { remoteId, localVaultId, remoteVaultId });
+};
+
+/**
+ * List all configured sync remotes.
+ *
+ * @returns Array of remote DTOs
+ * @throws Error in browser context
+ */
+export const syncListRemotes = async (): Promise<SyncRemoteDto[]> => {
+  if (!isTauri()) throw new Error('sync is only available in the desktop app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('sync_list_remotes');
+};
+
+/**
+ * List vaults available on a remote.
+ *
+ * @param remoteId - The ID of the remote
+ * @returns Array of vaults from the remote
+ * @throws Error in browser context
+ */
+export const syncListRemoteVaults = async (
+  remoteId: string,
+): Promise<Vault[]> => {
+  if (!isTauri()) throw new Error('sync is only available in the desktop app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('sync_list_remote_vaults', { remoteId });
+};
+
+/**
+ * Create a new vault on a remote.
+ *
+ * @param remoteId - The ID of the remote
+ * @param name - The name for the new vault
+ * @returns The created vault
+ * @throws Error in browser context
+ */
+export const syncCreateRemoteVault = async (
+  remoteId: string,
+  name: string,
+): Promise<Vault> => {
+  if (!isTauri()) throw new Error('sync is only available in the desktop app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('sync_create_remote_vault', { remoteId, name });
+};
+
+/**
+ * Remove a sync remote.
+ *
+ * @param remoteId - The ID of the remote to remove
+ * @throws Error in browser context
+ */
+export const syncRemoveRemote = async (remoteId: string): Promise<void> => {
+  if (!isTauri()) throw new Error('sync is only available in the desktop app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('sync_remove_remote', { remoteId });
+};
+
+/**
+ * Unmap a vault from a remote.
+ *
+ * @param remoteId - The ID of the remote
+ * @param localVaultId - The ID of the local vault
+ * @throws Error in browser context
+ */
+export const syncUnmapVault = async (
+  remoteId: string,
+  localVaultId: string,
+): Promise<void> => {
+  if (!isTauri()) throw new Error('sync is only available in the desktop app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('sync_unmap_vault', { remoteId, localVaultId });
+};
+
+/**
+ * Get the current sync status of all vaults.
+ *
+ * @returns Array of vault sync statuses, or empty array in browser context
+ */
+export const syncStatus = async (): Promise<SyncVaultStatus[]> => {
+  if (!isTauri()) return [];
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('sync_status');
+};
+
+/**
+ * Start the sync service.
+ *
+ * @throws Error in browser context
+ */
+export const syncStart = async (): Promise<void> => {
+  if (!isTauri()) throw new Error('sync is only available in the desktop app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('sync_start');
+};
+
+/**
+ * Stop the sync service.
+ *
+ * No-op in browser context.
+ */
+export const syncStop = async (): Promise<void> => {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('sync_stop');
 };

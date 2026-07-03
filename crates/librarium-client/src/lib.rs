@@ -8,9 +8,9 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use librarium_types::{
     AdminUser, ApplyOrganizationSuggestionRequest, ApplyOrganizationSuggestionResponse,
-    CreateFileRequest, CreateUploadSessionRequest, CreateUserRequest, CreateUserResponse,
-    CreateVaultRequest, FileChangeEvent, FileContent, FileNode,
-    GenerateOrganizationSuggestionsRequest, GenerateOutlineRequest, NoteOutlineResponse,
+    ChangesPage, CreateFileRequest, CreateUploadSessionRequest, CreateUserRequest,
+    CreateUserResponse, CreateVaultRequest, FileChangeEvent, FileContent, FileManifestEntry,
+    FileNode, GenerateOrganizationSuggestionsRequest, GenerateOutlineRequest, NoteOutlineResponse,
     OrganizationSuggestionsResponse, PagedSearchResult, UndoMlActionResponse, UpdateFileRequest,
     UploadSessionResponse, UserPreferences, Vault,
 };
@@ -137,6 +137,10 @@ pub struct TogglePluginResponse {
 pub struct FinishUploadSessionRequest {
     pub filename: String,
     pub path: String,
+    /// Conflict strategy when the destination already exists: `fail` (server
+    /// default), `overwrite`, `skip`, or `rename_with_timestamp`. Omitted → fail.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,6 +190,9 @@ struct AuthState {
     access_token: Option<String>,
     refresh_token: Option<String>,
     expires_at_epoch_seconds: Option<u64>,
+    /// When set, requests authenticate with `X-API-Key` instead of a bearer
+    /// token. Used by the desktop sync engine for non-interactive access.
+    api_key: Option<String>,
 }
 
 impl ObsidianClient {
@@ -247,6 +254,21 @@ impl ObsidianClient {
     pub fn with_token(mut self, token: impl Into<String>) -> Self {
         self.set_access_token(token);
         self
+    }
+
+    /// Builder variant of [`Self::set_api_key`].
+    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.set_api_key(api_key);
+        self
+    }
+
+    /// Authenticate all subsequent requests with an `obh_`-prefixed API key via
+    /// the `X-API-Key` header. Takes precedence over any bearer token and
+    /// disables JWT auto-refresh.
+    pub fn set_api_key(&mut self, api_key: impl Into<String>) {
+        if let Ok(mut auth) = self.auth.write() {
+            auth.api_key = Some(api_key.into());
+        }
     }
 
     pub fn set_access_token(&mut self, access_token: impl Into<String>) {
@@ -700,6 +722,70 @@ impl ObsidianClient {
             .await
     }
 
+    /// Fetch a page of change-log entries with `seq > since_seq`, plus the
+    /// current head seq. This is the sync engine's clock-independent catch-up
+    /// cursor. Pass `0` for a full replay.
+    pub async fn get_changes_since_seq(
+        &self,
+        vault_id: &str,
+        since_seq: i64,
+    ) -> Result<ChangesPage, ClientError> {
+        let endpoint = format!("/api/vaults/{vault_id}/changes?since_seq={since_seq}");
+        self.send_json(HttpMethod::Get, &endpoint, Option::<&()>::None)
+            .await
+    }
+
+    /// Fetch the full content manifest (path + content hash + size + mtime) for
+    /// every syncable file in a vault. Used for the initial reconcile and
+    /// periodic drift repair.
+    pub async fn get_manifest(
+        &self,
+        vault_id: &str,
+    ) -> Result<Vec<FileManifestEntry>, ClientError> {
+        let endpoint = format!("/api/vaults/{vault_id}/manifest");
+        self.send_json(HttpMethod::Get, &endpoint, Option::<&()>::None)
+            .await
+    }
+
+    /// Upload raw bytes to a vault path, creating or overwriting the file.
+    ///
+    /// Uses the chunked upload-session API so binary attachments round-trip
+    /// without the JSON body encoding the text file endpoints assume.
+    pub async fn upload_file_bytes(
+        &self,
+        vault_id: &str,
+        path: &str,
+        bytes: Vec<u8>,
+    ) -> Result<(), ClientError> {
+        let (directory, filename) = match path.rsplit_once('/') {
+            Some((dir, name)) => (dir.to_string(), name.to_string()),
+            None => (String::new(), path.to_string()),
+        };
+        let session = self
+            .create_upload_session(
+                vault_id,
+                &CreateUploadSessionRequest {
+                    filename: filename.clone(),
+                    path: directory.clone(),
+                    total_size: Some(bytes.len() as u64),
+                },
+            )
+            .await?;
+        self.upload_chunk(vault_id, &session.session_id, bytes)
+            .await?;
+        self.finish_upload_session(
+            vault_id,
+            &session.session_id,
+            &FinishUploadSessionRequest {
+                filename,
+                path: directory,
+                conflict: Some("overwrite".to_string()),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn record_recent_file(&self, vault_id: &str, path: &str) -> Result<(), ClientError> {
         let endpoint = format!("/api/vaults/{vault_id}/recent");
         self.send_json::<serde_json::Value, _>(
@@ -736,8 +822,8 @@ impl ObsidianClient {
             self.base_url
         );
         let mut req = self.inner.put(endpoint).body(chunk);
-        if let Some(token) = self.current_access_token()? {
-            req = req.headers(Self::auth_header(&token)?);
+        if let Some(headers) = self.auth_headers()? {
+            req = req.headers(headers);
         }
         let response = req.send().await?;
         let status = response.status();
@@ -786,8 +872,8 @@ impl ObsidianClient {
 
         let url = self.download_file_url(vault_id, file_path);
         let mut req = self.inner.get(&url);
-        if let Some(token) = self.current_access_token()? {
-            req = req.headers(Self::auth_header(&token)?);
+        if let Some(headers) = self.auth_headers()? {
+            req = req.headers(headers);
         }
         let response = req.send().await?;
         let status = response.status();
@@ -890,10 +976,10 @@ impl ObsidianClient {
         let ws_url = format!("{ws_base}/api/ws");
         let mut request = ws_url.into_client_request()?;
 
-        if let Some(token) = self.current_access_token()? {
-            let header = HeaderValue::from_str(&format!("Bearer {token}"))
-                .map_err(|_| ClientError::InvalidAuthHeader)?;
-            request.headers_mut().insert(AUTHORIZATION, header);
+        if let Some(headers) = self.auth_headers()? {
+            for (name, value) in headers.iter() {
+                request.headers_mut().insert(name, value.clone());
+            }
         }
 
         let (stream, _) = tokio_tungstenite::connect_async(request).await?;
@@ -955,8 +1041,8 @@ impl ObsidianClient {
         };
 
         if attach_auth_header {
-            if let Some(token) = self.current_access_token()? {
-                request = request.headers(Self::auth_header(&token)?);
+            if let Some(headers) = self.auth_headers()? {
+                request = request.headers(headers);
             }
         }
 
@@ -1020,8 +1106,8 @@ impl ObsidianClient {
         };
 
         if attach_auth_header {
-            if let Some(token) = self.current_access_token()? {
-                request = request.headers(Self::auth_header(&token)?);
+            if let Some(headers) = self.auth_headers()? {
+                request = request.headers(headers);
             }
         }
 
@@ -1055,8 +1141,8 @@ impl ObsidianClient {
             HttpMethod::Delete => self.inner.delete(&url),
         };
 
-        if let Some(token) = self.current_access_token()? {
-            request = request.headers(Self::auth_header(&token)?);
+        if let Some(headers) = self.auth_headers()? {
+            request = request.headers(headers);
         }
 
         let response = request.send().await?;
@@ -1083,12 +1169,28 @@ impl ObsidianClient {
         Ok(headers)
     }
 
-    fn current_access_token(&self) -> Result<Option<String>, ClientError> {
-        let auth = self
-            .auth
-            .read()
-            .map_err(|_| ClientError::Server("auth state lock poisoned".to_string()))?;
-        Ok(auth.access_token.clone())
+    /// Build the auth headers to attach to a request. An API key (`X-API-Key`)
+    /// takes precedence over a bearer token; returns `None` when unauthenticated.
+    fn auth_headers(&self) -> Result<Option<HeaderMap>, ClientError> {
+        let (api_key, token) = {
+            let auth = self
+                .auth
+                .read()
+                .map_err(|_| ClientError::Server("auth state lock poisoned".to_string()))?;
+            (auth.api_key.clone(), auth.access_token.clone())
+        };
+
+        if let Some(key) = api_key {
+            let mut headers = HeaderMap::new();
+            let value =
+                HeaderValue::from_str(&key).map_err(|_| ClientError::InvalidAuthHeader)?;
+            headers.insert("X-API-Key", value);
+            Ok(Some(headers))
+        } else if let Some(token) = token {
+            Ok(Some(Self::auth_header(&token)?))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn ensure_token_fresh(&self) -> Result<(), ClientError> {

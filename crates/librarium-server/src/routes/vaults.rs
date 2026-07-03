@@ -412,8 +412,17 @@ struct SetVisibilityRequest {
     visibility: String,
 }
 
-/// Return file change events recorded since the given Unix millisecond timestamp.
-/// Clients use this to catch up after a WebSocket reconnect without doing a full tree reload.
+/// Return file change events for catch-up after a WebSocket reconnect, avoiding
+/// a full tree reload.
+///
+/// Two cursor modes:
+/// - `?since_seq=<n>` (preferred): returns a `ChangesPage { events, head_seq }`
+///   of enriched [`ChangeLogEntry`] rows ordered by the clock-independent
+///   per-vault sequence number. This is what the desktop sync engine uses.
+/// - `?since=<unix_ms>` (legacy): returns `{ "events": [FileChangeEvent] }`
+///   ordered by timestamp, preserved for existing clients.
+///
+/// `since_seq` takes precedence when both are supplied.
 #[get("/api/vaults/{vault_id}/changes")]
 async fn get_vault_changes(
     state: web::Data<AppState>,
@@ -421,6 +430,15 @@ async fn get_vault_changes(
     query: web::Query<std::collections::HashMap<String, String>>,
 ) -> AppResult<HttpResponse> {
     let vault_id = path.into_inner();
+
+    if let Some(since_seq) = query.get("since_seq").and_then(|s| s.parse::<i64>().ok()) {
+        let page = state
+            .db
+            .get_file_changes_since_seq(&vault_id, since_seq)
+            .await?;
+        return Ok(HttpResponse::Ok().json(page));
+    }
+
     let since: i64 = query
         .get("since")
         .and_then(|s| s.parse().ok())

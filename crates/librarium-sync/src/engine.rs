@@ -1,0 +1,761 @@
+//! The sync orchestration: per-vault tasks that push local changes and pull
+//! remote changes, staying live over a WebSocket and healing drift periodically.
+//!
+//! One [`SyncEngine`] owns the shared [`SyncStore`] and spawns one background
+//! task per (remote, mapped vault). Each task:
+//!  1. reconciles fully against the remote manifest (initial sync / drift repair),
+//!  2. drains the durable outbox (pending local pushes),
+//!  3. catches up via the `seq` cursor,
+//!  4. then stays live on the WebSocket, and
+//!  5. re-runs the above on reconnect, with exponential backoff.
+
+use crate::hash::{hash_bytes, hash_file};
+use crate::reconcile::{reconcile, Action, ConflictWinner, Decision};
+use crate::state::{OutboxOp, RemoteRecord, SyncStore, VaultMap};
+use crate::watcher::{LocalChange, LocalWatcher, Suppressor};
+use crate::SyncError;
+use futures_util::StreamExt;
+use librarium_client::ObsidianClient;
+use librarium_types::WsMessage;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tracing::{info, warn};
+
+/// Coarse lifecycle state of a vault's sync task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VaultSyncState {
+    Offline,
+    Connecting,
+    CatchingUp,
+    Live,
+}
+
+/// A snapshot of a vault's sync status, surfaced to the desktop UI.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VaultStatus {
+    pub remote_id: String,
+    pub local_vault_id: String,
+    pub state: VaultSyncState,
+    pub last_synced_seq: i64,
+    pub pending_outbox: i64,
+    pub last_error: Option<String>,
+}
+
+type StatusMap = Arc<Mutex<HashMap<(String, String), VaultStatus>>>;
+
+/// The public entry point. Holds the shared state store and running tasks.
+pub struct SyncEngine {
+    store: SyncStore,
+    tasks: Mutex<Vec<JoinHandle<()>>>,
+    status: StatusMap,
+}
+
+impl SyncEngine {
+    /// Open (creating if needed) the sync state database at `db_path`.
+    pub async fn open(db_path: &Path) -> Result<Self, SyncError> {
+        Ok(Self {
+            store: SyncStore::open(db_path).await?,
+            tasks: Mutex::new(Vec::new()),
+            status: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+
+    /// Register (or update) a remote server. Returns its id.
+    pub async fn add_remote(
+        &self,
+        id: String,
+        base_url: String,
+        api_key: String,
+    ) -> Result<String, SyncError> {
+        self.store
+            .upsert_remote(&RemoteRecord {
+                id: id.clone(),
+                base_url,
+                api_key,
+                enabled: true,
+            })
+            .await?;
+        Ok(id)
+    }
+
+    /// Map a local vault to a remote vault under a remote.
+    pub async fn map_vault(
+        &self,
+        remote_id: String,
+        local_vault_id: String,
+        local_vault_path: String,
+        remote_vault_id: String,
+    ) -> Result<(), SyncError> {
+        self.store
+            .upsert_vault_map(&VaultMap {
+                remote_id,
+                local_vault_id,
+                local_vault_path,
+                remote_vault_id,
+                last_synced_seq: 0,
+            })
+            .await
+    }
+
+    pub async fn list_remotes(&self) -> Result<Vec<RemoteRecord>, SyncError> {
+        self.store.list_remotes().await
+    }
+
+    /// Build the client for a configured remote, looking it up by id.
+    async fn client_for_remote(&self, remote_id: &str) -> Result<ObsidianClient, SyncError> {
+        let remotes = self.store.list_remotes().await?;
+        let remote = remotes
+            .into_iter()
+            .find(|r| r.id == remote_id)
+            .ok_or_else(|| SyncError::State(format!("unknown remote: {remote_id}")))?;
+        Ok(ObsidianClient::for_cloud(remote.base_url).with_api_key(remote.api_key))
+    }
+
+    /// List the vaults available on a remote server.
+    pub async fn list_remote_vaults(
+        &self,
+        remote_id: &str,
+    ) -> Result<Vec<librarium_types::Vault>, SyncError> {
+        let client = self.client_for_remote(remote_id).await?;
+        Ok(client.list_vaults().await?)
+    }
+
+    /// Create a new vault on a remote server.
+    pub async fn create_remote_vault(
+        &self,
+        remote_id: &str,
+        name: &str,
+    ) -> Result<librarium_types::Vault, SyncError> {
+        let client = self.client_for_remote(remote_id).await?;
+        Ok(client
+            .create_vault(&librarium_types::CreateVaultRequest {
+                name: name.to_string(),
+                path: None,
+            })
+            .await?)
+    }
+
+    /// Remove a remote and everything mapped to it.
+    pub async fn remove_remote(&self, remote_id: &str) -> Result<(), SyncError> {
+        self.store.delete_remote(remote_id).await
+    }
+
+    /// Remove a single local-to-remote vault mapping.
+    pub async fn unmap_vault(
+        &self,
+        remote_id: &str,
+        local_vault_id: &str,
+    ) -> Result<(), SyncError> {
+        self.store.delete_vault_map(remote_id, local_vault_id).await
+    }
+
+    /// Spawn background sync tasks for every enabled remote + mapped vault.
+    /// Idempotent-ish: call [`Self::stop`] first to avoid duplicate tasks.
+    pub async fn start(&self) -> Result<(), SyncError> {
+        let remotes = self.store.list_remotes().await?;
+        let mut handles = Vec::new();
+        for remote in remotes.into_iter().filter(|r| r.enabled) {
+            let maps = self.store.list_vault_maps(&remote.id).await?;
+            for map in maps {
+                let ctx = TaskContext {
+                    store: self.store.clone(),
+                    remote: remote.clone(),
+                    map,
+                    status: self.status.clone(),
+                };
+                handles.push(tokio::spawn(async move { ctx.run().await }));
+            }
+        }
+        if let Ok(mut tasks) = self.tasks.lock() {
+            tasks.extend(handles);
+        }
+        Ok(())
+    }
+
+    /// Abort all running sync tasks.
+    pub fn stop(&self) {
+        if let Ok(mut tasks) = self.tasks.lock() {
+            for t in tasks.drain(..) {
+                t.abort();
+            }
+        }
+    }
+
+    /// Current per-vault status snapshots.
+    pub fn status(&self) -> Vec<VaultStatus> {
+        self.status
+            .lock()
+            .map(|m| m.values().cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
+impl Drop for SyncEngine {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Everything one vault task needs to run its reconnect loop.
+struct TaskContext {
+    store: SyncStore,
+    remote: RemoteRecord,
+    map: VaultMap,
+    status: StatusMap,
+}
+
+impl TaskContext {
+    async fn run(self) {
+        let key = (self.remote.id.clone(), self.map.local_vault_id.clone());
+        let client = ObsidianClient::for_cloud(self.remote.base_url.clone())
+            .with_api_key(self.remote.api_key.clone());
+
+        // The local watcher lives for the whole task, across reconnects.
+        let suppressor = Suppressor::new();
+        let (local_tx, local_rx) = mpsc::unbounded_channel();
+        let _watcher = match LocalWatcher::start(
+            PathBuf::from(&self.map.local_vault_path),
+            suppressor.clone(),
+            local_tx,
+        ) {
+            Ok(w) => w,
+            Err(e) => {
+                self.set_status(&key, VaultSyncState::Offline, Some(format!("watch: {e}")));
+                warn!("sync: failed to start watcher for {}: {e}", self.map.local_vault_path);
+                return;
+            }
+        };
+
+        let last_seq = self
+            .store
+            .list_vault_maps(&self.remote.id)
+            .await
+            .ok()
+            .and_then(|maps| {
+                maps.into_iter()
+                    .find(|m| m.local_vault_id == self.map.local_vault_id)
+                    .map(|m| m.last_synced_seq)
+            })
+            .unwrap_or(0);
+
+        let mut vault = VaultSync {
+            store: self.store.clone(),
+            client,
+            remote_id: self.remote.id.clone(),
+            local_vault_id: self.map.local_vault_id.clone(),
+            local_vault_path: PathBuf::from(&self.map.local_vault_path),
+            remote_vault_id: self.map.remote_vault_id.clone(),
+            suppressor,
+            local_rx,
+            remote_hashes: HashMap::new(),
+            last_seq,
+            status: self.status.clone(),
+            status_key: key.clone(),
+        };
+
+        // Reconnect loop with exponential backoff (jitter-free; the sleep is
+        // varied only by the doubling, which is fine for a single desktop link).
+        let mut backoff = Duration::from_secs(1);
+        let max_backoff = Duration::from_secs(30);
+        loop {
+            match vault.connect_and_run().await {
+                Ok(()) => {
+                    // Clean WS close — reconnect promptly.
+                    backoff = Duration::from_secs(1);
+                }
+                Err(e) => {
+                    vault.set_state(VaultSyncState::Offline, Some(e.to_string()));
+                    warn!("sync vault {} offline: {e}", vault.local_vault_id);
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(max_backoff);
+                }
+            }
+        }
+    }
+
+    fn set_status(&self, key: &(String, String), state: VaultSyncState, err: Option<String>) {
+        if let Ok(mut m) = self.status.lock() {
+            m.insert(
+                key.clone(),
+                VaultStatus {
+                    remote_id: key.0.clone(),
+                    local_vault_id: key.1.clone(),
+                    state,
+                    last_synced_seq: 0,
+                    pending_outbox: 0,
+                    last_error: err,
+                },
+            );
+        }
+    }
+}
+
+/// The mutable working state for one vault's sync.
+struct VaultSync {
+    store: SyncStore,
+    client: ObsidianClient,
+    remote_id: String,
+    local_vault_id: String,
+    local_vault_path: PathBuf,
+    remote_vault_id: String,
+    suppressor: Suppressor,
+    local_rx: mpsc::UnboundedReceiver<LocalChange>,
+    /// Best-known remote content hash per path (absent from the map = unknown /
+    /// not present remotely).
+    remote_hashes: HashMap<String, String>,
+    last_seq: i64,
+    status: StatusMap,
+    status_key: (String, String),
+}
+
+impl VaultSync {
+    /// One connection lifetime: full reconcile, drain outbox, catch up, then
+    /// stay live until the socket closes or an error occurs.
+    async fn connect_and_run(&mut self) -> Result<(), SyncError> {
+        self.set_state(VaultSyncState::Connecting, None);
+
+        self.full_reconcile().await?;
+        self.drain_outbox().await?;
+        self.set_state(VaultSyncState::CatchingUp, None);
+        self.pull_changes().await?;
+
+        let mut ws = self.client.connect_ws().await?;
+        self.set_state(VaultSyncState::Live, None);
+        info!("sync vault {} live", self.local_vault_id);
+
+        // Periodic drift repair heals anything missed while the WS was quiet or
+        // pruned past the server's change-log retention.
+        let mut drift = tokio::time::interval(Duration::from_secs(3600));
+        drift.tick().await; // consume the immediate first tick
+
+        loop {
+            tokio::select! {
+                // Remote pushed something.
+                frame = ws.next() => {
+                    match frame {
+                        Some(Ok(msg)) => {
+                            if self.handle_ws_frame(msg).await? {
+                                self.pull_changes().await?;
+                            }
+                        }
+                        Some(Err(e)) => return Err(SyncError::Client(e.into())),
+                        None => return Ok(()), // socket closed cleanly
+                    }
+                }
+                // Local files changed.
+                local = self.local_rx.recv() => {
+                    match local {
+                        Some(change) => {
+                            self.enqueue_local(change).await?;
+                            // Refresh remote view first to narrow the race, then push.
+                            self.pull_changes().await?;
+                            self.drain_outbox().await?;
+                        }
+                        None => return Ok(()), // watcher dropped
+                    }
+                }
+                _ = drift.tick() => {
+                    self.full_reconcile().await?;
+                    self.drain_outbox().await?;
+                }
+            }
+        }
+    }
+
+    /// Returns true when the frame indicates this vault changed remotely and a
+    /// pull should run.
+    async fn handle_ws_frame(
+        &mut self,
+        msg: tokio_tungstenite::tungstenite::Message,
+    ) -> Result<bool, SyncError> {
+        use tokio_tungstenite::tungstenite::Message;
+        let text = match msg {
+            Message::Text(t) => t,
+            Message::Close(_) => return Ok(false),
+            _ => return Ok(false),
+        };
+        let Ok(parsed) = serde_json::from_str::<WsMessage>(&text) else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            parsed,
+            WsMessage::FileChanged { vault_id, .. } if vault_id == self.remote_vault_id
+        ))
+    }
+
+    // ── Reconciliation entry points ─────────────────────────────────────────
+
+    /// Reconcile the whole vault against the remote manifest. Covers the initial
+    /// sync and periodic drift repair. Also seeds `remote_hashes`.
+    async fn full_reconcile(&mut self) -> Result<(), SyncError> {
+        let manifest = self.client.get_manifest(&self.remote_vault_id).await?;
+        self.remote_hashes = manifest
+            .iter()
+            .map(|e| (e.path.clone(), e.content_hash.clone()))
+            .collect();
+
+        // The union of every path that could need action: remote files, local
+        // files, and paths we have a recorded base for (to catch deletes).
+        let mut paths: HashSet<String> = self.remote_hashes.keys().cloned().collect();
+        paths.extend(local_file_paths(&self.local_vault_path));
+        paths.extend(
+            self.store
+                .known_paths(&self.remote_id, &self.local_vault_id)
+                .await?,
+        );
+
+        for path in paths {
+            self.reconcile_path(&path).await?;
+        }
+        self.refresh_status().await;
+        Ok(())
+    }
+
+    /// Pull and apply remote changes since our seq cursor, advancing it.
+    async fn pull_changes(&mut self) -> Result<(), SyncError> {
+        loop {
+            let page = self
+                .client
+                .get_changes_since_seq(&self.remote_vault_id, self.last_seq)
+                .await?;
+
+            for entry in &page.events {
+                // Update our remote view from the log entry, then reconcile.
+                match entry.content_hash.clone() {
+                    Some(h) => {
+                        self.remote_hashes.insert(entry.path.clone(), h);
+                    }
+                    None => {
+                        self.remote_hashes.remove(&entry.path);
+                    }
+                }
+                self.reconcile_path(&entry.path).await?;
+            }
+
+            let advanced = page.head_seq > self.last_seq;
+            self.last_seq = page.head_seq.max(self.last_seq);
+            self.store
+                .set_last_synced_seq(&self.remote_id, &self.local_vault_id, self.last_seq)
+                .await?;
+
+            // Empty page or fully caught up: stop.
+            if page.events.is_empty() || !advanced {
+                break;
+            }
+        }
+        self.refresh_status().await;
+        Ok(())
+    }
+
+    /// Drain queued local pushes, reconciling each against the current state.
+    async fn drain_outbox(&mut self) -> Result<(), SyncError> {
+        let entries = self
+            .store
+            .list_outbox(&self.remote_id, &self.local_vault_id)
+            .await?;
+        for entry in entries {
+            self.reconcile_path(&entry.path).await?;
+            self.store.delete_outbox(entry.id).await?;
+        }
+        self.refresh_status().await;
+        Ok(())
+    }
+
+    async fn enqueue_local(&mut self, change: LocalChange) -> Result<(), SyncError> {
+        let (path, op, hash) = match change {
+            LocalChange::Upserted { path, hash } => (path, OutboxOp::Upsert, Some(hash)),
+            LocalChange::Deleted { path } => (path, OutboxOp::Delete, None),
+        };
+        self.store
+            .enqueue_outbox(
+                &self.remote_id,
+                &self.local_vault_id,
+                &path,
+                op,
+                None,
+                hash.as_deref(),
+                now_ms(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    // ── The core: reconcile one path and apply the decision ─────────────────
+
+    async fn reconcile_path(&mut self, path: &str) -> Result<(), SyncError> {
+        let base = self
+            .store
+            .get_base_hash(&self.remote_id, &self.local_vault_id, path)
+            .await?;
+        let local = self.local_hash(path);
+        let remote = self.remote_hashes.get(path).cloned();
+
+        let decision = reconcile(base.as_deref(), local.as_deref(), remote.as_deref());
+        self.apply(path, local, remote, decision).await
+    }
+
+    async fn apply(
+        &mut self,
+        path: &str,
+        local: Option<String>,
+        remote: Option<String>,
+        decision: Decision,
+    ) -> Result<(), SyncError> {
+        match decision.action {
+            Action::Noop | Action::AdoptBase => {}
+            Action::PushUpsert => {
+                let bytes = self.read_local(path)?;
+                self.client
+                    .upload_file_bytes(&self.remote_vault_id, path, bytes)
+                    .await?;
+                if let Some(h) = &local {
+                    self.remote_hashes.insert(path.to_string(), h.clone());
+                }
+            }
+            Action::PushDelete => {
+                // Ignore a not-found on the remote; the end state is the same.
+                if let Err(e) = self.client.delete_file(&self.remote_vault_id, path).await {
+                    warn!("sync: remote delete of {path} failed (continuing): {e}");
+                }
+                self.remote_hashes.remove(path);
+            }
+            Action::PullUpsert => {
+                let bytes = self
+                    .client
+                    .download_file_bytes(&self.remote_vault_id, path)
+                    .await?;
+                self.write_local(path, &bytes)?;
+            }
+            Action::PullDelete => {
+                self.delete_local(path)?;
+            }
+            Action::Conflict { winner } => {
+                self.apply_conflict(path, local, remote, winner).await?;
+            }
+        }
+
+        // Persist the agreed base for this path.
+        self.store
+            .set_base_hash(
+                &self.remote_id,
+                &self.local_vault_id,
+                path,
+                decision.new_base.as_deref(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Keep-both conflict resolution. The winner takes the canonical path; the
+    /// loser's content (if any) is preserved in a `conflict_*` sibling that is
+    /// itself queued for the other side, so neither machine loses data.
+    async fn apply_conflict(
+        &mut self,
+        path: &str,
+        local: Option<String>,
+        _remote: Option<String>,
+        winner: ConflictWinner,
+    ) -> Result<(), SyncError> {
+        match winner {
+            ConflictWinner::Remote => {
+                // Preserve the local copy (if present) as a conflict sibling and
+                // push it, then overwrite the canonical path with the remote copy.
+                if local.is_some() {
+                    let local_bytes = self.read_local(path)?;
+                    let conflict_path = conflict_name(path);
+                    self.write_local(&conflict_path, &local_bytes)?;
+                    // Send the preserved copy to the remote too.
+                    self.client
+                        .upload_file_bytes(&self.remote_vault_id, &conflict_path, local_bytes.clone())
+                        .await?;
+                    let ch = hash_bytes(&local_bytes);
+                    self.remote_hashes.insert(conflict_path.clone(), ch.clone());
+                    self.store
+                        .set_base_hash(
+                            &self.remote_id,
+                            &self.local_vault_id,
+                            &conflict_path,
+                            Some(&ch),
+                        )
+                        .await?;
+                }
+                let remote_bytes = self
+                    .client
+                    .download_file_bytes(&self.remote_vault_id, path)
+                    .await?;
+                self.write_local(path, &remote_bytes)?;
+            }
+            ConflictWinner::Local => {
+                // Local edit beat a remote deletion: resurrect it on the remote.
+                let bytes = self.read_local(path)?;
+                self.client
+                    .upload_file_bytes(&self.remote_vault_id, path, bytes)
+                    .await?;
+                if let Some(h) = &local {
+                    self.remote_hashes.insert(path.to_string(), h.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // ── Local filesystem helpers ────────────────────────────────────────────
+
+    fn abs(&self, path: &str) -> PathBuf {
+        self.local_vault_path.join(path)
+    }
+
+    fn local_hash(&self, path: &str) -> Option<String> {
+        let abs = self.abs(path);
+        if abs.is_file() {
+            hash_file(&abs).ok()
+        } else {
+            None
+        }
+    }
+
+    fn read_local(&self, path: &str) -> Result<Vec<u8>, SyncError> {
+        Ok(std::fs::read(self.abs(path))?)
+    }
+
+    /// Write bytes locally, suppressing the resulting watcher event so the engine
+    /// does not re-detect and re-push its own write.
+    fn write_local(&self, path: &str, bytes: &[u8]) -> Result<(), SyncError> {
+        self.suppressor.suppress(path, &hash_bytes(bytes));
+        let abs = self.abs(path);
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&abs, bytes)?;
+        Ok(())
+    }
+
+    fn delete_local(&self, path: &str) -> Result<(), SyncError> {
+        let abs = self.abs(path);
+        if abs.exists() {
+            std::fs::remove_file(&abs)?;
+        }
+        Ok(())
+    }
+
+    // ── Status ──────────────────────────────────────────────────────────────
+
+    fn set_state(&self, state: VaultSyncState, err: Option<String>) {
+        if let Ok(mut m) = self.status.lock() {
+            let entry = m.entry(self.status_key.clone()).or_insert(VaultStatus {
+                remote_id: self.remote_id.clone(),
+                local_vault_id: self.local_vault_id.clone(),
+                state,
+                last_synced_seq: self.last_seq,
+                pending_outbox: 0,
+                last_error: None,
+            });
+            entry.state = state;
+            entry.last_synced_seq = self.last_seq;
+            if err.is_some() {
+                entry.last_error = err;
+            }
+        }
+    }
+
+    async fn refresh_status(&self) {
+        let pending = self
+            .store
+            .outbox_len(&self.remote_id, &self.local_vault_id)
+            .await
+            .unwrap_or(0);
+        if let Ok(mut m) = self.status.lock() {
+            if let Some(entry) = m.get_mut(&self.status_key) {
+                entry.last_synced_seq = self.last_seq;
+                entry.pending_outbox = pending;
+            }
+        }
+    }
+}
+
+/// Walk a vault directory and return every syncable file's vault-relative path,
+/// skipping dot-entries (matching the server manifest and watcher).
+fn local_file_paths(vault_path: &Path) -> Vec<String> {
+    use walkdir::WalkDir;
+    let mut out = Vec::new();
+    for entry in WalkDir::new(vault_path)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            // Always keep the root (depth 0); prune dot-entries below it.
+            e.depth() == 0
+                || e
+                    .file_name()
+                    .to_str()
+                    .map(|n| !n.starts_with('.'))
+                    .unwrap_or(false)
+        })
+        .filter_map(|e| e.ok())
+    {
+        let p = entry.path();
+        if p.is_file() {
+            let rel = p
+                .strip_prefix(vault_path)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .replace('\\', "/");
+            out.push(rel);
+        }
+    }
+    out
+}
+
+/// Build the keep-both conflict filename for a path:
+/// `dir/conflict_<stem>_<YYYYMMDD_HHMMSS>.<ext>`, matching the server's
+/// `create_conflict_backup` convention.
+fn conflict_name(path: &str) -> String {
+    let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let (dir, file) = match path.rsplit_once('/') {
+        Some((d, f)) => (Some(d), f),
+        None => (None, path),
+    };
+    let (stem, ext) = match file.rsplit_once('.') {
+        Some((s, e)) => (s, Some(e)),
+        None => (file, None),
+    };
+    let name = match ext {
+        Some(e) => format!("conflict_{stem}_{ts}.{e}"),
+        None => format!("conflict_{stem}_{ts}"),
+    };
+    match dir {
+        Some(d) => format!("{d}/{name}"),
+        None => name,
+    }
+}
+
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conflict_name_preserves_dir_and_ext() {
+        let n = conflict_name("notes/todo.md");
+        assert!(n.starts_with("notes/conflict_todo_"));
+        assert!(n.ends_with(".md"));
+    }
+
+    #[test]
+    fn conflict_name_handles_root_and_extensionless() {
+        assert!(conflict_name("README").starts_with("conflict_README_"));
+        let n = conflict_name("img.png");
+        assert!(n.starts_with("conflict_img_") && n.ends_with(".png"));
+    }
+}

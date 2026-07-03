@@ -149,6 +149,30 @@ pub struct AuthConfig {
 pub struct SyncConfig {
     #[serde(default = "default_change_log_retention_days")]
     pub change_log_retention_days: u64,
+    /// Desktop-only: remote servers this instance syncs its local vaults to.
+    /// Server deployments leave this empty and ignore it. The running engine's
+    /// authoritative state lives in `sync.db`; this is the editable bootstrap
+    /// reconciled into it on startup.
+    #[serde(default)]
+    pub remotes: Vec<SyncRemoteConfig>,
+}
+
+/// A configured remote server plus which local vaults map to which remote vaults.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncRemoteConfig {
+    pub id: String,
+    pub base_url: String,
+    /// `obh_`-prefixed API key used via the `X-API-Key` header.
+    pub api_key: String,
+    #[serde(default)]
+    pub vault_map: Vec<SyncVaultMapConfig>,
+}
+
+/// A single local-vault → remote-vault mapping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncVaultMapConfig {
+    pub local_vault_id: String,
+    pub remote_vault_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -422,6 +446,7 @@ impl Default for AppConfig {
             auth: AuthConfig::default(),
             sync: SyncConfig {
                 change_log_retention_days: default_change_log_retention_days(),
+                remotes: Vec::new(),
             },
             cors: CorsConfig {
                 allowed_origins: default_cors_allowed_origins(),
@@ -494,6 +519,7 @@ impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             change_log_retention_days: default_change_log_retention_days(),
+            remotes: Vec::new(),
         }
     }
 }

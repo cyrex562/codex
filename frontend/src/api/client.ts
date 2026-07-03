@@ -47,6 +47,9 @@ import type {
     EntityTypeSchema,
     RelationTypeSchema,
     GraphData,
+    ApiKeyInfo,
+    CreateApiKeyRequest,
+    CreateApiKeyResponse,
 } from './types';
 import { useAuthStore } from '@/stores/auth';
 
@@ -69,7 +72,8 @@ function isAuthLifecyclePath(path: string): boolean {
     return path === '/api/auth/login' ||
         path === '/api/auth/refresh' ||
         path === '/api/auth/logout' ||
-        path === '/api/auth/totp/login-verify';
+        path === '/api/auth/totp/login-verify' ||
+        path === '/api/auth/oidc/callback';
 }
 
 async function ensureFreshForRequest(url: string) {
@@ -584,6 +588,14 @@ export const apiVerifyTotpLogin = (code: string): Promise<TotpLoginVerifyRespons
         body: JSON.stringify({ code }),
     });
 
+// Complete an OIDC login: the provider redirected back with a code + state,
+// which the server exchanges for tokens (validating the state CSRF cookie it set
+// during authorize). Returns the same token payload as a password login.
+export const apiOidcCallback = (code: string, state: string): Promise<LoginResponse> =>
+    request(
+        `/api/auth/oidc/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`,
+    );
+
 export const apiMe = (): Promise<AuthenticatedUserProfile> =>
     request('/api/auth/me');
 
@@ -592,6 +604,15 @@ export const apiChangePassword = (data: ChangePasswordRequest): Promise<{ succes
         method: 'POST',
         body: JSON.stringify(data),
     });
+
+export const apiListApiKeys = (): Promise<ApiKeyInfo[]> =>
+    request('/api/auth/api-keys');
+
+export const apiCreateApiKey = (req: CreateApiKeyRequest): Promise<CreateApiKeyResponse> =>
+    request('/api/auth/api-keys', { method: 'POST', body: JSON.stringify(req) });
+
+export const apiRevokeApiKey = (keyId: string): Promise<void> =>
+    request(`/api/auth/api-keys/${keyId}`, { method: 'DELETE' });
 
 // ── Admin ────────────────────────────────────────────────────────────────────
 

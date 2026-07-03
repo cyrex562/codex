@@ -145,7 +145,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, defineAsyncComponent } from 'vue';
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, defineAsyncComponent, type CSSProperties } from 'vue';
 import { useVaultsStore } from '@/stores/vaults';
 import { useFilesStore } from '@/stores/files';
 import { useTabsStore } from '@/stores/tabs';
@@ -242,7 +242,7 @@ watch(() => props.filePath, async () => {
 
 // ── Viewport helpers ──────────────────────────────────────────────────────────
 
-const svgStyle = computed(() => ({
+const svgStyle = computed<CSSProperties>(() => ({
     position: 'absolute',
     inset: '0',
     width: '100%',
@@ -251,7 +251,7 @@ const svgStyle = computed(() => ({
     pointerEvents: 'none',
 }));
 
-function nodeStyle(node: CanvasNode) {
+function nodeStyle(node: CanvasNode): CSSProperties {
     const tx = viewport.x + node.x * viewport.scale;
     const ty = viewport.y + node.y * viewport.scale;
     return {
