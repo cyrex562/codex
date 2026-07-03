@@ -42,6 +42,9 @@
           <template #item.state="{ item }">
             <v-chip :color="stateColor(item.state)" size="small" variant="tonal">
               {{ stateLabel(item.state) }}
+              <span v-if="item.state === 'syncing' && item.total > 0">
+                &nbsp;{{ item.synced }}/{{ item.total }}
+              </span>
             </v-chip>
           </template>
 
@@ -210,6 +213,7 @@ function stateColor(state: SyncVaultState): string {
   switch (state) {
     case 'live':
       return 'success';
+    case 'syncing':
     case 'catching_up':
     case 'connecting':
       return 'warning';
@@ -221,6 +225,8 @@ function stateColor(state: SyncVaultState): string {
 
 function stateLabel(state: SyncVaultState): string {
   switch (state) {
+    case 'syncing':
+      return 'Syncing';
     case 'catching_up':
       return 'Catching up';
     case 'connecting':

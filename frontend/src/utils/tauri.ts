@@ -18,7 +18,7 @@ export interface SyncRemoteDto {
   enabled: boolean;
 }
 
-export type SyncVaultState = 'offline' | 'connecting' | 'catching_up' | 'live';
+export type SyncVaultState = 'offline' | 'connecting' | 'syncing' | 'catching_up' | 'live';
 
 export interface SyncVaultStatus {
   remote_id: string;
@@ -27,6 +27,10 @@ export interface SyncVaultStatus {
   last_synced_seq: number;
   pending_outbox: number;
   last_error: string | null;
+  /** Files processed so far in the current reconcile pass. */
+  synced: number;
+  /** Total files to process in the current reconcile pass (0 when idle). */
+  total: number;
 }
 
 /**

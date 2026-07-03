@@ -2,7 +2,7 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use reqwest::Client;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
@@ -231,10 +231,25 @@ impl ObsidianClient {
             ClientDeployment::Hybrid { cloud_base_url, .. } => cloud_base_url.clone(),
         };
 
+        // A short connect timeout turns an unreachable server into a prompt
+        // error instead of an indefinite hang.
+        //
+        // `pool_max_idle_per_host(0)` disables idle-connection reuse. During a
+        // slow trickle of uploads the server's keep-alive window can lapse and
+        // it closes the pooled connection; reusing that dead connection for the
+        // next POST fails with "error sending request" (hyper does not auto-retry
+        // non-idempotent POSTs). Opening a fresh connection per request avoids
+        // that class of error entirely, at the cost of an extra handshake.
+        let inner = Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .pool_max_idle_per_host(0)
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
             base_url,
             deployment,
-            inner: Client::new(),
+            inner,
             auth: Arc::new(RwLock::new(AuthState::default())),
         }
     }

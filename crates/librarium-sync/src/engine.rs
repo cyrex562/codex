@@ -31,6 +31,9 @@ use tracing::{info, warn};
 pub enum VaultSyncState {
     Offline,
     Connecting,
+    /// Doing the initial/full reconcile (pushing and pulling files). This can be
+    /// long for a large vault, so progress is reported via `synced`/`total`.
+    Syncing,
     CatchingUp,
     Live,
 }
@@ -44,6 +47,10 @@ pub struct VaultStatus {
     pub last_synced_seq: i64,
     pub pending_outbox: i64,
     pub last_error: Option<String>,
+    /// Files processed so far in the current reconcile pass.
+    pub synced: i64,
+    /// Total files to process in the current reconcile pass (0 when idle).
+    pub total: i64,
 }
 
 type StatusMap = Arc<Mutex<HashMap<(String, String), VaultStatus>>>;
@@ -289,6 +296,8 @@ impl TaskContext {
                     last_synced_seq: 0,
                     pending_outbox: 0,
                     last_error: err,
+                    synced: 0,
+                    total: 0,
                 },
             );
         }
@@ -319,6 +328,10 @@ impl VaultSync {
     async fn connect_and_run(&mut self) -> Result<(), SyncError> {
         self.set_state(VaultSyncState::Connecting, None);
 
+        // The full reconcile (manifest + initial push/pull) is the long phase for
+        // a large vault, so report it as Syncing with file progress rather than
+        // leaving the UI stuck on "connecting".
+        self.set_state(VaultSyncState::Syncing, None);
         self.full_reconcile().await?;
         self.drain_outbox().await?;
         self.set_state(VaultSyncState::CatchingUp, None);
@@ -393,7 +406,16 @@ impl VaultSync {
     /// Reconcile the whole vault against the remote manifest. Covers the initial
     /// sync and periodic drift repair. Also seeds `remote_hashes`.
     async fn full_reconcile(&mut self) -> Result<(), SyncError> {
-        let manifest = self.client.get_manifest(&self.remote_vault_id).await?;
+        let manifest = {
+            let client = self.client.clone();
+            let vault = self.remote_vault_id.clone();
+            with_retry("manifest", move || {
+                let client = client.clone();
+                let vault = vault.clone();
+                async move { client.get_manifest(&vault).await }
+            })
+            .await?
+        };
         self.remote_hashes = manifest
             .iter()
             .map(|e| (e.path.clone(), e.content_hash.clone()))
@@ -409,8 +431,16 @@ impl VaultSync {
                 .await?,
         );
 
-        for path in paths {
+        let total = paths.len() as i64;
+        self.set_progress(0, total);
+        for (i, path) in paths.into_iter().enumerate() {
             self.reconcile_path(&path).await?;
+            // Update the counter periodically (and on the last item) to keep the
+            // status panel moving without locking on every single file.
+            let done = (i + 1) as i64;
+            if done % 20 == 0 || done == total {
+                self.set_progress(done, total);
+            }
         }
         self.refresh_status().await;
         Ok(())
@@ -419,10 +449,17 @@ impl VaultSync {
     /// Pull and apply remote changes since our seq cursor, advancing it.
     async fn pull_changes(&mut self) -> Result<(), SyncError> {
         loop {
-            let page = self
-                .client
-                .get_changes_since_seq(&self.remote_vault_id, self.last_seq)
-                .await?;
+            let page = {
+                let client = self.client.clone();
+                let vault = self.remote_vault_id.clone();
+                let since = self.last_seq;
+                with_retry("changes", move || {
+                    let client = client.clone();
+                    let vault = vault.clone();
+                    async move { client.get_changes_since_seq(&vault, since).await }
+                })
+                .await?
+            };
 
             for entry in &page.events {
                 // Update our remote view from the log entry, then reconcile.
@@ -510,9 +547,17 @@ impl VaultSync {
             Action::Noop | Action::AdoptBase => {}
             Action::PushUpsert => {
                 let bytes = self.read_local(path)?;
-                self.client
-                    .upload_file_bytes(&self.remote_vault_id, path, bytes)
-                    .await?;
+                let client = self.client.clone();
+                let vault = self.remote_vault_id.clone();
+                let p = path.to_string();
+                with_retry("upload", move || {
+                    let client = client.clone();
+                    let vault = vault.clone();
+                    let p = p.clone();
+                    let bytes = bytes.clone();
+                    async move { client.upload_file_bytes(&vault, &p, bytes).await }
+                })
+                .await?;
                 if let Some(h) = &local {
                     self.remote_hashes.insert(path.to_string(), h.clone());
                 }
@@ -525,10 +570,16 @@ impl VaultSync {
                 self.remote_hashes.remove(path);
             }
             Action::PullUpsert => {
-                let bytes = self
-                    .client
-                    .download_file_bytes(&self.remote_vault_id, path)
-                    .await?;
+                let client = self.client.clone();
+                let vault = self.remote_vault_id.clone();
+                let p = path.to_string();
+                let bytes = with_retry("download", move || {
+                    let client = client.clone();
+                    let vault = vault.clone();
+                    let p = p.clone();
+                    async move { client.download_file_bytes(&vault, &p).await }
+                })
+                .await?;
                 self.write_local(path, &bytes)?;
             }
             Action::PullDelete => {
@@ -654,11 +705,32 @@ impl VaultSync {
                 last_synced_seq: self.last_seq,
                 pending_outbox: 0,
                 last_error: None,
+                synced: 0,
+                total: 0,
             });
             entry.state = state;
             entry.last_synced_seq = self.last_seq;
             if err.is_some() {
                 entry.last_error = err;
+            }
+            // Clear a previous error once we advance past Offline.
+            if matches!(state, VaultSyncState::Live | VaultSyncState::Syncing) {
+                entry.last_error = None;
+            }
+            // Reset the progress counter when leaving the syncing phase.
+            if !matches!(state, VaultSyncState::Syncing) {
+                entry.synced = 0;
+                entry.total = 0;
+            }
+        }
+    }
+
+    /// Report reconcile progress (files processed / total) for the status panel.
+    fn set_progress(&self, synced: i64, total: i64) {
+        if let Ok(mut m) = self.status.lock() {
+            if let Some(entry) = m.get_mut(&self.status_key) {
+                entry.synced = synced;
+                entry.total = total;
             }
         }
     }
@@ -675,6 +747,46 @@ impl VaultSync {
                 entry.pending_outbox = pending;
             }
         }
+    }
+}
+
+/// Retry a client operation on transient transport errors (a dropped/reset
+/// connection, a connect timeout, or a "sending request" failure), with
+/// exponential backoff. This keeps one flaky request from aborting an entire
+/// reconcile pass over thousands of files. Non-transport errors (auth, 4xx/5xx
+/// bodies, serde) fail immediately.
+async fn with_retry<T, F, Fut>(label: &str, mut op: F) -> Result<T, SyncError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, librarium_client::ClientError>>,
+{
+    const MAX_ATTEMPTS: u32 = 4;
+    let mut delay = Duration::from_millis(500);
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        match op().await {
+            Ok(v) => return Ok(v),
+            Err(e) if attempt < MAX_ATTEMPTS && is_transient(&e) => {
+                warn!(
+                    "sync {label} failed (attempt {attempt}/{MAX_ATTEMPTS}): {e} — retrying in {}ms",
+                    delay.as_millis()
+                );
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(Duration::from_secs(5));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+
+/// True for reqwest transport-level failures that are worth retrying.
+fn is_transient(e: &librarium_client::ClientError) -> bool {
+    match e {
+        librarium_client::ClientError::Http(inner) => {
+            inner.is_connect() || inner.is_timeout() || inner.is_request()
+        }
+        _ => false,
     }
 }
 
