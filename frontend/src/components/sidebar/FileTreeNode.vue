@@ -69,8 +69,6 @@
       @click.stop
       />
 
-      <v-spacer />
-
       <!-- Inline action buttons, visible on hover -->
       <template v-if="hovering && !editing">
         <v-btn
@@ -114,7 +112,7 @@
         <v-list-item title="Clear custom icon" prepend-icon="mdi-emoticon-remove-outline" data-testid="ctx-clear-icon" @click="clearCustomIcon" />
         <v-list-item v-if="node.is_directory" title="Set folder color" prepend-icon="mdi-palette-outline" data-testid="ctx-set-color" @click="openColorDialog" />
         <v-list-item v-if="node.is_directory && folderColor" title="Clear folder color" prepend-icon="mdi-palette-swatch-outline" data-testid="ctx-clear-color" @click="clearFolderColor" />
-        <v-list-item title="Rename" prepend-icon="mdi-pencil-outline" data-testid="ctx-rename" @click="startEdit" />
+        <v-list-item title="Rename" prepend-icon="mdi-pencil-outline" data-testid="ctx-rename" @click="openRenameDialog" />
         <v-list-item title="Move to…" prepend-icon="mdi-folder-move-outline" data-testid="ctx-move" @click="openMoveDialog" />
         <v-divider />
         <v-list-item title="Export as ZIP" prepend-icon="mdi-folder-zip-outline" data-testid="ctx-export-zip" @click="exportAsZip" />
@@ -123,6 +121,29 @@
         <v-list-item title="Delete" prepend-icon="mdi-delete-outline" base-color="error" data-testid="ctx-delete" @click="onDelete" />
       </v-list>
     </v-menu>
+
+    <!-- Rename dialog (context menu → Rename) -->
+    <v-dialog v-model="renameDialog" max-width="420" @keydown.esc="renameDialog = false">
+      <v-card>
+        <v-card-title class="text-subtitle-1 pt-4">Rename</v-card-title>
+        <v-card-text class="pt-1">
+          <v-text-field
+            v-model="renameDraftName"
+            label="Name"
+            autofocus
+            density="compact"
+            variant="outlined"
+            hide-details="auto"
+            @keyup.enter="confirmRenameFromDialog"
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="renameDialog = false">Cancel</v-btn>
+          <v-btn color="primary" variant="flat" :disabled="!renameDraftName.trim()" @click="confirmRenameFromDialog">Rename</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- Folder color picker -->
     <v-dialog v-model="colorDialog" width="auto">
@@ -180,6 +201,8 @@ const importDragOver = ref(false);
 const moveDragOver = ref(false);
 const colorDialog = ref(false);
 const colorDraft = ref('#90CAF9');
+const renameDialog = ref(false);
+const renameDraftName = ref('');
 
 const sort = inject<Ref<'asc' | 'desc'>>('fileTreeSort', ref('asc'));
 const selectionOrder = inject<Ref<string[]>>('fileTreeSelectionOrder', ref([]));
@@ -329,6 +352,29 @@ function onContextMenu(e: MouseEvent) {
 function startEdit() {
   editName.value = props.node.name;
   editing.value = true;
+}
+
+function openRenameDialog() {
+  renameDraftName.value = props.node.name;
+  renameDialog.value = true;
+}
+
+async function confirmRenameFromDialog() {
+  const vaultId = vaultsStore.activeVaultId;
+  const trimmed = renameDraftName.value.trim();
+  if (!vaultId || !trimmed || trimmed === props.node.name) {
+    renameDialog.value = false;
+    return;
+  }
+  renameDialog.value = false;
+  const dir = props.node.path.includes('/')
+    ? props.node.path.substring(0, props.node.path.lastIndexOf('/') + 1)
+    : '';
+  const oldPath = props.node.path;
+  const newPath = await filesStore.renameFile(vaultId, oldPath, dir + trimmed);
+  tabsStore.remapTabPaths(oldPath, newPath);
+  prefsStore.remapPathIcon(oldPath, newPath);
+  await prefsStore.save();
 }
 
 async function confirmRename() {
@@ -639,6 +685,7 @@ async function exportAsTar() {
   border-radius: 4px;
   cursor: pointer;
   min-height: 28px;
+  min-width: 0;
 }
 .file-tree-node.hovering {
   background: rgba(var(--v-theme-surface-bright), 0.6);
@@ -662,6 +709,7 @@ async function exportAsTar() {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+  min-width: 0;
   color: rgb(var(--v-theme-on-background));
 }
 .custom-icon {
