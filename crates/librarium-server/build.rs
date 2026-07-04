@@ -68,7 +68,60 @@ fn main() {
     println!("cargo:rustc-env=GIT_HASH={}", git_hash);
     println!("cargo:rustc-env=BUILD_DATE={}", build_date);
 
-    // Re-run only when HEAD pointer or the index changes.
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/index");
+    // Re-run only when HEAD pointer or the index changes. These paths are
+    // relative to the crate root (crates/librarium-server/), so they must climb
+    // to the repo root where .git actually lives — otherwise cargo watches
+    // nonexistent paths, treats them as perpetually changed, and re-runs this
+    // script (and often recompiles the crate) on every single build.
+    println!("cargo:rerun-if-changed=../../.git/HEAD");
+    println!("cargo:rerun-if-changed=../../.git/index");
+
+    // The Vue SPA is embedded into this binary at compile time via rust-embed
+    // (see src/assets.rs, `#[folder = "../../target/frontend/"]`). A proc-macro
+    // cannot tell cargo that those files are build inputs, so without help cargo
+    // would skip recompiling this crate after a frontend rebuild and ship a STALE
+    // embedded UI. Two things fix that:
+    //   1. `rerun-if-changed` on the folder so cargo re-runs this script when the
+    //      SPA changes (Vite emits freshly-hashed filenames every build).
+    //   2. A content stamp emitted as `FRONTEND_STAMP` and referenced from
+    //      assets.rs, so the crate's own fingerprint changes when the SPA does —
+    //      guaranteeing the assets are re-embedded, not just this script re-run.
+    let frontend_dir = std::path::Path::new("../../target/frontend");
+    println!("cargo:rerun-if-changed={}", frontend_dir.display());
+    println!("cargo:rustc-env=FRONTEND_STAMP={}", frontend_stamp(frontend_dir));
+}
+
+/// A cheap, dependency-free stamp of the built frontend: each file's relative
+/// path plus its length, folded into a hash. Changes whenever any embedded asset
+/// is added, removed, or resized (which covers Vite's per-build hashed filenames).
+/// Returns "absent" when the folder hasn't been built yet.
+fn frontend_stamp(dir: &std::path::Path) -> u64 {
+    fn walk(dir: &std::path::Path, acc: &mut Vec<(String, u64)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, acc);
+            } else if let Ok(meta) = entry.metadata() {
+                acc.push((path.to_string_lossy().into_owned(), meta.len()));
+            }
+        }
+    }
+
+    if !dir.exists() {
+        return 0;
+    }
+    let mut files = Vec::new();
+    walk(dir, &mut files);
+    files.sort();
+
+    // FNV-1a over the sorted (path, len) pairs — no external crates needed.
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for (path, len) in files {
+        for byte in path.as_bytes().iter().chain(&len.to_le_bytes()) {
+            hash ^= *byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    hash
 }
