@@ -8,6 +8,14 @@
 
     <!-- File content router -->
     <template v-else>
+      <!-- Document metadata bar: filename + tags, shown for all file types -->
+      <DocumentMetaBar
+        :file-path="activeTab.filePath ?? ''"
+        :frontmatter="activeTab.frontmatter ?? {}"
+        :is-md="isMd"
+        @update:frontmatter="onFrontmatterUpdate"
+      />
+
       <!-- Frontmatter panel above editor -->
       <FrontmatterPanel
         v-if="isMd"
@@ -102,6 +110,7 @@ import { ApiError } from '@/api/client';
 import { useUiStore } from '@/stores/ui';
 import type { EditorMode } from '@/api/types';
 
+import DocumentMetaBar from './DocumentMetaBar.vue';
 import FrontmatterPanel from './FrontmatterPanel.vue';
 import MarkdownEditor from './MarkdownEditor.vue';
 import EditorToolbar from './EditorToolbar.vue';
