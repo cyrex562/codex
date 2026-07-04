@@ -23,6 +23,9 @@ tauri-plugin-deep-link = "2"
 # Embedded server — imported as the `librarium` crate (see [lib] name in librarium-server)
 librarium-server = { path = "../librarium-server" }
 
+# Background sync engine (desktop ↔ remote server)
+librarium-sync = { path = "../librarium-sync" }
+
 # Actix runtime needed to spawn the server on a background thread
 actix-web = { version = "4.9", default-features = false }
 
@@ -34,9 +37,11 @@ dirs = "5"
 
 # Utilities
 anyhow = "1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "sync", "rt", "macros"] }
 tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"

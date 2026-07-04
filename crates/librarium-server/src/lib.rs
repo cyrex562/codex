@@ -346,6 +346,7 @@ pub async fn run(config: AppConfig) -> anyhow::Result<()> {
     let search_index_clone = search_index.clone();
     let db_clone = db.clone();
     let ws_batch = ws_tx.clone();
+    let change_log_retention_days = config.sync.change_log_retention_days;
     tokio::spawn(async move {
         while let Some(first_event) = change_rx.recv().await {
             // Drain queued events so we can batch search-index commits.
@@ -526,6 +527,55 @@ pub async fn run(config: AppConfig) -> anyhow::Result<()> {
                                     warn!("Entity index_file (rename to) failed for {to}: {e}");
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Record the change in the durable change log so out-of-band
+                // filesystem edits (git pulls, other apps, sync-engine writes)
+                // become visible to `/changes` catch-up — not just API writes.
+                // The DB-side de-dup guard drops this when an API handler already
+                // logged the same content, so double-writes are harmless.
+                {
+                    let vault_path = if let Some(p) = vault_cache.get(&change_event.vault_id) {
+                        Some(p.clone())
+                    } else if let Ok(vault) = db_clone.get_vault(&change_event.vault_id).await {
+                        vault_cache.insert(change_event.vault_id.clone(), vault.path.clone());
+                        Some(vault.path)
+                    } else {
+                        None
+                    };
+
+                    if let Some(vpath) = vault_path {
+                        let (event_str, log_path, old_path, hash_path) = match &change_event.event_type {
+                            models::FileChangeType::Created => {
+                                ("created", change_event.path.as_str(), None, Some(change_event.path.as_str()))
+                            }
+                            models::FileChangeType::Modified => {
+                                ("modified", change_event.path.as_str(), None, Some(change_event.path.as_str()))
+                            }
+                            models::FileChangeType::Deleted => {
+                                ("deleted", change_event.path.as_str(), None, None)
+                            }
+                            models::FileChangeType::Renamed { from, to } => {
+                                ("renamed", to.as_str(), Some(from.as_str()), Some(to.as_str()))
+                            }
+                        };
+                        let content_hash = hash_path
+                            .and_then(|p| services::FileService::content_hash(&vpath, p).ok().flatten());
+                        if let Err(e) = db_clone
+                            .log_file_change(
+                                &change_event.vault_id,
+                                log_path,
+                                event_str,
+                                content_hash.as_deref(),
+                                None,
+                                old_path,
+                                change_log_retention_days,
+                            )
+                            .await
+                        {
+                            warn!("Change-log write failed for {}: {e}", change_event.path);
                         }
                     }
                 }

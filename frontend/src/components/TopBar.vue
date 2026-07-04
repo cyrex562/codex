@@ -45,6 +45,14 @@
         data-testid="topbar-theme-btn"
         @click="toggleTheme"
       />
+      <v-btn
+        icon="mdi-cog"
+        size="small"
+        density="compact"
+        title="Settings"
+        data-testid="topbar-settings-btn"
+        @click="showSettings = true"
+      />
 
       <v-menu>
         <template #activator="{ props }">
@@ -84,16 +92,19 @@
       </v-menu>
     </template>
   </v-app-bar>
+
+  <SettingsModal v-model="showSettings" />
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useVaultsStore } from '@/stores/vaults';
 import { usePreferencesStore } from '@/stores/preferences';
 import { useTabsStore } from '@/stores/tabs';
 import { useAuthStore } from '@/stores/auth';
 import { useWebSocket } from '@/composables/useWebSocket';
+import SettingsModal from '@/components/settings/SettingsModal.vue';
 
 const emit = defineEmits<{
   'open-search': [];
@@ -111,6 +122,7 @@ const dirtyCount = computed(() => tabsStore.dirtyTabs.length);
 const wsConnected = computed(() => connected.value);
 const username = computed(() => authStore.profile?.username ?? 'Account');
 const hasActiveVault = computed(() => !!vaultsStore.activeVaultId);
+const showSettings = ref(false);
 
 function toggleTheme() {
   prefsStore.set('theme', prefsStore.prefs.theme === 'dark' ? 'light' : 'dark');

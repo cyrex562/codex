@@ -3,7 +3,9 @@ members = [
 	"crates/librarium-server",
 	"crates/librarium-types",
 	"crates/librarium-client",
+	"crates/librarium-sync",
 	"crates/librarium-tauri",
+	"xtask",
 ]
 default-members = ["crates/librarium-server"]
 resolver = "2"

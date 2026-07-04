@@ -4,6 +4,16 @@ import {
   openDirectoryDialog,
   openFileDialog,
   saveFileDialog,
+  syncAddRemote,
+  syncMapVault,
+  syncListRemotes,
+  syncListRemoteVaults,
+  syncCreateRemoteVault,
+  syncRemoveRemote,
+  syncUnmapVault,
+  syncStatus,
+  syncStart,
+  syncStop,
 } from './tauri';
 
 // Mock the Tauri dialog plugin (dynamic import inside tauri.ts).
@@ -13,6 +23,11 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   save: vi.fn(),
 }));
 
+// Mock the Tauri core `invoke` (dynamic import inside tauri.ts).
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}));
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 async function getTauriDialogMock() {
@@ -20,6 +35,11 @@ async function getTauriDialogMock() {
     open: ReturnType<typeof vi.fn>;
     save: ReturnType<typeof vi.fn>;
   };
+}
+
+async function getInvokeMock() {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke as unknown as ReturnType<typeof vi.fn>;
 }
 
 function setTauriContext(active: boolean) {
@@ -169,5 +189,147 @@ describe('saveFileDialog', () => {
     save.mockResolvedValue(null);
 
     expect(await saveFileDialog('note.md')).toBeNull();
+  });
+});
+
+// ── sync wrappers ────────────────────────────────────────────────────────────
+
+describe('sync wrappers', () => {
+  describe('in Tauri context (invoke arg mapping)', () => {
+    beforeEach(() => setTauriContext(true));
+
+    it('syncAddRemote calls invoke with snake_case command and camelCase args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue('remote-id');
+
+      const result = await syncAddRemote('http://x', 'obh_k');
+
+      expect(invoke).toHaveBeenCalledWith('sync_add_remote', {
+        baseUrl: 'http://x',
+        apiKey: 'obh_k',
+      });
+      expect(result).toBe('remote-id');
+    });
+
+    it('syncMapVault calls invoke with snake_case command and camelCase args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue(undefined);
+
+      await syncMapVault('r', 'l', 'rv');
+
+      expect(invoke).toHaveBeenCalledWith('sync_map_vault', {
+        remoteId: 'r',
+        localVaultId: 'l',
+        remoteVaultId: 'rv',
+      });
+    });
+
+    it('syncListRemoteVaults calls invoke with snake_case command and camelCase args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue([]);
+
+      await syncListRemoteVaults('r');
+
+      expect(invoke).toHaveBeenCalledWith('sync_list_remote_vaults', {
+        remoteId: 'r',
+      });
+    });
+
+    it('syncCreateRemoteVault calls invoke with snake_case command and camelCase args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue({ id: 'v1', name: 'n' });
+
+      await syncCreateRemoteVault('r', 'n');
+
+      expect(invoke).toHaveBeenCalledWith('sync_create_remote_vault', {
+        remoteId: 'r',
+        name: 'n',
+      });
+    });
+
+    it('syncRemoveRemote calls invoke with snake_case command and camelCase args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue(undefined);
+
+      await syncRemoveRemote('r');
+
+      expect(invoke).toHaveBeenCalledWith('sync_remove_remote', {
+        remoteId: 'r',
+      });
+    });
+
+    it('syncUnmapVault calls invoke with snake_case command and camelCase args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue(undefined);
+
+      await syncUnmapVault('r', 'l');
+
+      expect(invoke).toHaveBeenCalledWith('sync_unmap_vault', {
+        remoteId: 'r',
+        localVaultId: 'l',
+      });
+    });
+
+    it('syncListRemotes calls invoke with no args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue([]);
+
+      await syncListRemotes();
+
+      expect(invoke).toHaveBeenCalledWith('sync_list_remotes');
+    });
+
+    it('syncStatus calls invoke with no args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue([]);
+
+      await syncStatus();
+
+      expect(invoke).toHaveBeenCalledWith('sync_status');
+    });
+
+    it('syncStart calls invoke with no args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue(undefined);
+
+      await syncStart();
+
+      expect(invoke).toHaveBeenCalledWith('sync_start');
+    });
+
+    it('syncStop calls invoke with no args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue(undefined);
+
+      await syncStop();
+
+      expect(invoke).toHaveBeenCalledWith('sync_stop');
+    });
+  });
+
+  describe('in browser context (no Tauri)', () => {
+    it('syncStatus resolves to an empty array', async () => {
+      expect(await syncStatus()).toEqual([]);
+    });
+
+    it('syncStop resolves as a no-op', async () => {
+      await expect(syncStop()).resolves.toBeUndefined();
+    });
+
+    it('syncAddRemote rejects', async () => {
+      await expect(syncAddRemote('http://x', 'k')).rejects.toThrow();
+    });
+
+    it('syncMapVault rejects', async () => {
+      await expect(syncMapVault('r', 'l', 'rv')).rejects.toThrow();
+    });
+
+    it('syncListRemotes rejects', async () => {
+      await expect(syncListRemotes()).rejects.toThrow();
+    });
+
+    it('syncStart rejects', async () => {
+      await expect(syncStart()).rejects.toThrow();
+    });
   });
 });

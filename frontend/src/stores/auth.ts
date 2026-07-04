@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import { apiLogin, apiRefreshToken, apiLogout, apiMe, apiChangePassword, apiVerifyTotpLogin } from '@/api/client';
+import { apiLogin, apiRefreshToken, apiLogout, apiMe, apiChangePassword, apiVerifyTotpLogin, apiOidcCallback } from '@/api/client';
 import type { LoginResponse, AuthenticatedUserProfile } from '@/api/types';
 
 const ACCESS_TOKEN_KEY = 'obsidian_access_token';
@@ -44,6 +44,16 @@ export const useAuthStore = defineStore('auth', () => {
 
     async function login(username: string, password: string) {
         const resp = await apiLogin(username, password);
+        _applyTokens(resp);
+        if (resp.totp_required) {
+            profile.value = null;
+            return;
+        }
+        await loadProfile(true);
+    }
+
+    async function loginWithOidc(code: string, state: string) {
+        const resp = await apiOidcCallback(code, state);
         _applyTokens(resp);
         if (resp.totp_required) {
             profile.value = null;
@@ -136,6 +146,7 @@ export const useAuthStore = defineStore('auth', () => {
         isAdmin,
         mustChangePassword,
         login,
+        loginWithOidc,
         completeTotpLogin,
         refresh,
         logout,

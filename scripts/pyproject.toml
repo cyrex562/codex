@@ -1,0 +1,21 @@
+# Dependency manifest for the Librarium build/deploy CLI (scripts/librarium.py).
+# The script is run directly (not installed as a package), so this only declares
+# its runtime dependencies. Works with pip, uv, and Poetry 2.x.
+#
+#   pip:    python -m pip install -r requirements.txt      (from this dir)
+#   uv:     uv pip install -r requirements.txt
+#   poetry: poetry install                                 (from this dir)
+
+[project]
+name = "librarium-tools"
+version = "0.1.0"
+description = "Build, deploy, and manage the Librarium server and desktop app."
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.1",
+    "rich>=13.0",
+]
+
+[tool.poetry]
+# Manage the environment/dependencies only; there is no package to build.
+package-mode = false

@@ -701,6 +701,46 @@ pub enum FileChangeType {
     Renamed { from: String, to: String },
 }
 
+/// A single row from a vault's change log, enriched for sync clients.
+///
+/// Unlike [`FileChangeEvent`], this carries the per-vault monotonic `seq` and
+/// the `content_hash`, which together let a client catch up and reconcile
+/// without a clock-dependent timestamp or re-reading every file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangeLogEntry {
+    pub seq: i64,
+    pub path: String,
+    pub event_type: FileChangeType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+    pub timestamp_ms: i64,
+}
+
+/// A page of change-log entries plus the current tip of the log.
+///
+/// `head_seq` is the highest `seq` currently assigned for the vault, so a client
+/// knows how far to advance its cursor even when the page is empty.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangesPage {
+    pub events: Vec<ChangeLogEntry>,
+    pub head_seq: i64,
+}
+
+/// One entry of a vault's full content manifest: a path with its content hash
+/// and cheap filesystem metadata. Used for the initial reconcile and periodic
+/// drift repair.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileManifestEntry {
+    pub path: String,
+    pub content_hash: String,
+    pub size: u64,
+    pub mtime_ms: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserPreferences {
     pub theme: String,

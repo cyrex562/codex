@@ -86,6 +86,17 @@ struct FileChangeLogRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct ChangeLogSeqRow {
+    seq: i64,
+    path: String,
+    event_type: String,
+    old_path: Option<String>,
+    content_hash: Option<String>,
+    etag: Option<String>,
+    timestamp: i64,
+}
+
+#[derive(sqlx::FromRow)]
 struct MlUndoReceiptRow {
     receipt_id: String,
     vault_id: String,
@@ -453,6 +464,74 @@ impl Database {
             r#"
             CREATE INDEX IF NOT EXISTS idx_file_change_log_vault_timestamp
             ON file_change_log(vault_id, timestamp)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Sync hardening: a per-vault monotonic sequence number and a content
+        // hash on each change-log row. `seq` gives clock-independent catch-up
+        // ordering (mtime timestamps are coarse and differ across machines);
+        // `content_hash` lets a client reconcile without re-reading every file.
+        // These ALTERs follow the existing swallow-duplicate-column migration
+        // pattern used elsewhere in this function.
+        let _ = sqlx::query("ALTER TABLE file_change_log ADD COLUMN seq INTEGER")
+            .execute(&self.pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE file_change_log ADD COLUMN content_hash TEXT")
+            .execute(&self.pool)
+            .await;
+
+        // Backfill `seq` for any legacy rows that predate the column, assigning
+        // a dense per-vault order from the autoincrement `id`. Rows already
+        // carrying a seq are left untouched, so this is idempotent.
+        sqlx::query(
+            r#"
+            UPDATE file_change_log
+            SET seq = (
+                SELECT COUNT(*)
+                FROM file_change_log AS earlier
+                WHERE earlier.vault_id = file_change_log.vault_id
+                  AND earlier.id <= file_change_log.id
+            )
+            WHERE seq IS NULL
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_file_change_log_vault_seq
+            ON file_change_log(vault_id, seq)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Per-vault sequence counter. `next_seq` holds the value to assign to
+        // the next change-log row for that vault. Updated transactionally in
+        // `log_file_change` so concurrent API and watcher writes never collide.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS vault_change_seq (
+                vault_id TEXT PRIMARY KEY NOT NULL,
+                next_seq INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Seed the counter from any backfilled rows so new writes continue the
+        // sequence rather than restarting at 1 and colliding with old rows.
+        sqlx::query(
+            r#"
+            INSERT INTO vault_change_seq (vault_id, next_seq)
+            SELECT vault_id, MAX(seq) + 1 FROM file_change_log
+            WHERE seq IS NOT NULL
+            GROUP BY vault_id
+            ON CONFLICT(vault_id) DO NOTHING
             "#,
         )
         .execute(&self.pool)
@@ -2266,30 +2345,97 @@ impl Database {
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
+    /// Append a change-log row, assigning a per-vault monotonic `seq`.
+    ///
+    /// Returns `Ok(Some(seq))` for the row that was written, or `Ok(None)` when
+    /// the change was a no-op and skipped (see the de-dup guard below).
+    ///
+    /// The seq bump and insert run in one transaction so that concurrent callers
+    /// — the HTTP mutation handlers and the filesystem watcher — never assign the
+    /// same seq or reorder relative to each other.
+    ///
+    /// De-dup guard: if the most recent row for `(vault_id, path)` already
+    /// carries the same `content_hash` for a create/modify event, the write is
+    /// skipped. This makes it safe for both an API handler and the watcher to log
+    /// the same physical write; whichever runs second observes an identical hash
+    /// and does nothing, which is the primary defense against double-logging.
     pub async fn log_file_change(
         &self,
         vault_id: &str,
         path: &str,
         event_type: &str,
+        content_hash: Option<&str>,
         etag: Option<&str>,
         old_path: Option<&str>,
         retention_days: u64,
-    ) -> AppResult<()> {
+    ) -> AppResult<Option<i64>> {
         let now_ms = Utc::now().timestamp_millis();
+
+        let mut tx = self.pool.begin().await?;
+
+        // De-dup guard against the API-handler-vs-watcher double log:
+        //  - a create/modify whose content hash matches the latest create/modify
+        //    for this path is a no-op, and
+        //  - a delete when the path's latest row is already a delete is redundant.
+        // Renames always log. This is scoped to the immediately-preceding row so
+        // a create→delete→create sequence still records every transition.
+        if matches!(event_type, "created" | "modified" | "deleted") {
+            let latest: Option<(String, Option<String>)> = sqlx::query_as(
+                r#"
+                SELECT event_type, content_hash
+                FROM file_change_log
+                WHERE vault_id = ? AND path = ?
+                ORDER BY seq DESC
+                LIMIT 1
+                "#,
+            )
+            .bind(vault_id)
+            .bind(path)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            if let Some((last_event, last_hash)) = latest {
+                let redundant_write = matches!(event_type, "created" | "modified")
+                    && matches!(last_event.as_str(), "created" | "modified")
+                    && content_hash.is_some()
+                    && last_hash.as_deref() == content_hash;
+                let redundant_delete = event_type == "deleted" && last_event == "deleted";
+                if redundant_write || redundant_delete {
+                    tx.commit().await?;
+                    return Ok(None);
+                }
+            }
+        }
+
+        // Atomically claim the next seq for this vault.
+        let seq: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO vault_change_seq (vault_id, next_seq)
+            VALUES (?, 2)
+            ON CONFLICT(vault_id) DO UPDATE SET next_seq = next_seq + 1
+            RETURNING next_seq - 1
+            "#,
+        )
+        .bind(vault_id)
+        .fetch_one(&mut *tx)
+        .await?;
 
         sqlx::query(
             r#"
-            INSERT INTO file_change_log (vault_id, path, event_type, etag, old_path, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO file_change_log
+                (vault_id, path, event_type, content_hash, etag, old_path, timestamp, seq)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(vault_id)
         .bind(path)
         .bind(event_type)
+        .bind(content_hash)
         .bind(etag)
         .bind(old_path)
         .bind(now_ms)
-        .execute(&self.pool)
+        .bind(seq)
+        .execute(&mut *tx)
         .await?;
 
         if retention_days > 0 {
@@ -2298,11 +2444,12 @@ impl Database {
 
             sqlx::query("DELETE FROM file_change_log WHERE timestamp < ?")
                 .bind(cutoff)
-                .execute(&self.pool)
+                .execute(&mut *tx)
                 .await?;
         }
 
-        Ok(())
+        tx.commit().await?;
+        Ok(Some(seq))
     }
 
     pub async fn get_file_changes_since(
@@ -2353,6 +2500,73 @@ impl Database {
         }
 
         Ok(events)
+    }
+
+    /// The highest `seq` currently assigned for a vault (0 if the log is empty).
+    ///
+    /// Read from `vault_change_seq` (authoritative even if the log was pruned)
+    /// so a client's cursor can advance past deleted rows.
+    pub async fn get_vault_head_seq(&self, vault_id: &str) -> AppResult<i64> {
+        let next: Option<i64> =
+            sqlx::query_scalar("SELECT next_seq FROM vault_change_seq WHERE vault_id = ?")
+                .bind(vault_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(next.map(|n| n - 1).unwrap_or(0))
+    }
+
+    /// Fetch change-log entries with `seq > since_seq`, ordered by `seq`, along
+    /// with the current head seq. This is the clock-independent catch-up path
+    /// used by sync clients.
+    pub async fn get_file_changes_since_seq(
+        &self,
+        vault_id: &str,
+        since_seq: i64,
+    ) -> AppResult<crate::models::ChangesPage> {
+        let rows = sqlx::query_as::<_, ChangeLogSeqRow>(
+            r#"
+            SELECT seq, path, event_type, old_path, content_hash, etag, timestamp
+            FROM file_change_log
+            WHERE vault_id = ? AND seq > ?
+            ORDER BY seq ASC
+            "#,
+        )
+        .bind(vault_id)
+        .bind(since_seq)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut events = Vec::with_capacity(rows.len());
+        for row in rows {
+            let event_type = match row.event_type.as_str() {
+                "created" => crate::models::FileChangeType::Created,
+                "modified" => crate::models::FileChangeType::Modified,
+                "deleted" => crate::models::FileChangeType::Deleted,
+                "renamed" => crate::models::FileChangeType::Renamed {
+                    from: row.old_path.clone().unwrap_or_default(),
+                    to: row.path.clone(),
+                },
+                other => {
+                    return Err(AppError::InternalError(format!(
+                        "Unknown file change event type in DB: {other}"
+                    )));
+                }
+            };
+
+            events.push(crate::models::ChangeLogEntry {
+                seq: row.seq,
+                path: row.path,
+                event_type,
+                old_path: row.old_path,
+                content_hash: row.content_hash,
+                etag: row.etag,
+                timestamp_ms: row.timestamp,
+            });
+        }
+
+        let head_seq = self.get_vault_head_seq(vault_id).await?;
+
+        Ok(crate::models::ChangesPage { events, head_seq })
     }
 
     // ── User deactivation / deletion ────────────────────────────────────

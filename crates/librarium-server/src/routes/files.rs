@@ -178,10 +178,6 @@ fn get_mime_type(file_path: &str) -> &'static str {
     }
 }
 
-#[derive(serde::Deserialize)]
-struct FileChangesQuery {
-    since: Option<i64>,
-}
 
 #[derive(serde::Deserialize)]
 struct SyncFileRequest {
@@ -211,19 +207,23 @@ struct FileMetadataResponse {
     frontmatter_keys: Vec<String>,
 }
 
-#[get("/api/vaults/{vault_id}/changes")]
-async fn get_file_changes(
+// NOTE: `GET /api/vaults/{vault_id}/changes` is served by
+// `vaults::get_vault_changes`, which supports both the legacy `?since=<ms>`
+// cursor and the sync engine's `?since_seq=` cursor. A duplicate handler that
+// previously lived here has been removed to end the route collision.
+
+/// Return the full content manifest for a vault: every syncable file with its
+/// content hash, size, and mtime. Used by the sync engine for the initial
+/// reconcile and periodic drift repair.
+#[get("/api/vaults/{vault_id}/manifest")]
+async fn get_vault_manifest(
     state: web::Data<AppState>,
     vault_id: web::Path<String>,
-    query: web::Query<FileChangesQuery>,
 ) -> AppResult<HttpResponse> {
     let vault_id = vault_id.into_inner();
-    state.db.get_vault(&vault_id).await?;
-
-    let since = query.since.unwrap_or(0).max(0);
-    let events = state.db.get_file_changes_since(&vault_id, since).await?;
-
-    Ok(HttpResponse::Ok().json(events))
+    let vault = state.db.get_vault(&vault_id).await?;
+    let manifest = FileService::build_manifest(&vault.path)?;
+    Ok(HttpResponse::Ok().json(manifest))
 }
 
 #[post("/api/vaults/{vault_id}/sync")]
@@ -346,6 +346,7 @@ async fn create_file(
 
     let content = FileService::create_file(&vault.path, &req.path, req.content.as_deref())?;
     let etag = build_file_etag(&content);
+    let content_hash = FileService::content_hash(&vault.path, &req.path)?;
 
     state
         .db
@@ -353,6 +354,7 @@ async fn create_file(
             &vault_id,
             &req.path,
             "created",
+            content_hash.as_deref(),
             Some(etag.as_str()),
             None,
             state.change_log_retention_days,
@@ -412,6 +414,7 @@ async fn update_file(
         req.frontmatter.as_ref(),
     )?;
     let etag = build_file_etag(&content);
+    let content_hash = FileService::content_hash(&vault.path, &file_path)?;
 
     state
         .db
@@ -419,6 +422,7 @@ async fn update_file(
             &vault_id,
             &file_path,
             "modified",
+            content_hash.as_deref(),
             Some(etag.as_str()),
             None,
             state.change_log_retention_days,
@@ -453,6 +457,7 @@ async fn delete_file(
             &vault_id,
             &file_path,
             "deleted",
+            None,
             None,
             None,
             state.change_log_retention_days,
@@ -512,6 +517,7 @@ async fn rename_file(
     };
 
     let new_path = FileService::rename(&vault.path, from, to, strategy)?;
+    let content_hash = FileService::content_hash(&vault.path, &new_path)?;
 
     state
         .db
@@ -519,6 +525,7 @@ async fn rename_file(
             &vault_id,
             &new_path,
             "renamed",
+            content_hash.as_deref(),
             None,
             Some(from),
             state.change_log_retention_days,
@@ -825,6 +832,7 @@ async fn get_daily_note(
             let header = format!("# {}\n\n", req.date);
             let content = FileService::create_file(&vault.path, &file_path, Some(&header))?;
             let etag = build_file_etag(&content);
+            let content_hash = FileService::content_hash(&vault.path, &file_path)?;
 
             state
                 .db
@@ -832,6 +840,7 @@ async fn get_daily_note(
                     &vault_id,
                     &file_path,
                     "created",
+                    content_hash.as_deref(),
                     Some(etag.as_str()),
                     None,
                     state.change_log_retention_days,
@@ -1609,7 +1618,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.app_data(web::PayloadConfig::new(RAW_UPLOAD_PAYLOAD_LIMIT))
         .service(get_file_tree)
         .service(get_file_tree_html)
-        .service(get_file_changes)
+        .service(get_vault_manifest)
         .service(sync_files)
         .service(get_file_metadata)
         .service(read_file)

@@ -126,6 +126,7 @@ criterion = "0.5"
 awc = "3.5"
 actix-test = "0.1"
 actix-http = "3.11"
+librarium-client = { path = "../librarium-client" }
 
 [[bench]]
 name = "markdown_benchmarks"

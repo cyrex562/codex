@@ -127,7 +127,8 @@ async fn verify_etag_optimistic_locking_and_change_log() {
     let changes_resp = test::call_service(&app, changes_req).await;
     assert!(changes_resp.status().is_success());
     let changes_body: serde_json::Value = test::read_body_json(changes_resp).await;
-    let changes_array = changes_body.as_array().unwrap();
+    // The legacy `?since=` cursor returns the `{ "events": [...] }` envelope.
+    let changes_array = changes_body["events"].as_array().unwrap();
     assert_eq!(changes_array.len(), 1);
     assert_eq!(changes_array[0]["event_type"].as_str().unwrap(), "created");
 
