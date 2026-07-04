@@ -218,6 +218,20 @@ fn run_setup(app: &mut tauri::App) -> anyhow::Result<()> {
         AppConfig::write_default(&paths)?
     };
 
+    // LIB-112: Persist a stable JWT secret on first launch (or whenever the
+    // config has an empty one). The server generates an *ephemeral* random secret
+    // at startup when jwt_secret is blank — meaning every restart invalidates all
+    // previous tokens and forces the user to log in again. Writing a stable secret
+    // here before the server starts ensures tokens survive across restarts.
+    if config.auth.jwt_secret.trim().is_empty() {
+        let secret = format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4()).replace('-', "");
+        config.auth.jwt_secret = secret;
+        config
+            .write_to_file(&config_file)
+            .context("Failed to persist JWT secret to config.toml")?;
+        info!("Generated and persisted a stable JWT secret to config.toml");
+    }
+
     // LIB-080: the desktop app should stay signed in essentially indefinitely.
     // Enforce a long refresh-token lifetime floor (10 years) so the embedded
     // session does not expire between launches, regardless of whether a

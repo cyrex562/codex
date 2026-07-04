@@ -623,6 +623,15 @@ impl AppConfig {
         Ok(config)
     }
 
+    /// Serialize this config and write it to `path`, overwriting any existing file.
+    pub fn write_to_file(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        let content = toml::to_string_pretty(self)
+            .context("Failed to serialize config to TOML")?;
+        std::fs::write(path, &content)
+            .with_context(|| format!("Failed to write config to {}", path.display()))?;
+        Ok(())
+    }
+
     /// Build a default `AppConfig` with paths derived from the provided
     /// `LibrariumPaths`. No reference to the working directory.
     pub fn default_for_dirs(paths: &LibrariumPaths) -> Self {
