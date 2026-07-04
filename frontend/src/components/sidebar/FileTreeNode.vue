@@ -3,8 +3,8 @@
     <!-- Row -->
     <div
       class="file-tree-node d-flex align-center"
-      :class="{ active: isActive, hovering: hovering, selected: isSelected, 'import-drop-target': importDragOver, 'move-drop-target': moveDragOver }"
-      :style="{ paddingLeft: depth * 16 + 8 + 'px' }"
+      :class="{ active: isActive, hovering: hovering, selected: isSelected, 'import-drop-target': importDragOver, 'move-drop-target': moveDragOver, 'dir-row': node.is_directory }"
+      :style="rowStyle"
       draggable="true"
       @click="onClick"
       @contextmenu.prevent="onContextMenu"
@@ -224,6 +224,29 @@ const sortedChildren = computed(() => {
     const cmp = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
     return sort.value === 'asc' ? cmp : -cmp;
   });
+});
+
+// Height of a single row, in px — must match `.file-tree-node { min-height }`.
+// Used to stack sticky folder headers so nested folders cascade below their
+// parent instead of overlapping at the top.
+const ROW_HEIGHT = 28;
+
+// Directory rows are `position: sticky` so the open folder (and its ancestors)
+// stay pinned at the top of the scroll viewport while their contents scroll —
+// preserving context and keeping the folder right-clickable for rename/delete.
+// Each level sticks `depth * ROW_HEIGHT` from the top so ancestors stack.
+const rowStyle = computed(() => {
+  const base: Record<string, string | number> = {
+    paddingLeft: props.depth * 16 + 8 + 'px',
+  };
+  if (props.node.is_directory) {
+    base.position = 'sticky';
+    base.top = props.depth * ROW_HEIGHT + 'px';
+    // Shallower folders sit above deeper ones during the hand-off as a parent
+    // scrolls away, and all folders sit above (non-sticky) file rows.
+    base.zIndex = Math.max(1, 40 - props.depth);
+  }
+  return base;
 });
 
 const isActive = computed(() => {
@@ -703,6 +726,32 @@ async function exportAsTar() {
 .file-tree-node.move-drop-target {
   background: rgba(var(--v-theme-primary), 0.18);
   outline: 1px solid rgba(var(--v-theme-primary), 0.75);
+}
+
+/* Sticky folder headers: directory rows are pinned at the top of the viewport
+   while their contents scroll (see `rowStyle` in the script). They need an
+   OPAQUE background so scrolling rows don't show through when pinned. The base
+   is the sidebar surface; state highlights are re-expressed via color-mix so
+   they stay opaque (the rgba versions above would let content bleed through).
+   The higher-specificity `.dir-row.<state>` selectors override the shared
+   translucent state rules for folders only — files keep the rgba versions. */
+.file-tree-node.dir-row {
+  background-color: rgb(var(--v-theme-surface));
+}
+.file-tree-node.dir-row.hovering {
+  background: color-mix(in srgb, rgb(var(--v-theme-surface-bright)) 60%, rgb(var(--v-theme-surface)));
+}
+.file-tree-node.dir-row.active {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 18%, rgb(var(--v-theme-surface)));
+}
+.file-tree-node.dir-row.selected {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 14%, rgb(var(--v-theme-surface)));
+}
+.file-tree-node.dir-row.import-drop-target {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, rgb(var(--v-theme-surface)));
+}
+.file-tree-node.dir-row.move-drop-target {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 18%, rgb(var(--v-theme-surface)));
 }
 .node-name {
   overflow: hidden;
