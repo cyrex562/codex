@@ -33,3 +33,5 @@ target
 
 # Runtime/test-generated server data (tantivy indices, sqlite DBs, etc.)
 /crates/librarium-server/data/
+# Runtime search indices written by a locally-run server (default ./data/indices)
+/data/indices/
