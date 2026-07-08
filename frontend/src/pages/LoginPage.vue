@@ -1,6 +1,7 @@
 <template>
   <v-container class="fill-height d-flex align-center justify-center">
-    <v-card min-width="360" max-width="420">
+    <!-- width 100% + max-width (not min-width) so the card shrinks on phones -->
+    <v-card width="100%" max-width="420">
       <v-card-title class="text-center pa-6">
         <v-icon icon="mdi-notebook-outline" size="40" color="primary" />
         <div class="mt-2 text-h6">Librarium</div>

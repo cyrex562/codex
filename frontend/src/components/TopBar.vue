@@ -4,18 +4,30 @@
     flat
     style="background: rgb(var(--v-theme-surface)); border-bottom: 1px solid rgb(var(--v-theme-border));"
   >
+    <!-- Mobile: hamburger opens the overlay sidebar -->
+    <v-btn
+      v-if="isMobile"
+      icon="mdi-menu"
+      size="small"
+      class="ml-1"
+      title="Open sidebar"
+      data-testid="topbar-menu-btn"
+      @click="emit('toggle-sidebar')"
+    />
+
     <v-app-bar-title class="text-caption font-weight-medium" style="color: rgb(var(--v-theme-on-background));">
       {{ vaultsStore.getActive()?.name ?? 'Librarium' }}
     </v-app-bar-title>
 
+    <!-- Status chips: full text on desktop, icon-only on mobile -->
     <div class="d-flex align-center ga-2 mr-2">
       <v-chip size="x-small" :color="wsConnected ? 'success' : 'warning'" variant="tonal">
-        <v-icon start :icon="wsConnected ? 'mdi-lan-connect' : 'mdi-lan-disconnect'" />
-        {{ wsConnected ? 'Connected' : 'Offline' }}
+        <v-icon :start="!isMobile" :icon="wsConnected ? 'mdi-lan-connect' : 'mdi-lan-disconnect'" />
+        <template v-if="!isMobile">{{ wsConnected ? 'Connected' : 'Offline' }}</template>
       </v-chip>
       <v-chip size="x-small" :color="dirtyCount > 0 ? 'warning' : 'success'" variant="tonal">
-        <v-icon start :icon="dirtyCount > 0 ? 'mdi-content-save-alert-outline' : 'mdi-content-save-check-outline'" />
-        {{ dirtyCount > 0 ? `${dirtyCount} unsaved` : 'Saved' }}
+        <v-icon :start="!isMobile" :icon="dirtyCount > 0 ? 'mdi-content-save-alert-outline' : 'mdi-content-save-check-outline'" />
+        <template v-if="!isMobile">{{ dirtyCount > 0 ? `${dirtyCount} unsaved` : 'Saved' }}</template>
       </v-chip>
     </div>
 
@@ -29,30 +41,33 @@
         :disabled="!hasActiveVault"
         @click="emit('open-search')"
       />
-      <v-btn
-        icon="mdi-puzzle-outline"
-        size="small"
-        density="compact"
-        title="Plugins"
-        data-testid="topbar-plugins-btn"
-        @click="emit('open-plugins')"
-      />
-      <v-btn
-        icon="mdi-help-circle-outline"
-        size="small"
-        density="compact"
-        title="Theme"
-        data-testid="topbar-theme-btn"
-        @click="toggleTheme"
-      />
-      <v-btn
-        icon="mdi-cog"
-        size="small"
-        density="compact"
-        title="Settings"
-        data-testid="topbar-settings-btn"
-        @click="showSettings = true"
-      />
+      <!-- Desktop-only quick buttons; on mobile these live in the account menu -->
+      <template v-if="!isMobile">
+        <v-btn
+          icon="mdi-puzzle-outline"
+          size="small"
+          density="compact"
+          title="Plugins"
+          data-testid="topbar-plugins-btn"
+          @click="emit('open-plugins')"
+        />
+        <v-btn
+          icon="mdi-help-circle-outline"
+          size="small"
+          density="compact"
+          title="Theme"
+          data-testid="topbar-theme-btn"
+          @click="toggleTheme"
+        />
+        <v-btn
+          icon="mdi-cog"
+          size="small"
+          density="compact"
+          title="Settings"
+          data-testid="topbar-settings-btn"
+          @click="showSettings = true"
+        />
+      </template>
 
       <v-menu>
         <template #activator="{ props }">
@@ -60,14 +75,37 @@
             v-bind="props"
             size="small"
             variant="text"
-            prepend-icon="mdi-account-circle-outline"
+            :icon="isMobile ? 'mdi-account-circle-outline' : undefined"
+            :prepend-icon="isMobile ? undefined : 'mdi-account-circle-outline'"
             data-testid="topbar-user-menu-btn"
           >
-            {{ username }}
+            <template v-if="!isMobile">{{ username }}</template>
+            <v-icon v-else icon="mdi-account-circle-outline" />
           </v-btn>
         </template>
 
         <v-list density="compact" min-width="220">
+          <template v-if="isMobile">
+            <v-list-item
+              prepend-icon="mdi-puzzle-outline"
+              title="Plugins"
+              data-testid="user-menu-plugins"
+              @click="emit('open-plugins')"
+            />
+            <v-list-item
+              prepend-icon="mdi-theme-light-dark"
+              title="Toggle theme"
+              data-testid="user-menu-theme"
+              @click="toggleTheme"
+            />
+            <v-list-item
+              prepend-icon="mdi-cog"
+              title="Settings"
+              data-testid="user-menu-settings"
+              @click="showSettings = true"
+            />
+            <v-divider class="my-1" />
+          </template>
           <v-list-item
             prepend-icon="mdi-lock-reset"
             title="Change password"
@@ -104,11 +142,13 @@ import { usePreferencesStore } from '@/stores/preferences';
 import { useTabsStore } from '@/stores/tabs';
 import { useAuthStore } from '@/stores/auth';
 import { useWebSocket } from '@/composables/useWebSocket';
+import { useMobile } from '@/composables/useMobile';
 import SettingsModal from '@/components/settings/SettingsModal.vue';
 
 const emit = defineEmits<{
   'open-search': [];
   'open-plugins': [];
+  'toggle-sidebar': [];
 }>();
 
 const vaultsStore = useVaultsStore();
@@ -117,6 +157,7 @@ const tabsStore = useTabsStore();
 const authStore = useAuthStore();
 const router = useRouter();
 const { connected, disconnect } = useWebSocket(false);
+const { isMobile } = useMobile();
 
 const dirtyCount = computed(() => tabsStore.dirtyTabs.length);
 const wsConnected = computed(() => connected.value);

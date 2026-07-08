@@ -107,7 +107,7 @@
         <v-list-item v-if="node.is_directory" title="New folder" prepend-icon="mdi-folder-plus-outline" data-testid="ctx-new-folder" @click="newFolderInFolder" />
         <v-divider v-if="node.is_directory" />
         <v-list-item v-if="!node.is_directory" title="Open" prepend-icon="mdi-file-outline" data-testid="ctx-open-file" @click="openFile" />
-        <v-list-item v-if="!node.is_directory" title="Open in split" prepend-icon="mdi-flip-horizontal" data-testid="ctx-open-split" @click="openSplit" />
+        <v-list-item v-if="!node.is_directory && !isMobile" title="Open in split" prepend-icon="mdi-flip-horizontal" data-testid="ctx-open-split" @click="openSplit" />
         <v-list-item title="Set custom icon" prepend-icon="mdi-emoticon-outline" data-testid="ctx-set-icon" @click="setCustomIcon" />
         <v-list-item title="Clear custom icon" prepend-icon="mdi-emoticon-remove-outline" data-testid="ctx-clear-icon" @click="clearCustomIcon" />
         <v-list-item v-if="node.is_directory" title="Set folder color" prepend-icon="mdi-palette-outline" data-testid="ctx-set-color" @click="openColorDialog" />
@@ -179,6 +179,7 @@ import { useFilesStore } from '@/stores/files';
 import { useTabsStore } from '@/stores/tabs';
 import { useUiStore } from '@/stores/ui';
 import { usePreferencesStore } from '@/stores/preferences';
+import { useMobile } from '@/composables/useMobile';
 import { createImportCandidatesFromDataTransfer, hasFilePayload, parentDirectory } from '@/utils/importEntries';
 import { getFileTreeDragItems, getFileTreeDragPayload, setFileTreeDragPayload } from '@/utils/fileTreeDrag';
 
@@ -189,6 +190,7 @@ const filesStore = useFilesStore();
 const tabsStore = useTabsStore();
 const uiStore = useUiStore();
 const prefsStore = usePreferencesStore();
+const { isMobile } = useMobile();
 
 const expanded = ref(false); // start collapsed
 const hovering = ref(false);

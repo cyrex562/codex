@@ -138,6 +138,21 @@ const btn = { size: 'small', variant: 'text' as const, density: 'compact' as con
   min-height: 40px;
 }
 
+/* Narrow screens: keep the toolbar a single horizontally-scrollable row
+   instead of wrapping to 2-3 rows — vertical space is precious on a phone,
+   especially with the on-screen keyboard up. */
+@media (max-width: 959px) {
+  .editor-toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; /* Firefox */
+  }
+  .editor-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 .toolbar-sep {
   width: 1px;
   height: 20px;
