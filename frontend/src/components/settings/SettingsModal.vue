@@ -1,5 +1,10 @@
 <template>
-  <v-dialog :model-value="modelValue" max-width="720" @update:model-value="emit('update:modelValue', $event)">
+  <v-dialog
+    :model-value="modelValue"
+    max-width="720"
+    :fullscreen="isMobile"
+    @update:model-value="emit('update:modelValue', $event)"
+  >
     <v-card>
       <v-card-title class="d-flex align-center">
         Settings
@@ -14,7 +19,7 @@
 
       <v-divider />
 
-      <v-card-text style="max-height: 600px; overflow-y: auto;">
+      <v-card-text :style="isMobile ? 'overflow-y: auto;' : 'max-height: 600px; overflow-y: auto;'">
         <v-tabs-window v-model="activeTab">
           <v-tabs-window-item value="api-keys">
             <ApiKeysPanel />
@@ -38,6 +43,9 @@ import { ref } from 'vue';
 import ApiKeysPanel from '@/components/settings/ApiKeysPanel.vue';
 import SyncSettingsPanel from '@/components/settings/sync/SyncSettingsPanel.vue';
 import { isTauri } from '@/utils/tauri';
+import { useMobile } from '@/composables/useMobile';
+
+const { isMobile } = useMobile();
 
 const props = defineProps<{ modelValue: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [v: boolean] }>();

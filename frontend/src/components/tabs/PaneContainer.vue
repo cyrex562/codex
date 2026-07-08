@@ -3,7 +3,7 @@
     class="pane-container"
     :class="tabsStore.splitOrientation === 'vertical' ? 'flex-column' : 'flex-row'"
   >
-    <template v-for="(pane, idx) in tabsStore.panes" :key="pane.id">
+    <template v-for="(pane, idx) in visiblePanes" :key="pane.id">
       <div
         class="pane-wrapper"
         :style="{ flex: pane.flex }"
@@ -13,9 +13,9 @@
         <EditorPane :pane-id="pane.id" />
       </div>
 
-      <!-- Resizer between panes -->
+      <!-- Resizer between panes (desktop only; mobile shows a single pane) -->
       <div
-        v-if="idx < tabsStore.panes.length - 1"
+        v-if="idx < visiblePanes.length - 1"
         class="pane-resizer"
         :class="tabsStore.splitOrientation === 'vertical' ? 'resizer-h' : 'resizer-v'"
         @mousedown="startPaneResize($event, idx)"
@@ -25,11 +25,21 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useTabsStore } from '@/stores/tabs';
+import { useMobile } from '@/composables/useMobile';
+import { selectVisiblePanes } from '@/utils/panes';
 import TabBar from './TabBar.vue';
 import EditorPane from '@/components/editor/EditorPane.vue';
 
 const tabsStore = useTabsStore();
+const { isMobile } = useMobile();
+
+// Split panes don't fit on a phone: mobile shows only the active pane.
+// Policy lives in selectVisiblePanes (pure, unit-tested).
+const visiblePanes = computed(() =>
+  selectVisiblePanes(tabsStore.panes, tabsStore.activePaneId, isMobile.value),
+);
 
 // ── Pane resize ───────────────────────────────────────────────────────────────
 let resizing = false;

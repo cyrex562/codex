@@ -1,5 +1,10 @@
 <template>
-  <v-dialog :model-value="modelValue" max-width="640" @update:model-value="emit('update:modelValue', $event)">
+  <v-dialog
+    :model-value="modelValue"
+    max-width="640"
+    :fullscreen="isMobile"
+    @update:model-value="emit('update:modelValue', $event)"
+  >
     <v-card>
       <v-card-title class="d-flex align-center">
         Search
@@ -45,7 +50,10 @@ import { ref, watch } from 'vue';
 import { useVaultsStore } from '@/stores/vaults';
 import { useTabsStore } from '@/stores/tabs';
 import { apiSearch } from '@/api/client';
+import { useMobile } from '@/composables/useMobile';
 import type { SearchResult } from '@/api/types';
+
+const { isMobile } = useMobile();
 
 const props = defineProps<{ modelValue: boolean; initialQuery?: string }>();
 const emit = defineEmits<{ 'update:modelValue': [v: boolean] }>();

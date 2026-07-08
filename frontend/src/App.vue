@@ -83,6 +83,31 @@ body {
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 }
 
+/* ── Touch ergonomics ─────────────────────────────────────────────────────────
+   On coarse-pointer (touch) devices, grow the primary interactive rows to a
+   comfortable tap size. Scoped to pointer type, not viewport width, so a
+   touch laptop benefits too and a narrow desktop window is unaffected. */
+@media (pointer: coarse) {
+  /* File tree rows (28px mouse target → 42px touch target). Long-press on a
+     row fires `contextmenu` on Android, opening the existing context menu. */
+  .file-tree-node {
+    min-height: 42px !important;
+  }
+  /* Sidebar panel headers and list rows */
+  .v-list-item--density-compact.v-list-item--one-line {
+    min-height: 40px;
+  }
+  /* Editor toolbar buttons: compact-density v-btns are ~28px; pad them up */
+  .editor-toolbar .v-btn--density-compact {
+    --v-btn-height: 36px;
+    width: 36px;
+  }
+  /* Tab close buttons and other x-small icon buttons */
+  .v-btn--size-x-small.v-btn--icon {
+    --v-btn-height: 32px;
+  }
+}
+
 .text-secondary {
   color: var(--text-secondary) !important;
 }

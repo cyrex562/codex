@@ -1,8 +1,12 @@
 <template>
+  <!-- Sidebar. Desktop: permanent, resizable. Mobile: overlay (temporary) that
+       slides over the content, opened from the TopBar hamburger and auto-closed
+       when a note is opened. -->
   <v-navigation-drawer
     v-model="sidebarOpen"
-    :width="sidebarWidth"
-    permanent
+    :width="isMobile ? mobileSidebarWidth : sidebarWidth"
+    :permanent="!isMobile"
+    :temporary="isMobile"
     rail-width="0"
     style="background: rgb(var(--v-theme-surface)); border-right: 1px solid rgb(var(--v-theme-border));"
   >
@@ -69,14 +73,18 @@
     </div>
   </v-navigation-drawer>
 
-  <TopBar @open-search="searchOpen = true" @open-plugins="pluginsOpen = true" />
+  <TopBar
+    @open-search="searchOpen = true"
+    @open-plugins="pluginsOpen = true"
+    @toggle-sidebar="sidebarOpen = !sidebarOpen"
+  />
 
   <v-main style="height: 100vh; display: flex; flex-direction: column; overflow: hidden;">
     <PaneContainer />
     <StatusBar />
   </v-main>
 
-  <div class="sidebar-resize-handle" @mousedown="startResize" />
+  <div v-if="!isMobile" class="sidebar-resize-handle" @mousedown="startResize" />
 
   <VaultManager v-model="vaultManagerOpen" />
   <SearchModal v-model="searchOpen" :initial-query="searchInitialQuery" />
@@ -100,6 +108,7 @@ import { useUiStore } from '@/stores/ui';
 import { usePreferencesStore } from '@/stores/preferences';
 import { useEditorStore } from '@/stores/editor';
 import { useWebSocket } from '@/composables/useWebSocket';
+import { useMobile } from '@/composables/useMobile';
 import type { EditorMode, PersistedEditorMode } from '@/api/types';
 
 import TopBar from '@/components/TopBar.vue';
@@ -134,8 +143,35 @@ const editorStore = useEditorStore();
 const authStore = useAuthStore();
 const router = useRouter();
 
-const sidebarOpen = ref(true);
+const { isMobile } = useMobile();
+
+// Desktop starts with the sidebar visible; mobile starts on the content with
+// the drawer closed (opened via the TopBar hamburger).
+const sidebarOpen = ref(!isMobile.value);
 const sidebarWidth = ref(280);
+// Overlay drawer width on phones: near-full-width but always leaving a strip
+// of the underlying page visible as a "tap outside to close" affordance.
+const mobileSidebarWidth = computed(() =>
+  Math.min(320, Math.round(window.innerWidth * 0.85)),
+);
+
+// Crossing the breakpoint resets the drawer to that mode's natural state
+// (desktop: shown; mobile: hidden) so e.g. rotating a tablet never strands
+// the user with a full-screen drawer they didn't open.
+watch(isMobile, (mobile) => {
+  sidebarOpen.value = !mobile;
+});
+
+// On mobile, opening a note closes the drawer so the content is immediately
+// visible (the drawer overlays the editor).
+watch(
+  () => tabsStore.activeTab?.filePath,
+  (path, prev) => {
+    if (isMobile.value && path && path !== prev) {
+      sidebarOpen.value = false;
+    }
+  },
+);
 
 const activeMdContent = computed<string | null>(() => {
   const tab = tabsStore.activeTab;
