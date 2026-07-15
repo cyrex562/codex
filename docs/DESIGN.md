@@ -217,9 +217,14 @@ is a breaking change** — keep them in lockstep.
 The desktop app is a thin native shell, not a reimplementation:
 
 1. Resolves platform paths (portable / installed) and loads-or-creates `config.toml`.
-2. Enforces a long-lived refresh token so the single local user stays signed in
-   across restarts (loopback-only, HttpOnly cookies — see
-   `archive/PLAN-desktop-sync-multiuser.md` for the original rationale).
+2. Enforces a long-lived, non-rotating refresh token so the single local user
+   stays signed in across restarts. On desktop the refresh token is persisted in
+   the WebView's `localStorage` and sent in the `/api/auth/refresh` body (the
+   HttpOnly cookie is still set but treated as best-effort — the Tauri WebView
+   does not reliably persist HttpOnly cookies across app restarts). This is
+   loopback-only, single-user, no third-party content, so `localStorage` is an
+   acceptable durable store. See `archive/PLAN-desktop-sync-multiuser.md` for
+   the original rationale.
 3. Sets up a system tray (starting / running / error states).
 4. Registers the `librarium://` deep-link handler.
 5. Spawns `librarium-server` bound to `127.0.0.1`.
@@ -260,8 +265,12 @@ and an `example-plugin` template. Plugin development is documented in
   Code). Optional **TOTP 2FA** and **API keys** (prefix-indexed, optionally
   expiring, revocable).
 - **Tokens:** short-lived JWT access tokens + longer-lived refresh tokens; the
-  router guard keeps the access token fresh. Desktop uses a long-lived refresh
-  token by design.
+  router guard keeps the access token fresh. Browser deployments hold the
+  refresh token in an HttpOnly, SameSite=Strict cookie (JS cannot read it).
+  Desktop uses a long-lived (10-year floor, non-rotating) refresh token stored
+  in the WebView's `localStorage` and sent in the refresh request body — the
+  Tauri WebView doesn't reliably persist HttpOnly cookies across restarts, and
+  loopback-only + no third-party content makes `localStorage` acceptable.
 - **Authorization:** per-vault roles — **Owner / Editor / Viewer** — plus groups,
   sharing, and invitations, enforced in `middleware/auth.rs`.
 - **Filesystem safety:** every path is canonicalized and checked for containment

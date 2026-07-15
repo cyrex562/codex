@@ -574,13 +574,24 @@ export const apiLogin = (username: string, password: string): Promise<LoginRespo
         body: JSON.stringify({ username, password }),
     });
 
-// The refresh token now travels in an HttpOnly cookie set by the server, so we
-// send no body — the browser attaches the cookie automatically (same-origin).
-export const apiRefreshToken = (): Promise<LoginResponse> =>
-    request('/api/auth/refresh', { method: 'POST' });
+// Browser build: the refresh token travels in the HttpOnly cookie, so `token`
+// is null and we send an empty body — the browser attaches the cookie for us.
+// Desktop (Tauri) build: the WebView doesn't persist the cookie reliably across
+// restarts, so we pass the persisted token in the body; the server accepts
+// either (see backend `refresh_token_from`).
+export const apiRefreshToken = (token?: string | null): Promise<LoginResponse> =>
+    request('/api/auth/refresh', {
+        method: 'POST',
+        ...(token ? { body: JSON.stringify({ refresh_token: token }) } : {}),
+    });
 
-export const apiLogout = (): Promise<void> =>
-    request('/api/auth/logout', { method: 'POST' });
+// Passing `token` scopes the revoke to THIS session; omitting it triggers the
+// server's "logout everywhere" contract for the user.
+export const apiLogout = (token?: string | null): Promise<void> =>
+    request('/api/auth/logout', {
+        method: 'POST',
+        ...(token ? { body: JSON.stringify({ refresh_token: token }) } : {}),
+    });
 
 export const apiVerifyTotpLogin = (code: string): Promise<TotpLoginVerifyResponse> =>
     request('/api/auth/totp/login-verify', {
