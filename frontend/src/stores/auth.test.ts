@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 
 vi.mock('@/api/client', () => ({
@@ -10,6 +10,10 @@ vi.mock('@/api/client', () => ({
     apiVerifyTotpLogin: vi.fn(),
 }));
 
+vi.mock('@/utils/tauri', () => ({
+    isTauri: vi.fn(() => false),
+}));
+
 import {
     apiLogin,
     apiLogout,
@@ -18,6 +22,7 @@ import {
     apiChangePassword,
     apiVerifyTotpLogin,
 } from '@/api/client';
+import { isTauri } from '@/utils/tauri';
 import { useAuthStore } from './auth';
 
 const mockProfile = {
@@ -149,6 +154,75 @@ describe('useAuthStore', () => {
 
         expect(apiRefreshToken).toHaveBeenCalledTimes(1);
         expect(store.accessToken).toBe('fresh-access');
+    });
+
+    describe('desktop (Tauri) refresh-token persistence', () => {
+        beforeEach(() => {
+            vi.mocked(isTauri).mockReturnValue(true);
+        });
+        afterEach(() => {
+            vi.mocked(isTauri).mockReturnValue(false);
+        });
+
+        it('persists the refresh token to localStorage and sends it in the refresh body', async () => {
+            vi.mocked(apiLogin).mockResolvedValueOnce({
+                access_token: 'desktop-access',
+                refresh_token: 'desktop-refresh',
+                expires_in: 3600,
+                totp_required: false,
+            });
+            vi.mocked(apiMe).mockResolvedValueOnce({ ...mockProfile });
+
+            const store = useAuthStore();
+            await store.login('alice', 'password');
+
+            expect(localStorage.getItem('obsidian_refresh_token')).toBe('desktop-refresh');
+
+            vi.mocked(apiRefreshToken).mockResolvedValueOnce({
+                access_token: 'refreshed-access',
+                refresh_token: 'desktop-refresh',
+                expires_in: 3600,
+                totp_required: false,
+            });
+            await store.refresh();
+
+            // Desktop path passes the persisted token in the body so the request
+            // doesn't depend on the (unreliable) WebView cookie.
+            expect(apiRefreshToken).toHaveBeenCalledWith('desktop-refresh');
+        });
+
+        it('restores the refresh token from localStorage on store re-init (app restart)', async () => {
+            localStorage.setItem('obsidian_access_token', 'stale-access');
+            localStorage.setItem('obsidian_refresh_token', 'persisted-refresh');
+            localStorage.setItem('obsidian_token_expires_at', '1');
+
+            vi.mocked(apiRefreshToken).mockResolvedValueOnce({
+                access_token: 'fresh-access',
+                refresh_token: 'persisted-refresh',
+                expires_in: 3600,
+                totp_required: false,
+            });
+
+            const store = useAuthStore();
+            expect(store.refreshToken).toBe('persisted-refresh');
+
+            await store.ensureFresh();
+
+            expect(apiRefreshToken).toHaveBeenCalledWith('persisted-refresh');
+            expect(store.accessToken).toBe('fresh-access');
+        });
+
+        it('clears the persisted refresh token on logout and passes it to the server', async () => {
+            localStorage.setItem('obsidian_access_token', 'a');
+            localStorage.setItem('obsidian_refresh_token', 'to-revoke');
+
+            const store = useAuthStore();
+            await store.logout();
+
+            expect(apiLogout).toHaveBeenCalledWith('to-revoke');
+            expect(localStorage.getItem('obsidian_refresh_token')).toBeNull();
+            expect(store.refreshToken).toBeNull();
+        });
     });
 
     it('flagPendingTotp sets pendingTotp and persists to localStorage without clearing the token', () => {
