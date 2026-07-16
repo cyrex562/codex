@@ -218,6 +218,24 @@ fn run_setup(app: &mut tauri::App) -> anyhow::Result<()> {
         AppConfig::write_default(&paths)?
     };
 
+    // Auth is required on desktop: the frontend's router guard calls
+    // `/api/auth/me` on every navigation and treats a 401 as "log the user
+    // out". When `auth.enabled = false` (the base default), the middleware
+    // skips injecting an `AuthenticatedUser`, so `/me` always returns 401 —
+    // the user gets redirected to /login on every route change and, if no
+    // users exist in the DB yet, cannot possibly log in. All the other desktop
+    // session-persistence work (LIB-080 long TTL, LIB-089 non-rotating
+    // refresh, LIB-112 stable JWT secret, the localStorage refresh-token fix)
+    // is predicated on this being enabled. Force it on and persist so the
+    // config file reflects what the server is actually running.
+    if !config.auth.enabled {
+        config.auth.enabled = true;
+        config
+            .write_to_file(&config_file)
+            .context("Failed to persist auth.enabled=true to config.toml")?;
+        info!("Enabled authentication for the desktop build (persisted to config.toml)");
+    }
+
     // LIB-112: Persist a stable JWT secret on first launch (or whenever the
     // config has an empty one). The server generates an *ephemeral* random secret
     // at startup when jwt_secret is blank — meaning every restart invalidates all
