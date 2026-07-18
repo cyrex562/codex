@@ -9,6 +9,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useUndoRedo } from '@/composables/useUndoRedo';
 import { renderFormattedMarkdown, highlightPlainText } from '@/utils/highlight';
 import { applyMarkdownToolbarCommand, type MarkdownToolbarCommand } from '@/editor/markdown-toolbar';
+import { applyListIndent } from '@/editor/list-indent';
 import { ApiError } from '@/api/client';
 import { useVaultsStore } from '@/stores/vaults';
 import { useFilesStore } from '@/stores/files';
@@ -476,40 +477,35 @@ function handleListEnter(e: KeyboardEvent): boolean {
 function handleListTab(e: KeyboardEvent, dedent: boolean): boolean {
   if (!jar || !editorEl.value) return false;
   const content = jar.toString() as string;
-  const { start, end } = getSelectionOffsets(editorEl.value);
-  const { lineStart, lineEnd, line } = getLineRange(content, start);
+  const { start } = getSelectionOffsets(editorEl.value);
 
-  if (!line.match(/^\s*([-*+]|(\d+|[a-zA-Z]|[ivxlcdmIVXLCDM]+)\.) /)) return false;
+  // Delegates all list-parsing, indent, and renumbering to the pure helper.
+  // Returns null when the caret isn't on a list item, or when Shift-Tab would
+  // outdent past column 0 — in either case we absorb the event without a
+  // mutation (matching the previous handler's contract).
+  const result = applyListIndent(content, start, dedent ? 'outdent' : 'indent');
+  if (result === null) {
+    // Not a list line → let the default Tab behavior run.
+    const line = getLineRange(content, start).line;
+    if (!line.match(/^\s*([-*+]|(\d+|[a-zA-Z]|[ivxlcdmIVXLCDM]+)\.) /)) {
+      return false;
+    }
+    // Was a list line but at top level on Shift-Tab → absorb without changes.
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    return true;
+  }
 
   e.preventDefault();
   e.stopImmediatePropagation();
 
-  let newLine: string;
-  let delta: number;
-
-  if (dedent) {
-    if (line.startsWith('  ')) {
-      newLine = line.slice(2);
-      delta = -2;
-    } else {
-      return true; // at top level — absorb event
-    }
-  } else {
-    newLine = '  ' + line;
-    delta = 2;
-  }
-
-  const newContent = content.slice(0, lineStart) + newLine + content.slice(lineEnd);
-  const newStart = Math.max(lineStart, start + delta);
-  const newEnd = Math.max(lineStart, end + delta);
-
-  recordChange(newContent);
+  recordChange(result.content);
   ignoreNextChange = true;
-  jar.updateCode(newContent);
-  emit('update', newContent);
+  jar.updateCode(result.content);
+  emit('update', result.content);
   requestAnimationFrame(() => {
     if (!editorEl.value) return;
-    setSelectionOffsets(editorEl.value, newStart, newEnd);
+    setSelectionOffsets(editorEl.value, result.cursor, result.cursor);
     editorEl.value.focus();
   });
   return true;
