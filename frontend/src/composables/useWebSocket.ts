@@ -5,6 +5,7 @@ import { useTabsStore } from '@/stores/tabs';
 import { useVaultsStore } from '@/stores/vaults';
 import { useAuthStore } from '@/stores/auth';
 import { useIndexingStore } from '@/stores/indexing';
+import { useFavoritesStore } from '@/stores/favorites';
 import { useNotifications } from '@/composables/useNotifications';
 
 const WS_BASE_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws`;
@@ -66,7 +67,9 @@ function handleMessage(event: MessageEvent) {
             const vaultsStore = useVaultsStore();
 
             if (typeof msg.event_type === 'object' && 'renamed' in msg.event_type) {
-                tabsStore.remapTabPaths(msg.event_type.renamed.from, msg.event_type.renamed.to);
+                const { from, to } = msg.event_type.renamed;
+                tabsStore.remapTabPaths(from, to);
+                useFavoritesStore().remapPath(msg.vault_id, from, to);
             }
 
             // Refresh the file tree for the affected vault (debounced so a bulk

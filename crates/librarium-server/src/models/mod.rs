@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 
 pub mod bookmarks;
+pub mod favorites;
 pub mod graph;
 pub mod plugin;
 pub mod schema;

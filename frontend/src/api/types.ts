@@ -243,6 +243,13 @@ export interface Bookmark {
     created_at: string;
 }
 
+export interface Favorite {
+    user_id: string;
+    vault_id: string;
+    path: string;
+    created_at: string;
+}
+
 export interface TagEntry {
     tag: string;
     count: number;

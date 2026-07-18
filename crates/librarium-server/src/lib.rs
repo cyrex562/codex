@@ -744,6 +744,7 @@ pub async fn run(config: AppConfig) -> anyhow::Result<()> {
             .configure(routes::entities::configure)
             .configure(routes::plugins::configure)
             .configure(routes::bookmarks::configure)
+            .configure(routes::favorites::configure)
             .configure(routes::tags::configure)
             .configure(routes::api_keys::configure)
             .configure(routes::totp::configure)

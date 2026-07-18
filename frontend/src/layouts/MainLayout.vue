@@ -66,6 +66,7 @@
           <NeighboringFilesPanel :file-path="tabsStore.activeTab?.filePath ?? ''" />
         </template>
 
+        <FavoritesPanel />
         <BookmarksPanel />
         <RecentFilesPanel />
         <TagsPanel @search="openTagSearch" />
@@ -123,6 +124,7 @@ import NeighboringFilesPanel from '@/components/sidebar/NeighboringFilesPanel.vu
 import EntityRelationsPanel from '@/components/sidebar/EntityRelationsPanel.vue';
 import TagsPanel from '@/components/sidebar/TagsPanel.vue';
 import BookmarksPanel from '@/components/sidebar/BookmarksPanel.vue';
+import FavoritesPanel from '@/components/sidebar/FavoritesPanel.vue';
 import PaneContainer from '@/components/tabs/PaneContainer.vue';
 import StatusBar from '@/components/StatusBar.vue';
 import VaultManager from '@/components/modals/VaultManager.vue';
