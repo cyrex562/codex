@@ -709,6 +709,9 @@ export interface Tab {
     paneId: string;
     fileType: FileType;
     frontmatter?: Record<string, unknown>;
+    /** Pinned tabs sort ahead of unpinned tabs in their pane, render in a
+     *  compact form, and are skipped by close-others / close-all-in-pane. */
+    pinned?: boolean;
 }
 
 export interface Pane {
