@@ -3,6 +3,7 @@ pub mod api_keys;
 pub mod auth;
 pub mod bookmarks;
 pub mod entities;
+pub mod favorites;
 pub mod files;
 pub mod groups;
 pub mod health;

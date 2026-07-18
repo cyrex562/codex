@@ -25,6 +25,7 @@ import type {
     ChangePasswordRequest,
     ImportResultItem,
     Bookmark,
+    Favorite,
     TagEntry,
     BacklinkEntry,
     GenerateOutlineRequest,
@@ -679,6 +680,23 @@ export const apiCreateBookmark = (
 
 export const apiDeleteBookmark = (vaultId: string, bookmarkId: string): Promise<void> =>
     request(`/api/vaults/${vaultId}/bookmarks/${bookmarkId}`, { method: 'DELETE' });
+
+// ── Favorites ─────────────────────────────────────────────────────────────────
+
+export const apiListFavorites = (vaultId: string): Promise<Favorite[]> =>
+    request(`/api/vaults/${vaultId}/favorites`);
+
+export const apiAddFavorite = (vaultId: string, path: string): Promise<Favorite> =>
+    request(`/api/vaults/${vaultId}/favorites`, {
+        method: 'POST',
+        body: JSON.stringify({ path }),
+    });
+
+export const apiRemoveFavorite = (vaultId: string, path: string): Promise<void> =>
+    request(
+        `/api/vaults/${vaultId}/favorites?path=${encodeURIComponent(path)}`,
+        { method: 'DELETE' },
+    );
 
 // ── Tags ──────────────────────────────────────────────────────────────────────
 

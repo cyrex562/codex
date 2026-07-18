@@ -558,6 +558,31 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Favorites — per-user, per-vault starred notes. Separate from
+        // bookmarks (which are shared across users). Composite PK makes the
+        // toggle idempotent via INSERT OR IGNORE / DELETE.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS favorites (
+                user_id TEXT NOT NULL,
+                vault_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, vault_id, path),
+                FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_favorites_user_vault ON favorites(user_id, vault_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS ml_undo_receipts (
@@ -1208,6 +1233,82 @@ impl Database {
             .execute(&self.pool)
             .await
             .map_err(AppError::from)?;
+        Ok(())
+    }
+
+    // ── Favorites ────────────────────────────────────────────────────────────
+
+    pub async fn list_favorites(
+        &self,
+        user_id: &str,
+        vault_id: &str,
+    ) -> AppResult<Vec<crate::models::favorites::Favorite>> {
+        let rows = sqlx::query_as::<_, crate::models::favorites::Favorite>(
+            "SELECT user_id, vault_id, path, created_at
+             FROM favorites
+             WHERE user_id = ? AND vault_id = ?
+             ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .bind(vault_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+        Ok(rows)
+    }
+
+    /// Idempotent star. `INSERT OR IGNORE` keeps a double-toggle from ping-
+    /// ponging the row's `created_at`; the first star wins its timestamp.
+    /// Returns the persisted row for the caller to echo back.
+    pub async fn add_favorite(
+        &self,
+        user_id: &str,
+        vault_id: &str,
+        path: &str,
+    ) -> AppResult<crate::models::favorites::Favorite> {
+        let created_at = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT OR IGNORE INTO favorites (user_id, vault_id, path, created_at) VALUES (?, ?, ?, ?)"
+        )
+        .bind(user_id)
+        .bind(vault_id)
+        .bind(path)
+        .bind(&created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        // Re-read so the returned row reflects the actual persisted timestamp
+        // (which is older than `created_at` above if the star already existed).
+        let row = sqlx::query_as::<_, crate::models::favorites::Favorite>(
+            "SELECT user_id, vault_id, path, created_at
+             FROM favorites
+             WHERE user_id = ? AND vault_id = ? AND path = ?",
+        )
+        .bind(user_id)
+        .bind(vault_id)
+        .bind(path)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+        Ok(row)
+    }
+
+    pub async fn remove_favorite(
+        &self,
+        user_id: &str,
+        vault_id: &str,
+        path: &str,
+    ) -> AppResult<()> {
+        sqlx::query(
+            "DELETE FROM favorites WHERE user_id = ? AND vault_id = ? AND path = ?",
+        )
+        .bind(user_id)
+        .bind(vault_id)
+        .bind(path)
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::from)?;
         Ok(())
     }
 
