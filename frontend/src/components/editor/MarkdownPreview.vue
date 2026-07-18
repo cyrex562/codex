@@ -6,6 +6,7 @@
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import DOMPurify from 'dompurify';
 import { apiRenderMarkdownInVault, apiResolveWikiLink } from '@/api/client';
+import { openExternalUrl } from '@/utils/tauri';
 import { useTabsStore } from '@/stores/tabs';
 
 let mermaidReady = false;
@@ -168,10 +169,31 @@ async function onPreviewClick(event: MouseEvent) {
   }
 
   const href = anchor.getAttribute('href');
-  if (href && !href.startsWith('#') && !href.startsWith('http://') && !href.startsWith('https://')) {
+  if (!href) return;
+
+  // External URLs: route to the OS default handler. In a Tauri WebView, a
+  // plain click on an http/https anchor otherwise navigates the WebView
+  // itself away from the app shell — hence the explicit invoke through
+  // `openExternalUrl` (which uses `window.open` in a browser context).
+  if (isExternalUrl(href)) {
     event.preventDefault();
-    tabsStore.openTab(tabsStore.activePaneId, href, href.split('/').pop() ?? href);
+    event.stopPropagation();
+    void openExternalUrl(href);
+    return;
   }
+
+  // In-page fragment anchors let the browser handle scroll-to-target.
+  if (href.startsWith('#')) return;
+
+  // Anything else is treated as a relative path to a vault file.
+  event.preventDefault();
+  tabsStore.openTab(tabsStore.activePaneId, href, href.split('/').pop() ?? href);
+}
+
+// Kept in sync with the Rust-side scheme allow-list in
+// `crates/librarium-tauri/src/main.rs::is_allowed_external_url`.
+function isExternalUrl(href: string): boolean {
+  return /^(https?:|mailto:|tel:)/i.test(href);
 }
 </script>
 

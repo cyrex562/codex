@@ -53,6 +53,27 @@ async fn notify(app: AppHandle, title: String, body: String) -> Result<(), Strin
         .map_err(|e| e.to_string())
 }
 
+/// Open `url` in the OS default browser / handler.
+///
+/// The frontend routes clicks on external links (`http`, `https`, `mailto`,
+/// `tel`) in rendered markdown to this command so the WebView never navigates
+/// out of the app shell. Rejects unknown or unsafe schemes (e.g. `file://`,
+/// `javascript:`) so a malicious note can't ask the shell to open an
+/// arbitrary local target.
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !is_allowed_external_url(&url) {
+        return Err(format!("refusing to open URL with unsupported scheme: {url}"));
+    }
+    open::that_detached(&url).map_err(|e| format!("open failed: {e}"))
+}
+
+fn is_allowed_external_url(url: &str) -> bool {
+    ["http://", "https://", "mailto:", "tel:"]
+        .iter()
+        .any(|prefix| url.starts_with(prefix))
+}
+
 // ── Sync commands ───────────────────────────────────────────────────────────
 
 /// Register a remote server to sync with. Returns the generated remote id.
@@ -168,6 +189,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             open_directory_dialog,
             notify,
+            open_external_url,
             sync_add_remote,
             sync_map_vault,
             sync_list_remotes,
@@ -548,6 +570,43 @@ font-family:system-ui,sans-serif;color:#c00;padding:24px;text-align:center">\
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── open_external_url scheme allow-list ───────────────────────────────────
+
+    #[test]
+    fn allowed_url_schemes_pass_the_gate() {
+        for url in [
+            "http://example.com",
+            "https://example.com/path?q=1",
+            "mailto:alice@example.com",
+            "tel:+1-555-0100",
+        ] {
+            assert!(
+                is_allowed_external_url(url),
+                "expected {url} to be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn disallowed_url_schemes_are_rejected() {
+        // file:// would let a rendered note trigger a local-file open — the
+        // main reason we filter here rather than blindly forwarding to `open`.
+        for url in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "ftp://example.com",
+            "vbscript:msgbox",
+            "",
+            "example.com",
+        ] {
+            assert!(
+                !is_allowed_external_url(url),
+                "expected {url} to be rejected"
+            );
+        }
+    }
 
     #[test]
     fn classify_port_in_use_linux() {
