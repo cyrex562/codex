@@ -1,20 +1,38 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 
-vi.mock('@/api/client', () => ({
-    apiLogin: vi.fn(),
-    apiRefreshToken: vi.fn(),
-    apiLogout: vi.fn(),
-    apiMe: vi.fn(),
-    apiChangePassword: vi.fn(),
-    apiVerifyTotpLogin: vi.fn(),
-}));
+vi.mock('@/api/client', () => {
+    // Declared inside the factory because vi.mock is hoisted above module-level
+    // declarations; a top-level class reference here would ReferenceError.
+    class ApiError extends Error {
+        constructor(public status: number, message: string, public body?: unknown) {
+            super(message);
+            this.name = 'ApiError';
+        }
+    }
+    return {
+        ApiError: ApiError,
+        isSessionInvalid: (err: unknown) =>
+            err instanceof ApiError && err.status === 401,
+        apiLogin: vi.fn(),
+        apiRefreshToken: vi.fn(),
+        apiLogout: vi.fn(),
+        apiMe: vi.fn(),
+        apiChangePassword: vi.fn(),
+        apiVerifyTotpLogin: vi.fn(),
+        apiOidcCallback: vi.fn(),
+    };
+});
 
 vi.mock('@/utils/tauri', () => ({
     isTauri: vi.fn(() => false),
+    authTokenGet: vi.fn(async () => null),
+    authTokenSet: vi.fn(async () => undefined),
+    authTokenClear: vi.fn(async () => undefined),
 }));
 
 import {
+    ApiError,
     apiLogin,
     apiLogout,
     apiMe,
@@ -22,7 +40,7 @@ import {
     apiChangePassword,
     apiVerifyTotpLogin,
 } from '@/api/client';
-import { isTauri } from '@/utils/tauri';
+import { isTauri, authTokenGet, authTokenSet, authTokenClear } from '@/utils/tauri';
 import { useAuthStore } from './auth';
 
 const mockProfile = {
@@ -222,6 +240,127 @@ describe('useAuthStore', () => {
             expect(apiLogout).toHaveBeenCalledWith('to-revoke');
             expect(localStorage.getItem('obsidian_refresh_token')).toBeNull();
             expect(store.refreshToken).toBeNull();
+        });
+
+        // ── durable disk-backed fallback (Part 2) ───────────────────────────
+        //
+        // Regression coverage for the "WebView UserData wipe" scenario: a full
+        // reset of the WebView storage leaves localStorage empty, but a token
+        // written to {data_dir}/session.json by a previous session must still
+        // seed the store on the next boot so the user isn't kicked to /login.
+        it('mirrors the refresh token to the disk store on login', async () => {
+            vi.mocked(apiLogin).mockResolvedValueOnce({
+                access_token: 'a',
+                refresh_token: 'mirror-me',
+                expires_in: 3600,
+                totp_required: false,
+            });
+            vi.mocked(apiMe).mockResolvedValueOnce({ ...mockProfile });
+
+            const store = useAuthStore();
+            await store.login('alice', 'pw');
+            // Give the fire-and-forget mirror a tick to reach the mock.
+            await Promise.resolve();
+
+            expect(authTokenSet).toHaveBeenCalledWith('mirror-me');
+        });
+
+        it('restores the refresh token from disk when localStorage is empty', async () => {
+            vi.mocked(authTokenGet).mockResolvedValueOnce('from-disk');
+
+            const store = useAuthStore();
+            expect(store.refreshToken).toBeNull();
+
+            await store.bootstrapPersistence();
+
+            expect(authTokenGet).toHaveBeenCalledTimes(1);
+            expect(store.refreshToken).toBe('from-disk');
+            expect(localStorage.getItem('obsidian_refresh_token')).toBe('from-disk');
+        });
+
+        it('does not overwrite an existing localStorage refresh token from disk', async () => {
+            localStorage.setItem('obsidian_refresh_token', 'from-local-storage');
+            vi.mocked(authTokenGet).mockResolvedValueOnce('from-disk');
+
+            const store = useAuthStore();
+            await store.bootstrapPersistence();
+
+            // localStorage was already the source of truth — disk is ignored.
+            expect(authTokenGet).not.toHaveBeenCalled();
+            expect(store.refreshToken).toBe('from-local-storage');
+        });
+
+        it('wipes the disk store on logout', async () => {
+            localStorage.setItem('obsidian_access_token', 'a');
+            localStorage.setItem('obsidian_refresh_token', 'x');
+
+            const store = useAuthStore();
+            await store.logout();
+            await Promise.resolve();
+
+            expect(authTokenClear).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('bootstrapPersistence in browser mode', () => {
+        it('is a no-op in a browser context (never calls the disk store)', async () => {
+            const store = useAuthStore();
+            await store.bootstrapPersistence();
+            expect(authTokenGet).not.toHaveBeenCalled();
+        });
+    });
+
+    // ── refresh retry semantics ──────────────────────────────────────────────
+    // Regression coverage for the overnight-logout bug: a transient loopback
+    // failure during wake-from-sleep used to bubble out of refresh() and cause
+    // callers (useWebSocket / App.vue mount / router guard) to invoke logout()
+    // and wipe the session. refresh() now retries on non-401 errors and only
+    // fails fast when the server actually said the session is invalid.
+    describe('refresh() retry semantics', () => {
+        it('retries transient (non-401) failures and eventually succeeds', async () => {
+            localStorage.setItem('obsidian_access_token', 'stale');
+            localStorage.setItem('obsidian_token_expires_at', '1');
+
+            vi.mocked(apiRefreshToken)
+                .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+                .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+                .mockResolvedValueOnce({
+                    access_token: 'fresh-after-retry',
+                    refresh_token: 'unused',
+                    expires_in: 3600,
+                    totp_required: false,
+                });
+
+            const store = useAuthStore();
+            await store.refresh();
+
+            expect(apiRefreshToken).toHaveBeenCalledTimes(3);
+            expect(store.accessToken).toBe('fresh-after-retry');
+        });
+
+        it('bails immediately on a 401 (real session-invalid) without retrying', async () => {
+            localStorage.setItem('obsidian_access_token', 'stale');
+            localStorage.setItem('obsidian_token_expires_at', '1');
+
+            const err401 = new ApiError(401, 'Unauthorized');
+            vi.mocked(apiRefreshToken).mockRejectedValueOnce(err401);
+
+            const store = useAuthStore();
+            await expect(store.refresh()).rejects.toBe(err401);
+            expect(apiRefreshToken).toHaveBeenCalledTimes(1);
+        });
+
+        it('gives up after the retry budget and re-throws the transient error', async () => {
+            localStorage.setItem('obsidian_access_token', 'stale');
+            localStorage.setItem('obsidian_token_expires_at', '1');
+
+            const netErr = new TypeError('Failed to fetch');
+            vi.mocked(apiRefreshToken).mockRejectedValue(netErr);
+
+            const store = useAuthStore();
+            await expect(store.refresh()).rejects.toBe(netErr);
+            // 3 attempts total (initial + 2 retries).
+            expect(apiRefreshToken).toHaveBeenCalledTimes(3);
         });
     });
 

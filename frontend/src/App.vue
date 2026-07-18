@@ -7,6 +7,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { isSessionInvalid } from '@/api/client';
 import { usePreferencesStore } from '@/stores/preferences';
 import { useAuthStore } from '@/stores/auth';
 
@@ -31,13 +32,19 @@ onMounted(async () => {
     try {
       await authStore.ensureFresh();
       await authStore.loadProfile();
-    } catch {
-      await authStore.logout();
-      if (router.currentRoute.value.path !== '/login') {
-        await router.replace({
-          path: '/login',
-          query: { redirect: router.currentRoute.value.fullPath || '/' },
-        });
+    } catch (err) {
+      // Only kick to /login on a real 401. A transient loopback failure at
+      // boot must not wipe tokens; downstream flows will retry, and if the
+      // session really is dead the next authenticated request's 401 handler
+      // will clear state properly.
+      if (isSessionInvalid(err)) {
+        await authStore.logout();
+        if (router.currentRoute.value.path !== '/login') {
+          await router.replace({
+            path: '/login',
+            query: { redirect: router.currentRoute.value.fullPath || '/' },
+          });
+        }
       }
     }
   }

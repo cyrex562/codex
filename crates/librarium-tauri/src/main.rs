@@ -2,11 +2,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod paths;
+mod session_store;
 mod sync_bridge;
 
 use anyhow::Context;
 use librarium::config::AppConfig;
 use paths::{create_dirs, resolve_paths};
+use session_store::SessionStore;
 use sync_bridge::{RemoteDto, SyncHandle};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -137,6 +139,35 @@ async fn sync_unmap_vault(
         .map_err(|e| e.to_string())
 }
 
+// ── Desktop-durable refresh-token store ──────────────────────────────────────
+
+/// Read the persisted refresh token, if any.
+///
+/// The frontend calls this on boot when WebView localStorage is empty; a
+/// missing/empty file returns `None` so the caller falls through to /login.
+#[tauri::command]
+fn auth_token_get(store: tauri::State<'_, SessionStore>) -> Result<Option<String>, String> {
+    store.get().map_err(|e| e.to_string())
+}
+
+/// Mirror the current refresh token to disk. Called after every successful
+/// login/refresh so the disk copy stays in lockstep with WebView localStorage.
+#[tauri::command]
+fn auth_token_set(
+    store: tauri::State<'_, SessionStore>,
+    token: String,
+) -> Result<(), String> {
+    store.set(token).map_err(|e| e.to_string())
+}
+
+/// Wipe the disk copy on logout. Called from the auth store's `logout()`
+/// alongside the localStorage clear so a subsequent boot cannot restore a
+/// revoked token from the durable fallback.
+#[tauri::command]
+fn auth_token_clear(store: tauri::State<'_, SessionStore>) -> Result<(), String> {
+    store.clear().map_err(|e| e.to_string())
+}
+
 /// Per-vault sync status snapshots.
 #[tauri::command]
 async fn sync_status(
@@ -168,6 +199,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             open_directory_dialog,
             notify,
+            auth_token_get,
+            auth_token_set,
+            auth_token_clear,
             sync_add_remote,
             sync_map_vault,
             sync_list_remotes,
@@ -280,7 +314,13 @@ fn run_setup(app: &mut tauri::App) -> anyhow::Result<()> {
         poll_until_healthy_then_navigate(port, window, handle_for_poll, err_rx).await;
     });
 
-    // 9. Set up the background sync engine. Its state DB lives alongside the
+    // 9. Register the durable refresh-token store. The frontend queries this
+    //    on boot when its WebView localStorage is empty, so a wipe of the
+    //    WebView UserData folder does not force the user to log in again as
+    //    long as the portable/installed data_dir survives.
+    app.manage(SessionStore::new(paths.data_dir.clone()));
+
+    // 10. Set up the background sync engine. Its state DB lives alongside the
     //    metadata DB but is kept separate from it. The engine is started only
     //    once the embedded server is healthy, so local vault paths can be
     //    resolved from librarium.db.

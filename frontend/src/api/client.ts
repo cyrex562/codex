@@ -64,6 +64,14 @@ export class ApiError extends Error {
     }
 }
 
+// True only when the server told us the session is invalid (HTTP 401). Callers
+// use this to distinguish a real "logged out" state (clear tokens, go to /login)
+// from a transient failure (network hiccup on wake-from-sleep, brief loopback
+// unavailability) where the tokens are still good and we should just retry.
+export function isSessionInvalid(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+}
+
 function requestPath(url: string): string {
     return url.startsWith('http') ? new URL(url).pathname : url.split('?')[0];
 }

@@ -104,6 +104,64 @@ export const saveFileDialog = async (
   }
 };
 
+// ── Durable refresh-token store (desktop only) ─────────────────────────────
+//
+// A disk-backed shadow of the refresh token that lives in the app's data_dir
+// (`{data_dir}/session.json` — portable-mode aware). The WebView localStorage
+// copy is still the fast path; this one exists so a wipe of the WebView
+// UserData folder does not force a re-login when the data_dir is otherwise
+// intact. Every wrapper here is best-effort: any thrown error is swallowed
+// so a failing store never breaks the primary localStorage flow.
+
+/**
+ * Read the persisted refresh token from disk.
+ *
+ * Returns `null` in a browser context, when the file is absent, or on any
+ * IPC/read error (the caller then falls through to the localStorage value).
+ */
+export const authTokenGet = async (): Promise<string | null> => {
+  if (!isTauri()) return null;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const token = await invoke<string | null>('auth_token_get');
+    return token ?? null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Mirror the current refresh token to disk.
+ *
+ * Called after every successful login/refresh so the disk copy stays in
+ * lockstep with WebView localStorage. Silent no-op in a browser context.
+ */
+export const authTokenSet = async (token: string): Promise<void> => {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('auth_token_set', { token });
+  } catch {
+    // best-effort — localStorage remains the source of truth for this run
+  }
+};
+
+/**
+ * Wipe the disk-backed refresh token on logout.
+ *
+ * Called from `authStore.logout()` alongside the localStorage clear so a
+ * subsequent boot cannot restore a revoked token from the durable fallback.
+ */
+export const authTokenClear = async (): Promise<void> => {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('auth_token_clear');
+  } catch {
+    // best-effort
+  }
+};
+
 // ── Desktop sync API wrappers ───────────────────────────────────────────────
 
 /**

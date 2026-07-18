@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
+import { isSessionInvalid } from '@/api/client';
 import { useAuthStore } from '@/stores/auth';
 
 const router = createRouter({
@@ -38,9 +39,13 @@ router.beforeEach(async (to) => {
                 await auth.ensureFresh();
                 await auth.loadProfile();
                 return { path: '/' };
-            } catch {
-                await auth.logout();
-                return true;
+            } catch (err) {
+                if (isSessionInvalid(err)) {
+                    await auth.logout();
+                    return true;
+                }
+                // Transient — assume the tokens are still good and land on '/'.
+                return { path: '/' };
             }
         }
         return true;
@@ -63,9 +68,15 @@ router.beforeEach(async (to) => {
         }
 
         return true;
-    } catch {
-        await auth.logout();
-        return { path: '/login', query: { redirect: to.fullPath } };
+    } catch (err) {
+        // Only wipe state on a real 401. Transient failures let navigation
+        // through; the next authenticated request that actually reaches the
+        // server will drive either recovery or a proper 401-triggered logout.
+        if (isSessionInvalid(err)) {
+            await auth.logout();
+            return { path: '/login', query: { redirect: to.fullPath } };
+        }
+        return true;
     }
 });
 

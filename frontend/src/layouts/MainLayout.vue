@@ -99,7 +99,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { ApiError } from '@/api/client';
+import { ApiError, isSessionInvalid } from '@/api/client';
 import { useAuthStore } from '@/stores/auth';
 import { useVaultsStore } from '@/stores/vaults';
 import { useFilesStore } from '@/stores/files';
@@ -188,13 +188,18 @@ onMounted(async () => {
   try {
     await authStore.ensureFresh();
     await authStore.loadProfile();
-  } catch {
-    await authStore.logout();
-    await router.replace({
-      path: '/login',
-      query: { redirect: router.currentRoute.value.fullPath || '/' },
-    });
-    return;
+  } catch (err) {
+    // Only redirect to /login on a real 401. On transient network errors,
+    // continue mounting the layout — the user's tokens are still valid and
+    // subsequent requests will retry naturally.
+    if (isSessionInvalid(err)) {
+      await authStore.logout();
+      await router.replace({
+        path: '/login',
+        query: { redirect: router.currentRoute.value.fullPath || '/' },
+      });
+      return;
+    }
   }
 
   useWebSocket();

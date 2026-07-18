@@ -271,6 +271,26 @@ and an `example-plugin` template. Plugin development is documented in
   in the WebView's `localStorage` and sent in the refresh request body — the
   Tauri WebView doesn't reliably persist HttpOnly cookies across restarts, and
   loopback-only + no third-party content makes `localStorage` acceptable.
+- **Desktop token durability (two tiers):** the WebView `localStorage` is the
+  fast path (sync, always available at boot). It's shadowed by a disk-backed
+  copy at `{data_dir}/session.json`, managed by `librarium-tauri`'s
+  `session_store` module and exposed to the frontend via three IPC commands
+  (`auth_token_get`/`_set`/`_clear`). On boot, if `localStorage` is empty the
+  auth store restores from disk before the router evaluates its first guard.
+  This lets a wipe of the WebView UserData folder (uninstall/reinstall of the
+  shell, runtime reset) recover the session as long as the portable/installed
+  `data_dir` is intact. The write is atomic (temp + rename) and the file is
+  chmod 0600 on Unix; Windows relies on the default per-user ACL.
+- **Client "only clear on 401" contract:** the frontend calls `auth.logout()`
+  (which wipes both `localStorage` and the disk store) only when the server
+  positively signals an invalid session — i.e. `err instanceof ApiError &&
+  err.status === 401`, exposed as `isSessionInvalid(err)` in
+  `frontend/src/api/client.ts`. Transient failures (loopback hiccup on
+  wake-from-sleep, WebSocket reconnect race, GC pause) must not wipe tokens;
+  `auth.refresh()` retries such failures internally before propagating. This
+  is enforced across the four call sites that used to log the user out on any
+  thrown error: `useWebSocket.connect`, `App.vue` and `MainLayout.vue`
+  `onMounted`, and `router.beforeEach`.
 - **Authorization:** per-vault roles — **Owner / Editor / Viewer** — plus groups,
   sharing, and invitations, enforced in `middleware/auth.rs`.
 - **Filesystem safety:** every path is canonicalized and checked for containment
