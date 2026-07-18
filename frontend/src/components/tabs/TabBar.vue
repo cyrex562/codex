@@ -7,10 +7,21 @@
       v-for="tab in tabs"
       :key="tab.id"
       class="tab-item d-flex align-center"
-      :class="{ 'tab-active': tab.id === activeTabId }"
+      :class="{
+        'tab-active': tab.id === activeTabId,
+        'tab-drop-before': dropTargetId === tab.id && dropSide === 'left',
+        'tab-drop-after': dropTargetId === tab.id && dropSide === 'right',
+        'tab-dragging': draggingId === tab.id,
+      }"
+      draggable="true"
       @click="tabsStore.activateTab(tab.id)"
       @contextmenu.prevent="openTabMenu($event, tab.id)"
       @mousedown.middle.prevent="requestCloseTab(tab.id)"
+      @dragstart="onDragStart($event, tab.id)"
+      @dragover="onDragOver($event, tab.id)"
+      @dragleave="onDragLeave(tab.id)"
+      @drop="onDrop($event, tab.id)"
+      @dragend="onDragEnd"
     >
       <v-icon :icon="tabIcon(tab)" size="14" class="mr-1" />
       <span class="tab-title text-caption">{{ tab.fileName }}</span>
@@ -90,6 +101,16 @@ const tabMenuOpen = ref(false);
 const tabMenuX = ref(0);
 const tabMenuY = ref(0);
 const contextTabId = ref<string | null>(null);
+
+// Drag-to-reorder state. `draggingId` tracks which tab the user is dragging;
+// `dropTargetId` + `dropSide` drive the CSS class that renders the drop-target
+// indicator line. All three go back to null when the drag ends.
+const draggingId = ref<string | null>(null);
+const dropTargetId = ref<string | null>(null);
+const dropSide = ref<'left' | 'right'>('left');
+// Drag-payload MIME type — namespaced so the drop handler can distinguish an
+// intra-app tab drag from arbitrary text dragged in from elsewhere.
+const DRAG_MIME = 'application/x-librarium-tab-id';
 const contextTabIdsToRight = computed(() => (
   contextTabId.value ? tabsStore.tabIdsToRight(props.paneId, contextTabId.value) : []
 ));
@@ -141,6 +162,59 @@ function closeOtherTabs() {
 
 function closeAllTabsInPane() {
   requestCloseTabs(tabsStore.tabIdsInPane(props.paneId));
+}
+
+function onDragStart(event: DragEvent, tabId: string) {
+  if (!event.dataTransfer) return;
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData(DRAG_MIME, tabId);
+  draggingId.value = tabId;
+}
+
+function onDragOver(event: DragEvent, tabId: string) {
+  // Only accept drops that carry the tab MIME — reject text drags from outside.
+  if (!event.dataTransfer?.types.includes(DRAG_MIME)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  // Left half of the target → drop before; right half → drop after. This gives
+  // the user pixel-precise control over the resulting position and matches
+  // VS Code's tab drag behavior.
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const isLeft = event.clientX < rect.left + rect.width / 2;
+  dropTargetId.value = tabId;
+  dropSide.value = isLeft ? 'left' : 'right';
+}
+
+function onDragLeave(tabId: string) {
+  // Clear only if we're leaving the currently-highlighted target; a leave on a
+  // sibling could fire between two hover events without this guard.
+  if (dropTargetId.value === tabId) {
+    dropTargetId.value = null;
+  }
+}
+
+function onDrop(event: DragEvent, targetId: string) {
+  event.preventDefault();
+  const sourceId = event.dataTransfer?.getData(DRAG_MIME);
+  clearDragState();
+  if (!sourceId || sourceId === targetId) return;
+  const orderedIds = tabs.value.map((t) => t.id);
+  const targetIdx = orderedIds.indexOf(targetId);
+  if (targetIdx < 0) return;
+  // Convert "drop before/after target" to a destination index. Splice-out /
+  // splice-in in the store does the actual index normalization so we don't
+  // have to reason about the source position here.
+  const insertIdx = dropSide.value === 'left' ? targetIdx : targetIdx + 1;
+  tabsStore.moveTabInPane(props.paneId, sourceId, insertIdx);
+}
+
+function onDragEnd() {
+  clearDragState();
+}
+
+function clearDragState() {
+  draggingId.value = null;
+  dropTargetId.value = null;
 }
 
 function tabIcon(tab: Tab): string {
@@ -195,5 +269,31 @@ function tabIcon(tab: Tab): string {
 .tab-item:hover .tab-close-btn,
 .tab-item.tab-active .tab-close-btn {
   opacity: 1;
+}
+
+/* Drag-to-reorder visuals. The dragging tab dims itself; the drop target grows
+   a coloured indicator line on the side the drop will land on. */
+.tab-item {
+  position: relative;
+}
+.tab-item.tab-dragging {
+  opacity: 0.5;
+}
+.tab-item.tab-drop-before::before,
+.tab-item.tab-drop-after::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: rgb(var(--v-theme-primary));
+  border-radius: 1px;
+  pointer-events: none;
+}
+.tab-item.tab-drop-before::before {
+  left: -1px;
+}
+.tab-item.tab-drop-after::after {
+  right: -1px;
 }
 </style>
