@@ -12,7 +12,9 @@
         'tab-drop-before': dropTargetId === tab.id && dropSide === 'left',
         'tab-drop-after': dropTargetId === tab.id && dropSide === 'right',
         'tab-dragging': draggingId === tab.id,
+        'tab-pinned': tab.pinned,
       }"
+      :title="tab.pinned ? tab.fileName : undefined"
       draggable="true"
       @click="tabsStore.activateTab(tab.id)"
       @contextmenu.prevent="openTabMenu($event, tab.id)"
@@ -23,10 +25,18 @@
       @drop="onDrop($event, tab.id)"
       @dragend="onDragEnd"
     >
+      <v-icon
+        v-if="tab.pinned"
+        icon="mdi-pin"
+        size="12"
+        class="mr-1 tab-pin-glyph"
+        aria-label="Pinned"
+      />
       <v-icon :icon="tabIcon(tab)" size="14" class="mr-1" />
-      <span class="tab-title text-caption">{{ tab.fileName }}</span>
+      <span v-if="!tab.pinned" class="tab-title text-caption">{{ tab.fileName }}</span>
       <span v-if="tab.isDirty" class="tab-dirty ml-1">●</span>
       <v-btn
+        v-if="!tab.pinned"
         icon="mdi-close"
         size="x-small"
         density="compact"
@@ -60,6 +70,12 @@
 
     <v-menu v-model="tabMenuOpen" :style="{ top: tabMenuY + 'px', left: tabMenuX + 'px' }" style="position: fixed;">
       <v-list density="compact" min-width="180">
+        <v-list-item
+          :title="contextTabPinned ? 'Unpin tab' : 'Pin tab'"
+          :prepend-icon="contextTabPinned ? 'mdi-pin-off' : 'mdi-pin'"
+          @click="toggleContextTabPinned"
+        />
+        <v-divider />
         <v-list-item title="Close" prepend-icon="mdi-close" @click="closeContextTab" />
         <v-list-item
           title="Close to the right"
@@ -117,6 +133,10 @@ const contextTabIdsToRight = computed(() => (
 const contextOtherTabIds = computed(() => (
   contextTabId.value ? tabsStore.tabIdsExcept(props.paneId, contextTabId.value) : []
 ));
+const contextTabPinned = computed(() => {
+  if (!contextTabId.value) return false;
+  return !!tabsStore.tabs.get(contextTabId.value)?.pinned;
+});
 
 function requestCloseTab(tabId: string) {
   const tab = tabsStore.tabs.get(tabId);
@@ -150,6 +170,11 @@ function openTabMenu(event: MouseEvent, tabId: string) {
 function closeContextTab() {
   if (!contextTabId.value) return;
   requestCloseTab(contextTabId.value);
+}
+
+function toggleContextTabPinned() {
+  if (!contextTabId.value) return;
+  tabsStore.toggleTabPinned(contextTabId.value);
 }
 
 function closeTabsToRight() {
@@ -295,5 +320,15 @@ function tabIcon(tab: Tab): string {
 }
 .tab-item.tab-drop-after::after {
   right: -1px;
+}
+
+/* Pinned tabs render icon-only to save horizontal space; the file name lives
+   in the `title` attribute so hovering still reveals it. */
+.tab-item.tab-pinned {
+  max-width: none;
+  padding: 0 6px;
+}
+.tab-item.tab-pinned .tab-pin-glyph {
+  color: rgb(var(--v-theme-primary));
 }
 </style>

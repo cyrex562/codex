@@ -37,11 +37,17 @@ export const useTabsStore = defineStore('tabs', () => {
     });
 
     const tabsForPane = (paneId: string): Tab[] => {
-        const result: Tab[] = [];
+        // Two passes so pinned tabs sort ahead of unpinned tabs while insertion
+        // order is preserved within each group. `tabsInsertionForPane` is used
+        // by callers that don't want the pinned-first reordering (e.g. an
+        // internal iterator that only cares about pane membership).
+        const pinned: Tab[] = [];
+        const unpinned: Tab[] = [];
         tabs.value.forEach((tab) => {
-            if (tab.paneId === paneId) result.push(tab);
+            if (tab.paneId !== paneId) return;
+            (tab.pinned ? pinned : unpinned).push(tab);
         });
-        return result;
+        return [...pinned, ...unpinned];
     };
 
     const dirtyTabs = computed((): Tab[] => {
@@ -93,9 +99,18 @@ export const useTabsStore = defineStore('tabs', () => {
     }
 
     function closeAllTabs() {
-        tabs.value.clear();
+        // Preserve pinned tabs across a bulk close — the whole point of
+        // pinning is that they aren't casualties of "Close All".
+        const survivors = new Map<string, Tab>();
+        tabs.value.forEach((tab, id) => {
+            if (tab.pinned) survivors.set(id, tab);
+        });
+        tabs.value = survivors;
         panes.value.forEach((pane) => {
-            pane.activeTabId = null;
+            if (!pane.activeTabId || !survivors.has(pane.activeTabId)) {
+                const first = tabsForPane(pane.id)[0];
+                pane.activeTabId = first?.id ?? null;
+            }
         });
     }
 
@@ -103,21 +118,37 @@ export const useTabsStore = defineStore('tabs', () => {
         tabIds.forEach((tabId) => closeTab(tabId));
     }
 
+    // The three tabIds* helpers below feed the tab-bar context menu's
+    // Close-all-in-pane / Close-to-right / Close-others actions. Pinned tabs
+    // are excluded from all three — the user's mental model is that pinning a
+    // tab protects it from bulk-close operations; an explicit "Close" on the
+    // individual pinned tab still works.
     function tabIdsInPane(paneId: string): string[] {
-        return tabsForPane(paneId).map((tab) => tab.id);
+        return tabsForPane(paneId)
+            .filter((tab) => !tab.pinned)
+            .map((tab) => tab.id);
     }
 
     function tabIdsToRight(paneId: string, tabId: string): string[] {
         const paneTabs = tabsForPane(paneId);
         const index = paneTabs.findIndex((tab) => tab.id === tabId);
         if (index < 0) return [];
-        return paneTabs.slice(index + 1).map((tab) => tab.id);
+        return paneTabs
+            .slice(index + 1)
+            .filter((tab) => !tab.pinned)
+            .map((tab) => tab.id);
     }
 
     function tabIdsExcept(paneId: string, tabId: string): string[] {
         return tabsForPane(paneId)
-            .filter((tab) => tab.id !== tabId)
+            .filter((tab) => tab.id !== tabId && !tab.pinned)
             .map((tab) => tab.id);
+    }
+
+    function toggleTabPinned(tabId: string) {
+        const tab = tabs.value.get(tabId);
+        if (!tab) return;
+        tab.pinned = !tab.pinned;
     }
 
     function activateTab(tabId: string, paneId?: string) {
@@ -308,6 +339,7 @@ export const useTabsStore = defineStore('tabs', () => {
         tabIdsToRight,
         tabIdsExcept,
         activateTab,
+        toggleTabPinned,
         updateTabContent,
         markTabClean,
         updateTabFrontmatter,
