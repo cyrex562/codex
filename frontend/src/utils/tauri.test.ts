@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   isTauri,
   openDirectoryDialog,
+  openExternalUrl,
   openFileDialog,
   saveFileDialog,
   syncAddRemote,
@@ -331,5 +332,54 @@ describe('sync wrappers', () => {
     it('syncStart rejects', async () => {
       await expect(syncStart()).rejects.toThrow();
     });
+  });
+});
+
+// ── openExternalUrl (issue #31) ──────────────────────────────────────────────
+
+describe('openExternalUrl', () => {
+  it('invokes the open_external_url Tauri command with the given url', async () => {
+    setTauriContext(true);
+    const invoke = await getInvokeMock();
+    invoke.mockResolvedValueOnce(undefined);
+
+    const ok = await openExternalUrl('https://example.com');
+
+    expect(ok).toBe(true);
+    expect(invoke).toHaveBeenCalledWith('open_external_url', {
+      url: 'https://example.com',
+    });
+  });
+
+  it('returns false when the Tauri command rejects (unsupported scheme)', async () => {
+    setTauriContext(true);
+    const invoke = await getInvokeMock();
+    invoke.mockRejectedValueOnce(new Error('refusing: file://'));
+
+    const ok = await openExternalUrl('file:///etc/passwd');
+
+    expect(ok).toBe(false);
+  });
+
+  it('falls back to window.open with noopener,noreferrer in a browser context', async () => {
+    // No Tauri context — use the DOM path.
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue({} as Window);
+
+    const ok = await openExternalUrl('https://example.com');
+
+    expect(ok).toBe(true);
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://example.com',
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  it('returns false when a popup blocker or exception blocks window.open', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const ok = await openExternalUrl('https://blocked.example');
+    expect(ok).toBe(false);
+    openSpy.mockRestore();
   });
 });

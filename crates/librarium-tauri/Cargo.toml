@@ -35,6 +35,9 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # Platform home-directory detection
 dirs = "5"
 
+# Open URLs in the OS default browser (used by open_external_url command)
+open = "5"
+
 # Utilities
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

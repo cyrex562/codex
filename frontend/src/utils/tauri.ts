@@ -104,6 +104,38 @@ export const saveFileDialog = async (
   }
 };
 
+/**
+ * Open a URL in the OS default handler (browser for http/https, mail client
+ * for mailto, phone dialer for tel).
+ *
+ * Desktop: routes through the `open_external_url` Tauri command so the
+ * WebView never navigates out of the app shell. Non-allowed schemes are
+ * rejected on the Rust side.
+ *
+ * Browser: falls back to `window.open` with `noopener,noreferrer` so the
+ * opener/referrer don't leak to the target.
+ *
+ * Returns `true` when the open call was dispatched, `false` on any error
+ * (unsupported scheme, popup blocker, IPC failure).
+ */
+export const openExternalUrl = async (url: string): Promise<boolean> => {
+  if (isTauri()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('open_external_url', { url });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  try {
+    const w = window.open(url, '_blank', 'noopener,noreferrer');
+    return !!w;
+  } catch {
+    return false;
+  }
+};
+
 // ── Desktop sync API wrappers ───────────────────────────────────────────────
 
 /**
