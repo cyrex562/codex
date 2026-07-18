@@ -156,6 +156,14 @@ SQLite and Tantivy are derived and rebuildable:**
    itself.
 3. **Tantivy** — per-vault full-text index, persisted on disk, rebuilt by
    scanning vaults at startup and updated incrementally thereafter.
+4. **Logs** — `{data_dir}/logs/` holds two file streams. The server-side
+   tracing output lives at `librarium.log.YYYY-MM-DD` (one file per calendar
+   day). The desktop-only frontend diagnostic log lives at `frontend.log`
+   and rotates on every app start (current → `.1`, `.1` → `.2`, `.2` → `.3`,
+   `.3` dropped) — the last four full runs of the shell are always available
+   for post-mortem after an unexpected drop to `/login`. The rotation is
+   driven by `librarium-tauri`'s `FrontendLog::init`; the frontend writes
+   through the `frontend_log` Tauri command from `frontend/src/utils/logger.ts`.
 
 ### The watcher event loop (core data flow)
 

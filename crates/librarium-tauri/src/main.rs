@@ -1,10 +1,12 @@
 // Prevents a console window from appearing on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod frontend_log;
 mod paths;
 mod sync_bridge;
 
 use anyhow::Context;
+use frontend_log::{FrontendLog, LogRecord};
 use librarium::config::AppConfig;
 use paths::{create_dirs, resolve_paths};
 use sync_bridge::{RemoteDto, SyncHandle};
@@ -72,6 +74,31 @@ fn is_allowed_external_url(url: &str) -> bool {
     ["http://", "https://", "mailto:", "tel:"]
         .iter()
         .any(|prefix| url.starts_with(prefix))
+}
+
+// ── Frontend logging ─────────────────────────────────────────────────────────
+
+/// Append a single record to the rotating frontend log at
+/// `{data_dir}/logs/frontend.log`. Called from the frontend `logger.ts`
+/// wrapper for every significant lifecycle event (login, refresh, logout,
+/// WebSocket reconnect, router guard decision) so a post-mortem after an
+/// unexpected drop to the login page has a durable record of what happened.
+///
+/// Silently returns the error string on IO failure — the frontend logs it to
+/// the JS console; we don't want a broken filesystem to bring down real work.
+#[tauri::command]
+fn frontend_log(
+    log: tauri::State<'_, FrontendLog>,
+    record: LogRecord,
+) -> Result<(), String> {
+    log.append(&record).map_err(|e| e.to_string())
+}
+
+/// Return the resolved log file path so the frontend can surface it in a
+/// "Copy log path" affordance (Settings → Diagnostics).
+#[tauri::command]
+fn frontend_log_path(log: tauri::State<'_, FrontendLog>) -> String {
+    log.path_str()
 }
 
 // ── Sync commands ───────────────────────────────────────────────────────────
@@ -190,6 +217,8 @@ fn main() {
             open_directory_dialog,
             notify,
             open_external_url,
+            frontend_log,
+            frontend_log_path,
             sync_add_remote,
             sync_map_vault,
             sync_list_remotes,
@@ -220,6 +249,20 @@ fn run_setup(app: &mut tauri::App) -> anyhow::Result<()> {
         "App directories: config={:?} data={:?}",
         paths.config_dir, paths.data_dir
     );
+
+    // Initialise the rotating frontend log as early as possible so any
+    // subsequent boot-time diagnostic message the frontend emits ends up on
+    // disk rather than lost in a WebView console. Rotation happens here
+    // (previous run's file becomes `frontend.log.1`).
+    match FrontendLog::init(paths.data_dir.join("logs")) {
+        Ok(fl) => {
+            info!("Frontend log initialised at {}", fl.path_str());
+            app.manage(fl);
+        }
+        Err(e) => {
+            warn!("Failed to initialise frontend log: {e:#}");
+        }
+    }
 
     // Pin the search index (and its incremental-indexing manifest) to a stable
     // absolute path under the data dir. Without this it defaults to a

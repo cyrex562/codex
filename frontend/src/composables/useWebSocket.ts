@@ -7,6 +7,9 @@ import { useAuthStore } from '@/stores/auth';
 import { useIndexingStore } from '@/stores/indexing';
 import { useFavoritesStore } from '@/stores/favorites';
 import { useNotifications } from '@/composables/useNotifications';
+import { getLogger } from '@/utils/logger';
+
+const log = getLogger('ws');
 
 const WS_BASE_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws`;
 const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -137,7 +140,11 @@ async function connect() {
 
     try {
         await authStore.ensureFresh();
-    } catch {
+    } catch (err) {
+        log.warn('WebSocket connect ensureFresh failed → forcing logout', {
+            reconnectAttempts,
+            message: (err as Error)?.message ?? String(err),
+        });
         await authStore.logout();
         connected.value = false;
         return;
@@ -154,6 +161,7 @@ async function connect() {
 
     ws.addEventListener('open', () => {
         const wasReconnect = reconnectAttempts > 0;
+        log.info('WebSocket open', { wasReconnect });
         connected.value = true;
         reconnectAttempts = 0;
         if (reconnectTimer !== null) {
@@ -178,12 +186,19 @@ async function connect() {
         connected.value = false;
         ws = null;
         const authStore = useAuthStore();
+        log.info('WebSocket close', {
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean,
+            isAuthenticated: authStore.isAuthenticated,
+        });
         if (!authStore.isAuthenticated) {
             return;
         }
 
         // Avoid reconnect storms when server rejected auth/token.
         if (event.code === 1008) {
+            log.warn('WebSocket closed 1008 (policy) → skipping reconnect');
             return;
         }
 
@@ -193,6 +208,7 @@ async function connect() {
 
         const delay = getReconnectDelay();
         reconnectAttempts++;
+        log.info('WebSocket scheduling reconnect', { delayMs: delay, attempt: reconnectAttempts });
         reconnectTimer = setTimeout(() => {
             reconnectTimer = null;
             void connect();

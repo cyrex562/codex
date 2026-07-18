@@ -9,6 +9,9 @@ import { computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { usePreferencesStore } from '@/stores/preferences';
 import { useAuthStore } from '@/stores/auth';
+import { getLogger } from '@/utils/logger';
+
+const log = getLogger('app');
 
 const prefsStore = usePreferencesStore();
 const authStore = useAuthStore();
@@ -22,6 +25,10 @@ const theme = computed(() =>
 // Bootstrap: load preferences, then open WS
 onMounted(async () => {
   const isLoginRoute = router.currentRoute.value.path === '/login';
+  log.info('App onMounted', {
+    startingRoute: router.currentRoute.value.fullPath,
+    isAuthenticatedAtBoot: authStore.isAuthenticated,
+  });
 
   if (authStore.isAuthenticated || !isLoginRoute) {
     await prefsStore.load();
@@ -31,7 +38,10 @@ onMounted(async () => {
     try {
       await authStore.ensureFresh();
       await authStore.loadProfile();
-    } catch {
+    } catch (err) {
+      log.warn('App mount ensureFresh/loadProfile failed → logout + /login', {
+        message: (err as Error)?.message ?? String(err),
+      });
       await authStore.logout();
       if (router.currentRoute.value.path !== '/login') {
         await router.replace({

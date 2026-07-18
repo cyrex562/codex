@@ -101,6 +101,9 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ApiError } from '@/api/client';
+import { getLogger } from '@/utils/logger';
+
+const log = getLogger('mainLayout');
 import { useAuthStore } from '@/stores/auth';
 import { useVaultsStore } from '@/stores/vaults';
 import { useFilesStore } from '@/stores/files';
@@ -187,10 +190,14 @@ const quickSwitcherOpen = ref(false);
 const pluginsOpen = ref(false);
 
 onMounted(async () => {
+  log.info('MainLayout onMounted');
   try {
     await authStore.ensureFresh();
     await authStore.loadProfile();
-  } catch {
+  } catch (err) {
+    log.warn('MainLayout mount ensureFresh/loadProfile failed → logout + /login', {
+      message: (err as Error)?.message ?? String(err),
+    });
     await authStore.logout();
     await router.replace({
       path: '/login',
