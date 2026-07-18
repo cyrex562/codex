@@ -189,6 +189,39 @@ export const useTabsStore = defineStore('tabs', () => {
         });
     }
 
+    // Move a tab within its pane to a new position. The visible ordering of
+    // tabs comes from the Map's insertion order, so we rebuild the entries
+    // for this pane in the requested order while leaving tabs from other
+    // panes untouched (their positions in the Map stay the same). Clamps
+    // `newIndex` into range and short-circuits when the position is unchanged.
+    function moveTabInPane(paneId: string, tabId: string, newIndex: number) {
+        const paneTabs = tabsForPane(paneId);
+        const oldIndex = paneTabs.findIndex((t) => t.id === tabId);
+        if (oldIndex < 0) return;
+        const clamped = Math.max(0, Math.min(newIndex, paneTabs.length - 1));
+        if (clamped === oldIndex) return;
+
+        const reordered = [...paneTabs];
+        const [moved] = reordered.splice(oldIndex, 1);
+        reordered.splice(clamped, 0, moved);
+
+        // Rebuild the tabs map, replacing the pane's tabs in place: as the
+        // forEach walks the old Map in insertion order, whenever we hit a
+        // slot that belonged to this pane, we emit the next reordered pane
+        // tab. Tabs from other panes are copied through unchanged.
+        const newMap = new Map<string, Tab>();
+        let paneIdx = 0;
+        tabs.value.forEach((tab, id) => {
+            if (tab.paneId === paneId) {
+                const next = reordered[paneIdx++];
+                newMap.set(next.id, next);
+            } else {
+                newMap.set(id, tab);
+            }
+        });
+        tabs.value = newMap;
+    }
+
     function closeTabsByPath(filePath: string) {
         const tabIdsToClose: string[] = [];
         tabs.value.forEach((tab, tabId) => {
@@ -279,6 +312,7 @@ export const useTabsStore = defineStore('tabs', () => {
         markTabClean,
         updateTabFrontmatter,
         remapTabPaths,
+        moveTabInPane,
         closeTabsByPath,
         splitPane,
         closePane,
