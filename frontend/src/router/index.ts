@@ -1,5 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { getLogger } from '@/utils/logger';
+
+const log = getLogger('router');
 
 const router = createRouter({
     history: createWebHistory(),
@@ -38,7 +41,11 @@ router.beforeEach(async (to) => {
                 await auth.ensureFresh();
                 await auth.loadProfile();
                 return { path: '/' };
-            } catch {
+            } catch (err) {
+                log.warn('public-route ensureFresh failed → forcing logout', {
+                    to: to.fullPath,
+                    message: (err as Error)?.message ?? String(err),
+                });
                 await auth.logout();
                 return true;
             }
@@ -47,6 +54,7 @@ router.beforeEach(async (to) => {
     }
 
     if (!auth.isAuthenticated) {
+        log.info('unauthenticated navigation → /login', { to: to.fullPath });
         return { path: '/login', query: { redirect: to.fullPath } };
     }
 
@@ -63,7 +71,11 @@ router.beforeEach(async (to) => {
         }
 
         return true;
-    } catch {
+    } catch (err) {
+        log.warn('guard ensureFresh/loadProfile failed → forcing logout + /login', {
+            to: to.fullPath,
+            message: (err as Error)?.message ?? String(err),
+        });
         await auth.logout();
         return { path: '/login', query: { redirect: to.fullPath } };
     }

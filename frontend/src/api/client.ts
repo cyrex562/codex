@@ -89,6 +89,14 @@ async function ensureFreshForRequest(url: string) {
 
 async function handleUnauthorized(url: string) {
     if (isAuthLifecyclePath(requestPath(url))) return;
+    // Import at call-time so the client module doesn't hard-require the
+    // logger during the tiny build step (Vitest mocks the tauri isTauri).
+    try {
+        const { getLogger } = await import('@/utils/logger');
+        getLogger('apiClient').warn('handleUnauthorized (401) → forcing logout + /login', {
+            url: requestPath(url),
+        });
+    } catch { /* logging must never break the 401 flow */ }
     try {
         const auth = useAuthStore();
         await auth.logout();

@@ -4077,6 +4077,7 @@ version = "0.100.0"
 dependencies = [
  "actix-web",
  "anyhow",
+ "chrono",
  "dirs 5.0.1",
  "librarium-server",
  "librarium-sync",

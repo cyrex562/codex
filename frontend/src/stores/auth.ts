@@ -3,6 +3,9 @@ import { ref, computed } from 'vue';
 import { apiLogin, apiRefreshToken, apiLogout, apiMe, apiChangePassword, apiVerifyTotpLogin, apiOidcCallback } from '@/api/client';
 import type { LoginResponse, AuthenticatedUserProfile } from '@/api/types';
 import { isTauri } from '@/utils/tauri';
+import { getLogger } from '@/utils/logger';
+
+const log = getLogger('auth');
 
 const ACCESS_TOKEN_KEY = 'obsidian_access_token';
 const EXPIRES_AT_KEY = 'obsidian_token_expires_at';
@@ -37,6 +40,20 @@ export const useAuthStore = defineStore('auth', () => {
     const loadingProfile = ref(false);
     let refreshPromise: Promise<void> | null = null;
 
+    // Capture what the store finds in localStorage at boot. This is the very
+    // first thing to check after an unexpected drop to /login: was the token
+    // wiped BEFORE the store initialised (persistence failure), or AFTER
+    // (a downstream logout() call — see the `logout` log entry for its
+    // caller stack).
+    log.info('store init', {
+        isTauri: persistRefreshTokenLocally,
+        haveAccessToken: !!accessToken.value,
+        haveRefreshToken: !!refreshToken.value,
+        expiresAt: expiresAt.value,
+        pendingTotp: pendingTotp.value,
+        expiresInMs: expiresAt.value - Date.now(),
+    });
+
     const isAuthenticated = computed(() => !!accessToken.value && !pendingTotp.value);
     const isExpired = computed(() => Date.now() > expiresAt.value - 60_000); // 60s margin
     const isAdmin = computed(() => !!profile.value?.is_admin);
@@ -56,13 +73,26 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     async function login(username: string, password: string) {
-        const resp = await apiLogin(username, password);
-        _applyTokens(resp);
-        if (resp.totp_required) {
-            profile.value = null;
-            return;
+        log.info('login attempt', { username });
+        try {
+            const resp = await apiLogin(username, password);
+            _applyTokens(resp);
+            log.info('login success', {
+                totpRequired: !!resp.totp_required,
+                expiresInSec: resp.expires_in,
+            });
+            if (resp.totp_required) {
+                profile.value = null;
+                return;
+            }
+            await loadProfile(true);
+        } catch (err) {
+            log.warn('login failed', {
+                status: (err as { status?: number })?.status,
+                message: (err as Error)?.message ?? String(err),
+            });
+            throw err;
         }
-        await loadProfile(true);
     }
 
     async function loginWithOidc(code: string, state: string) {
@@ -91,22 +121,47 @@ export const useAuthStore = defineStore('auth', () => {
         // send an empty body and let the server read the cookie.
         // Desktop build: the WebView cookie doesn't survive restarts reliably,
         // so we send the persisted token in the body (server accepts either).
-        const resp = persistRefreshTokenLocally && refreshToken.value
-            ? await apiRefreshToken(refreshToken.value)
-            : await apiRefreshToken();
-        _applyTokens(resp);
+        log.info('refresh attempt', {
+            haveBodyToken: persistRefreshTokenLocally && !!refreshToken.value,
+            isTauri: persistRefreshTokenLocally,
+        });
+        try {
+            const resp = persistRefreshTokenLocally && refreshToken.value
+                ? await apiRefreshToken(refreshToken.value)
+                : await apiRefreshToken();
+            _applyTokens(resp);
+            log.info('refresh success', { expiresInSec: resp.expires_in });
+        } catch (err) {
+            const status = (err as { status?: number })?.status;
+            log.warn('refresh failed', {
+                status,
+                message: (err as Error)?.message ?? String(err),
+            });
+            throw err;
+        }
     }
 
     async function logout() {
         // Pass the persisted token so the server revokes THIS session only.
         // Omitting it would trigger the "logout everywhere" contract.
+        log.warn('logout called', {
+            haveAccessToken: !!accessToken.value,
+            haveRefreshToken: !!refreshToken.value,
+            // Client-side stack helps identify which caller triggered the wipe
+            // (router guard, useWebSocket, App.vue mount, etc.).
+            stack: new Error().stack?.split('\n').slice(1, 5).join(' | '),
+        });
         try {
             if (persistRefreshTokenLocally && refreshToken.value) {
                 await apiLogout(refreshToken.value);
             } else {
                 await apiLogout();
             }
-        } catch { /* ignore server errors on logout */ }
+        } catch (err) {
+            log.warn('apiLogout server call failed (localStorage still wiped)', {
+                message: (err as Error)?.message ?? String(err),
+            });
+        }
         accessToken.value = null;
         refreshToken.value = null;
         expiresAt.value = 0;
