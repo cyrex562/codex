@@ -55,7 +55,17 @@ export const useAuthStore = defineStore('auth', () => {
     });
 
     const isAuthenticated = computed(() => !!accessToken.value && !pendingTotp.value);
-    const isExpired = computed(() => Date.now() > expiresAt.value - 60_000); // 60s margin
+    // Deliberately NOT a Vue computed. `Date.now()` is not a reactive source,
+    // so a `computed` here would cache its first result after each `expiresAt`
+    // change and keep returning it — even hours later, after the token had
+    // in fact expired. That silently disabled `ensureFresh` for the rest of
+    // the session (see the diagnostic log walkthrough in PR #29). A plain
+    // function re-reads the wall clock on every call, which is what callers
+    // like `ensureFresh` actually need. 60-second margin so a refresh fires
+    // before we hand a nearly-expired token to a downstream request.
+    function isExpired(): boolean {
+        return Date.now() > expiresAt.value - 60_000;
+    }
     const isAdmin = computed(() => !!profile.value?.is_admin);
     const mustChangePassword = computed(() => !!profile.value?.must_change_password);
 
@@ -191,7 +201,7 @@ export const useAuthStore = defineStore('auth', () => {
 
     // Call before any authenticated request to ensure the token is still valid.
     async function ensureFresh() {
-        if (accessToken.value && isExpired.value) {
+        if (accessToken.value && isExpired()) {
             refreshPromise ??= refresh().finally(() => {
                 refreshPromise = null;
             });
