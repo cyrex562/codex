@@ -14,7 +14,6 @@
         'tab-dragging': draggingId === tab.id,
         'tab-pinned': tab.pinned,
       }"
-      :title="tab.pinned ? tab.fileName : undefined"
       draggable="true"
       @click="tabsStore.activateTab(tab.id)"
       @contextmenu.prevent="openTabMenu($event, tab.id)"
@@ -33,10 +32,9 @@
         aria-label="Pinned"
       />
       <v-icon :icon="tabIcon(tab)" size="14" class="mr-1" />
-      <span v-if="!tab.pinned" class="tab-title text-caption">{{ tab.fileName }}</span>
+      <span class="tab-title text-caption">{{ tab.fileName }}</span>
       <span v-if="tab.isDirty" class="tab-dirty ml-1">●</span>
       <v-btn
-        v-if="!tab.pinned"
         icon="mdi-close"
         size="x-small"
         density="compact"
@@ -322,12 +320,11 @@ function tabIcon(tab: Tab): string {
   right: -1px;
 }
 
-/* Pinned tabs render icon-only to save horizontal space; the file name lives
-   in the `title` attribute so hovering still reveals it. */
-.tab-item.tab-pinned {
-  max-width: none;
-  padding: 0 6px;
-}
+/* Pinned tabs render exactly like unpinned tabs — full title, close button
+   still present — matching VS Code's convention. The `mdi-pin` glyph in
+   front and the pinned-first sort order are the only visible differences.
+   Protection from Close Others / Close All / Close in Pane lives in the
+   store's `tabIds*` helpers, not in the UI. */
 .tab-item.tab-pinned .tab-pin-glyph {
   color: rgb(var(--v-theme-primary));
 }
