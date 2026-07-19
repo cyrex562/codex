@@ -156,6 +156,51 @@ describe('useAuthStore', () => {
         expect(store.accessToken).toBe('fresh-access');
     });
 
+    // Regression: `isExpired` used to be a Vue `computed` reading a
+    // non-reactive `Date.now()`. Vue would cache the first "not expired"
+    // result after `expiresAt` was set and keep returning it for the rest
+    // of the session — so `ensureFresh` never triggered a refresh, and
+    // the token silently expired mid-session. The rewritten function must
+    // re-read the wall clock on every call.
+    it('ensureFresh triggers a refresh when time passes past expiresAt', async () => {
+        const start = 1_000_000_000_000; // arbitrary fixed epoch ms
+        vi.spyOn(Date, 'now').mockReturnValue(start);
+
+        vi.mocked(apiLogin).mockResolvedValueOnce({
+            access_token: 'a0',
+            refresh_token: 'r0',
+            expires_in: 3600, // 1h TTL — expires at start + 3_600_000
+            totp_required: false,
+        });
+        vi.mocked(apiMe).mockResolvedValueOnce({ ...mockProfile });
+
+        const store = useAuthStore();
+        await store.login('alice', 'password');
+        expect(apiRefreshToken).not.toHaveBeenCalled();
+
+        // First call while the token is still comfortably fresh — no refresh.
+        vi.spyOn(Date, 'now').mockReturnValue(start + 60_000);
+        await store.ensureFresh();
+        expect(apiRefreshToken).not.toHaveBeenCalled();
+
+        // Advance the wall clock past `expiresAt - 60_000`. A Vue `computed`
+        // would still be cached at "not expired" and NOT trigger refresh; a
+        // plain function re-reads the clock every call and does. This is the
+        // load-bearing assertion — it's the regression that caused sessions
+        // to silently die between wake-from-sleep cycles.
+        vi.spyOn(Date, 'now').mockReturnValue(start + 3_600_000);
+        vi.mocked(apiRefreshToken).mockResolvedValueOnce({
+            access_token: 'a1',
+            refresh_token: 'r0',
+            expires_in: 3600,
+            totp_required: false,
+        });
+        await store.ensureFresh();
+
+        expect(apiRefreshToken).toHaveBeenCalledTimes(1);
+        expect(store.accessToken).toBe('a1');
+    });
+
     describe('desktop (Tauri) refresh-token persistence', () => {
         beforeEach(() => {
             vi.mocked(isTauri).mockReturnValue(true);
