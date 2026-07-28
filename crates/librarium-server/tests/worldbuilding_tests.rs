@@ -1,6 +1,6 @@
 /// Integration tests for the worldbuilding feature set:
 /// entities, relations, graph, label list, filters, and reindex edge cases.
-use actix_web::{test, web, App};
+use actix_web::{test, web};
 use librarium::db::Database;
 use librarium::models::EntityTypeSchema;
 use librarium::routes::{entities, AppState};
@@ -12,6 +12,9 @@ use librarium::watcher::FileWatcher;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::{broadcast, Mutex};
+
+mod common;
+use common::test_app;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -96,7 +99,7 @@ async fn test_entity_list_filter_by_entity_type() {
         .await
         .unwrap();
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!(
@@ -130,7 +133,7 @@ async fn test_entity_list_filter_by_label() {
         .await
         .unwrap();
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!("/api/vaults/{vault_id}/entities?label=graphable"))
@@ -166,7 +169,7 @@ async fn test_entity_list_filter_by_name_query() {
         .await
         .unwrap();
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     // Query "stormwind" — should only match Aria
     let req = test::TestRequest::get()
@@ -196,7 +199,7 @@ async fn test_entity_list_filter_by_plugin() {
         .await
         .unwrap();
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!(
@@ -242,7 +245,7 @@ async fn test_get_entity_by_id() {
         .unwrap();
     let entity_id = &entities[0].id;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!("/api/vaults/{vault_id}/entities/{entity_id}"))
@@ -263,7 +266,7 @@ async fn test_get_entity_by_id_not_found() {
     let temp = TempDir::new().unwrap();
     let (state, vault_id) = setup(&temp).await;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!(
@@ -294,7 +297,7 @@ async fn test_entity_relations_endpoint_empty() {
         .unwrap();
     let entity_id = &entities[0].id;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!(
@@ -333,7 +336,7 @@ async fn test_entity_relations_endpoint_with_linked_entities() {
         .unwrap();
     let alice = entities.iter().find(|e| e.path == "alice.md").unwrap();
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!(
@@ -383,7 +386,7 @@ async fn test_graph_contains_edges_for_wiki_links() {
         .await
         .unwrap();
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!("/api/vaults/{vault_id}/graph"))
@@ -421,7 +424,7 @@ async fn test_graph_node_has_expected_fields() {
         .await
         .unwrap();
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!("/api/vaults/{vault_id}/graph"))
@@ -450,7 +453,7 @@ async fn test_labels_endpoint_empty_db() {
     let temp = TempDir::new().unwrap();
     let (state, _vault_id) = setup(&temp).await;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri("/api/plugins/labels")
@@ -469,7 +472,7 @@ async fn test_labels_endpoint_after_seed() {
 
     LabelService::seed_core_labels(&state.db).await.unwrap();
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri("/api/plugins/labels")
@@ -517,7 +520,7 @@ async fn test_entity_type_template_endpoint_with_registered_schema() {
         })
         .await;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri("/api/plugins/entity-types/character/template")
@@ -543,7 +546,7 @@ async fn test_entity_type_template_endpoint_missing_type_returns_404() {
     let temp = TempDir::new().unwrap();
     let (state, _vault_id) = setup(&temp).await;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri("/api/plugins/entity-types/nonexistent-type/template")

@@ -1,4 +1,4 @@
-use actix_web::{test, web, App};
+use actix_web::{test, web};
 use librarium::db::Database;
 use librarium::routes::{entities, AppState};
 use librarium::services::{
@@ -8,6 +8,9 @@ use librarium::watcher::FileWatcher;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::{broadcast, Mutex};
+
+mod common;
+use common::test_app;
 
 async fn setup(temp_dir: &TempDir) -> (web::Data<AppState>, String) {
     let db_path = temp_dir.path().join("entity-test.db");
@@ -51,7 +54,7 @@ async fn test_list_entity_types_empty_registry() {
     let temp = TempDir::new().unwrap();
     let (state, _vault_id) = setup(&temp).await;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri("/api/plugins/entity-types")
@@ -98,7 +101,7 @@ async fn test_get_entity_rejects_cross_vault_entity_id() {
     .unwrap();
     let entity_id = entities[0].id.clone();
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!("/api/vaults/{}/entities/{}", vault_id, entity_id))
@@ -129,7 +132,7 @@ async fn test_list_entity_types_with_registered_type() {
         })
         .await;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri("/api/plugins/entity-types")
@@ -150,7 +153,7 @@ async fn test_list_relation_types_empty_registry() {
     let temp = TempDir::new().unwrap();
     let (state, _vault_id) = setup(&temp).await;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri("/api/plugins/relation-types")
@@ -170,7 +173,7 @@ async fn test_list_entities_empty_vault() {
     let temp = TempDir::new().unwrap();
     let (state, vault_id) = setup(&temp).await;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!("/api/vaults/{vault_id}/entities"))
@@ -193,12 +196,7 @@ async fn test_reindex_vault() {
     let content = "---\nlibrarium_type: character\nlibrarium_plugin: worldbuilding\nlibrarium_labels:\n- graphable\nfull_name: Alice Smith\n---\n# Alice Smith\n";
     std::fs::write(vault_dir.join("alice.md"), content).unwrap();
 
-    let app = test::init_service(
-        App::new()
-            .app_data(state.clone())
-            .configure(entities::configure),
-    )
-    .await;
+    let app = test::init_service(test_app(state.clone(), entities::configure)).await;
 
     let req = test::TestRequest::post()
         .uri(&format!("/api/vaults/{vault_id}/reindex"))
@@ -233,7 +231,7 @@ async fn test_entity_by_path_not_found() {
     let temp = TempDir::new().unwrap();
     let (state, vault_id) = setup(&temp).await;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!(
@@ -260,12 +258,7 @@ async fn test_entity_by_path_found_after_reindex() {
     let content = "---\nlibrarium_type: location\nlibrarium_plugin: worldbuilding\nlibrarium_labels:\n- graphable\nname: Castle Keep\n---\n# Castle Keep\n";
     std::fs::write(vault_dir.join("castle.md"), content).unwrap();
 
-    let app = test::init_service(
-        App::new()
-            .app_data(state.clone())
-            .configure(entities::configure),
-    )
-    .await;
+    let app = test::init_service(test_app(state.clone(), entities::configure)).await;
 
     // Reindex synchronously so entities are in DB before querying
     ReindexService::reindex_vault(&state.db, &vault_id, vault_dir.to_str().unwrap())
@@ -295,7 +288,7 @@ async fn test_get_graph_empty_vault() {
     let temp = TempDir::new().unwrap();
     let (state, vault_id) = setup(&temp).await;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!("/api/vaults/{vault_id}/graph"))
@@ -324,12 +317,7 @@ async fn test_get_graph_with_indexed_entities() {
         std::fs::write(vault_dir.join(filename), content).unwrap();
     }
 
-    let app = test::init_service(
-        App::new()
-            .app_data(state.clone())
-            .configure(entities::configure),
-    )
-    .await;
+    let app = test::init_service(test_app(state.clone(), entities::configure)).await;
 
     // Reindex synchronously
     ReindexService::reindex_vault(&state.db, &vault_id, vault_dir.to_str().unwrap())
@@ -363,7 +351,7 @@ async fn test_entity_template_no_schema_returns_error_or_default() {
     let temp = TempDir::new().unwrap();
     let (state, vault_id) = setup(&temp).await;
 
-    let app = test::init_service(App::new().app_data(state).configure(entities::configure)).await;
+    let app = test::init_service(test_app(state, entities::configure)).await;
 
     let req = test::TestRequest::get()
         .uri(&format!(
