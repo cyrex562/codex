@@ -153,7 +153,9 @@ fn backup_database_if_needed(db_path: &std::path::Path) {
 /// backup sees just the main `.db`. Best-effort — never fails startup.
 async fn checkpoint_wal(database_url: &str) {
     let opts = match SqliteConnectOptions::from_str(database_url) {
-        Ok(o) => o.create_if_missing(false).journal_mode(SqliteJournalMode::Wal),
+        Ok(o) => o
+            .create_if_missing(false)
+            .journal_mode(SqliteJournalMode::Wal),
         Err(e) => {
             tracing::warn!("WAL checkpoint: bad database URL: {e}");
             return;
@@ -1181,11 +1183,7 @@ impl Database {
         Ok(rows)
     }
 
-    pub async fn delete_note_embedding(
-        &self,
-        vault_id: &str,
-        file_path: &str,
-    ) -> AppResult<()> {
+    pub async fn delete_note_embedding(&self, vault_id: &str, file_path: &str) -> AppResult<()> {
         sqlx::query("DELETE FROM note_embeddings WHERE vault_id = ? AND file_path = ?")
             .bind(vault_id)
             .bind(file_path)
@@ -1300,15 +1298,13 @@ impl Database {
         vault_id: &str,
         path: &str,
     ) -> AppResult<()> {
-        sqlx::query(
-            "DELETE FROM favorites WHERE user_id = ? AND vault_id = ? AND path = ?",
-        )
-        .bind(user_id)
-        .bind(vault_id)
-        .bind(path)
-        .execute(&self.pool)
-        .await
-        .map_err(AppError::from)?;
+        sqlx::query("DELETE FROM favorites WHERE user_id = ? AND vault_id = ? AND path = ?")
+            .bind(user_id)
+            .bind(vault_id)
+            .bind(path)
+            .execute(&self.pool)
+            .await
+            .map_err(AppError::from)?;
         Ok(())
     }
 

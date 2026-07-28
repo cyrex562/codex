@@ -444,12 +444,10 @@ impl MlService {
                 Some(date) => format!("{}-{}", date, slug),
                 None => slug,
             },
-            "category-slug" => {
-                match Self::category_for_rename(file_path, content, frontmatter) {
-                    Some(cat) => format!("{}-{}", Self::slugify_kebab(&cat), slug),
-                    None => slug,
-                }
-            }
+            "category-slug" => match Self::category_for_rename(file_path, content, frontmatter) {
+                Some(cat) => format!("{}-{}", Self::slugify_kebab(&cat), slug),
+                None => slug,
+            },
             // "kebab-case" and anything unrecognized.
             _ => slug,
         };
@@ -502,10 +500,13 @@ impl MlService {
         let valid = candidate.len() == 10
             && candidate.as_bytes()[4] == b'-'
             && candidate.as_bytes()[7] == b'-'
-            && candidate
-                .bytes()
-                .enumerate()
-                .all(|(i, b)| if i == 4 || i == 7 { b == b'-' } else { b.is_ascii_digit() });
+            && candidate.bytes().enumerate().all(|(i, b)| {
+                if i == 4 || i == 7 {
+                    b == b'-'
+                } else {
+                    b.is_ascii_digit()
+                }
+            });
         valid.then_some(candidate)
     }
 
@@ -551,15 +552,11 @@ impl MlService {
             .map(|word| {
                 let cleaned: String = word
                     .chars()
-                    .filter(|c| {
-                        c.is_alphanumeric() || matches!(c, '-' | '_' | '&' | '(' | ')')
-                    })
+                    .filter(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '&' | '(' | ')'))
                     .collect();
                 let mut chars = cleaned.chars();
                 match chars.next() {
-                    Some(first) => {
-                        first.to_uppercase().collect::<String>() + chars.as_str()
-                    }
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
                     None => String::new(),
                 }
             })
@@ -1013,7 +1010,8 @@ mod tests {
         let with_fm = MlService::analyze("a/b.md", "# Heading Title\n\nx", Some(&fm), "classical");
         assert_eq!(with_fm.title.as_deref(), Some("Front Title"));
 
-        let no_heading = MlService::analyze("a/my-note.md", "just prose, no heading", None, "classical");
+        let no_heading =
+            MlService::analyze("a/my-note.md", "just prose, no heading", None, "classical");
         assert_eq!(no_heading.title.as_deref(), Some("my-note"));
     }
 
@@ -1076,13 +1074,8 @@ mod tests {
         let content = "Revenue growth strategy and revenue growth planning.";
         let keyphrases = MlService::extract_keyphrases(content, 8);
         let fm = serde_json::json!({ "tags": ["revenue-growth-strategy"] });
-        let suggestions = MlService::suggest_organization(
-            "n.md",
-            content,
-            Some(&fm),
-            &keyphrases,
-            12,
-        );
+        let suggestions =
+            MlService::suggest_organization("n.md", content, Some(&fm), &keyphrases, 12);
         // The already-present tag must not be re-suggested.
         assert!(!suggestions
             .suggestions
@@ -1092,7 +1085,10 @@ mod tests {
 
     #[test]
     fn slugify_schemes() {
-        assert_eq!(MlService::slugify_kebab("  My Great Note! "), "my-great-note");
+        assert_eq!(
+            MlService::slugify_kebab("  My Great Note! "),
+            "my-great-note"
+        );
         assert_eq!(MlService::slugify_kebab("a/b:c"), "a-b-c");
         assert_eq!(
             MlService::slugify_title_case("my great note"),
@@ -1162,7 +1158,10 @@ mod tests {
 
         assert!(!analysis.inline_tags.iter().any(|t| t == "123"));
         // #bug appears twice but is deduped.
-        assert_eq!(analysis.inline_tags.iter().filter(|t| *t == "bug").count(), 1);
+        assert_eq!(
+            analysis.inline_tags.iter().filter(|t| *t == "bug").count(),
+            1
+        );
         assert!(analysis.inline_tags.contains(&"bug/regression".to_string()));
     }
 }

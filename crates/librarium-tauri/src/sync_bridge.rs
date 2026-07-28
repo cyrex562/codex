@@ -43,10 +43,7 @@ impl SyncHandle {
     /// Create the engine (if not already), seed it from `config.toml` remotes,
     /// and start the background tasks. Safe to call more than once — a second
     /// call restarts the tasks with the current store contents.
-    pub async fn init_and_start(
-        &self,
-        remotes: &[SyncRemoteConfig],
-    ) -> anyhow::Result<()> {
+    pub async fn init_and_start(&self, remotes: &[SyncRemoteConfig]) -> anyhow::Result<()> {
         let mut guard = self.inner.lock().await;
         if guard.is_none() {
             let engine = SyncEngine::open(&self.sync_db_path)

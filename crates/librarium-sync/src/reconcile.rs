@@ -150,7 +150,12 @@ mod tests {
     fn row5_both_changed_different() {
         assert_eq!(
             reconcile(B, L, R),
-            dec(Action::Conflict { winner: ConflictWinner::Remote }, R)
+            dec(
+                Action::Conflict {
+                    winner: ConflictWinner::Remote
+                },
+                R
+            )
         );
     }
 
@@ -175,7 +180,12 @@ mod tests {
         // Local edited, remote deleted: edit wins and is pushed back.
         assert_eq!(
             reconcile(B, L, NONE),
-            dec(Action::Conflict { winner: ConflictWinner::Local }, L)
+            dec(
+                Action::Conflict {
+                    winner: ConflictWinner::Local
+                },
+                L
+            )
         );
     }
 
@@ -184,7 +194,12 @@ mod tests {
         // Remote edited, local deleted: edit wins and is pulled locally.
         assert_eq!(
             reconcile(B, NONE, R),
-            dec(Action::Conflict { winner: ConflictWinner::Remote }, R)
+            dec(
+                Action::Conflict {
+                    winner: ConflictWinner::Remote
+                },
+                R
+            )
         );
     }
 
@@ -208,7 +223,12 @@ mod tests {
     fn row14_both_created_different() {
         assert_eq!(
             reconcile(NONE, L, R),
-            dec(Action::Conflict { winner: ConflictWinner::Remote }, R)
+            dec(
+                Action::Conflict {
+                    winner: ConflictWinner::Remote
+                },
+                R
+            )
         );
     }
 

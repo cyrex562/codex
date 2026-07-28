@@ -1,6 +1,6 @@
 pub mod auth_provider;
-pub mod entity_service;
 pub mod embedding_service;
+pub mod entity_service;
 pub mod file_service;
 pub mod frontmatter_service;
 pub mod image_service;

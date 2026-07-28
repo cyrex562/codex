@@ -552,7 +552,10 @@ impl DocumentParser for MarkdownParser {
         let without_fm = strip_frontmatter(source);
 
         // 2. If prose sentinels are present, return only their content.
-        let prose_markers = [(PROSE_BEGIN, PROSE_END), (LEGACY_PROSE_BEGIN, LEGACY_PROSE_END)];
+        let prose_markers = [
+            (PROSE_BEGIN, PROSE_END),
+            (LEGACY_PROSE_BEGIN, LEGACY_PROSE_END),
+        ];
         for (begin_marker, end_marker) in prose_markers {
             if let Some(begin) = without_fm.find(begin_marker) {
                 let after_begin = &without_fm[begin + begin_marker.len()..];

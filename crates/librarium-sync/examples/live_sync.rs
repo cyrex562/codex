@@ -52,7 +52,10 @@ async fn run() -> Result<(), BoxErr> {
     let result = scenario(&client, &base_url, &api_key, &remote_vault.id).await;
 
     if keep {
-        println!("\n(LIBRARIUM_KEEP set — leaving remote vault {} in place)", remote_vault.id);
+        println!(
+            "\n(LIBRARIUM_KEEP set — leaving remote vault {} in place)",
+            remote_vault.id
+        );
     } else {
         println!("\n→ deleting remote test vault {}", remote_vault.id);
         if let Err(e) = client.delete_vault(&remote_vault.id).await {
@@ -81,7 +84,11 @@ async fn scenario(
     let sync_db = local.join("_sync.db");
     let engine = SyncEngine::open(&sync_db).await?;
     let remote_id = engine
-        .add_remote("live".to_string(), base_url.to_string(), api_key.to_string())
+        .add_remote(
+            "live".to_string(),
+            base_url.to_string(),
+            api_key.to_string(),
+        )
         .await?;
     engine
         .map_vault(
@@ -92,7 +99,10 @@ async fn scenario(
         )
         .await?;
     engine.start().await?;
-    println!("→ sync engine started (local {:?} -> remote {})", local, remote_vault_id);
+    println!(
+        "→ sync engine started (local {:?} -> remote {})",
+        local, remote_vault_id
+    );
 
     // 4. PUSH: the three local notes should appear on the server.
     let pushed = wait_until(Duration::from_secs(30), || async {
@@ -108,7 +118,9 @@ async fn scenario(
         Some(m) => {
             // Hash of the pushed binary must match what we wrote (byte-exact).
             let logo = m.iter().find(|e| e.path == "assets/logo.bin");
-            let hash_ok = logo.map(|e| e.content_hash == sha256_hex(&[0u8, 1, 2, 3, 250, 200, 255])).unwrap_or(false);
+            let hash_ok = logo
+                .map(|e| e.content_hash == sha256_hex(&[0u8, 1, 2, 3, 250, 200, 255]))
+                .unwrap_or(false);
             report.check("push: local notes appear on server", true);
             report.check("push: binary byte-exact (hash match)", hash_ok);
         }
@@ -118,7 +130,11 @@ async fn scenario(
     // 5. PULL: change a file on the server; it should reach the local vault.
     println!("→ editing welcome.md on the server");
     client
-        .upload_file_bytes(remote_vault_id, "welcome.md", b"# Welcome\n\nEDITED ON SERVER".to_vec())
+        .upload_file_bytes(
+            remote_vault_id,
+            "welcome.md",
+            b"# Welcome\n\nEDITED ON SERVER".to_vec(),
+        )
         .await?;
     let pulled = wait_until(Duration::from_secs(30), || async {
         let bytes = std::fs::read(local.join("welcome.md")).ok()?;
@@ -135,7 +151,11 @@ async fn scenario(
     tokio::time::sleep(Duration::from_millis(300)).await;
     std::fs::write(local.join("projects/ideas.md"), b"LOCAL divergent edit")?;
     client
-        .upload_file_bytes(remote_vault_id, "projects/ideas.md", b"REMOTE divergent edit".to_vec())
+        .upload_file_bytes(
+            remote_vault_id,
+            "projects/ideas.md",
+            b"REMOTE divergent edit".to_vec(),
+        )
         .await?;
     engine.start().await?;
 
@@ -144,14 +164,19 @@ async fn scenario(
         // the canonical file holds the server (winner) content.
         let dir = local.join("projects");
         let entries = std::fs::read_dir(&dir).ok()?;
-        let has_conflict = entries
-            .filter_map(|e| e.ok())
-            .any(|e| e.file_name().to_string_lossy().starts_with("conflict_ideas_"));
+        let has_conflict = entries.filter_map(|e| e.ok()).any(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("conflict_ideas_")
+        });
         let canonical = std::fs::read(dir.join("ideas.md")).ok()?;
         (has_conflict && canonical == b"REMOTE divergent edit").then_some(())
     })
     .await;
-    report.check("conflict: keep-both copy created, server wins canonical", conflict_ok.is_some());
+    report.check(
+        "conflict: keep-both copy created, server wins canonical",
+        conflict_ok.is_some(),
+    );
 
     engine.stop();
     report.finish();
@@ -170,7 +195,14 @@ struct Report {
 }
 impl Report {
     fn check(&mut self, name: &str, pass: bool) {
-        println!("  [{}] {name}", if pass { "\x1b[32mPASS\x1b[0m" } else { "\x1b[31mFAIL\x1b[0m" });
+        println!(
+            "  [{}] {name}",
+            if pass {
+                "\x1b[32mPASS\x1b[0m"
+            } else {
+                "\x1b[31mFAIL\x1b[0m"
+            }
+        );
         self.rows.push((name.to_string(), pass));
     }
     fn all_passed(&self) -> bool {

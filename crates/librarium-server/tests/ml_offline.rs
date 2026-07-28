@@ -104,7 +104,10 @@ async fn embeddings_tier_without_download_falls_back_to_tier1_offline() {
     assert!(resp.status().is_success());
     let body: serde_json::Value = test::read_body_json(resp).await;
     let suggestions = body["suggestions"].as_array().unwrap();
-    assert!(!suggestions.is_empty(), "Tier-1 should still produce suggestions");
+    assert!(
+        !suggestions.is_empty(),
+        "Tier-1 should still produce suggestions"
+    );
     for s in suggestions {
         assert_ne!(
             s["source"].as_str(),

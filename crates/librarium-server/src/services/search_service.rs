@@ -439,11 +439,7 @@ impl SearchIndex {
 
     /// Update (or insert) multiple files in the index with a single commit.
     /// Dramatically cheaper than calling `update_file` in a loop: one fsync instead of N.
-    pub fn update_files_batch(
-        &self,
-        vault_id: &str,
-        files: &[(String, String)],
-    ) -> AppResult<()> {
+    pub fn update_files_batch(&self, vault_id: &str, files: &[(String, String)]) -> AppResult<()> {
         if files.is_empty() {
             return Ok(());
         }
@@ -975,13 +971,21 @@ mod tests {
 
         let index = SearchIndex::with_base_dir(base.path().to_path_buf());
         index.index_vault("v1", vault_path).unwrap();
-        let before = index.search("v1", "uniqueterm", 1, 10).unwrap().results.len();
+        let before = index
+            .search("v1", "uniqueterm", 1, 10)
+            .unwrap()
+            .results
+            .len();
         assert_eq!(before, 1);
 
         // Simulate a post-upgrade run: manifest gone but index dir populated.
         std::fs::remove_file(base.path().join("v1").join(".index_manifest.json")).unwrap();
         index.index_vault("v1", vault_path).unwrap();
-        let after = index.search("v1", "uniqueterm", 1, 10).unwrap().results.len();
+        let after = index
+            .search("v1", "uniqueterm", 1, 10)
+            .unwrap()
+            .results
+            .len();
         assert_eq!(after, 1, "stale index not wiped -> duplicate results");
     }
 

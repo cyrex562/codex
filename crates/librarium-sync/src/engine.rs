@@ -233,7 +233,10 @@ impl TaskContext {
             Ok(w) => w,
             Err(e) => {
                 self.set_status(&key, VaultSyncState::Offline, Some(format!("watch: {e}")));
-                warn!("sync: failed to start watcher for {}: {e}", self.map.local_vault_path);
+                warn!(
+                    "sync: failed to start watcher for {}: {e}",
+                    self.map.local_vault_path
+                );
                 return;
             }
         };
@@ -622,7 +625,11 @@ impl VaultSync {
                     self.write_local(&conflict_path, &local_bytes)?;
                     // Send the preserved copy to the remote too.
                     self.client
-                        .upload_file_bytes(&self.remote_vault_id, &conflict_path, local_bytes.clone())
+                        .upload_file_bytes(
+                            &self.remote_vault_id,
+                            &conflict_path,
+                            local_bytes.clone(),
+                        )
                         .await?;
                     let ch = hash_bytes(&local_bytes);
                     self.remote_hashes.insert(conflict_path.clone(), ch.clone());
@@ -801,8 +808,7 @@ fn local_file_paths(vault_path: &Path) -> Vec<String> {
         .filter_entry(|e| {
             // Always keep the root (depth 0); prune dot-entries below it.
             e.depth() == 0
-                || e
-                    .file_name()
+                || e.file_name()
                     .to_str()
                     .map(|n| !n.starts_with('.'))
                     .unwrap_or(false)

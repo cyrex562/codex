@@ -269,8 +269,17 @@ pub async fn embed_note(
     }
 
     let vector = embed_one(&emb, input).await?;
-    store_embedding(db, &emb, vault_id, rel_path, &vector, &hash, frontmatter.as_ref(), &body)
-        .await
+    store_embedding(
+        db,
+        &emb,
+        vault_id,
+        rel_path,
+        &vector,
+        &hash,
+        frontmatter.as_ref(),
+        &body,
+    )
+    .await
 }
 
 /// Embed every markdown note in a vault that is missing or stale, in bounded
@@ -479,8 +488,17 @@ async fn flush_batch(
 
     let mut count = 0usize;
     for ((rel, _input, hash, frontmatter, body), vector) in notes.into_iter().zip(vectors) {
-        store_embedding(db, emb, vault_id, &rel, &vector, &hash, frontmatter.as_ref(), &body)
-            .await?;
+        store_embedding(
+            db,
+            emb,
+            vault_id,
+            &rel,
+            &vector,
+            &hash,
+            frontmatter.as_ref(),
+            &body,
+        )
+        .await?;
         count += 1;
     }
     Ok(count)
@@ -704,7 +722,9 @@ mod tests {
     #[test]
     fn mock_embedder_is_used() {
         // Exercises the trait + batch path so the mock isn't dead code.
-        let out = MockEmbedder.embed(&["a".to_string(), "b".to_string()]).unwrap();
+        let out = MockEmbedder
+            .embed(&["a".to_string(), "b".to_string()])
+            .unwrap();
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].len(), 8);
     }
@@ -753,8 +773,7 @@ mod tests {
             3
         }
         fn embed(&self, texts: &[String]) -> AppResult<Vec<Vec<f32>>> {
-            self.0
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(texts
                 .iter()
                 .map(|t| {
@@ -817,10 +836,17 @@ mod tests {
             ..MlConfig::default()
         };
         let existing = HashSet::new();
-        let suggestions =
-            suggest_semantic_tags(&db, &config, vid, "new.md", "rust trait generics", &existing, 5)
-                .await
-                .unwrap();
+        let suggestions = suggest_semantic_tags(
+            &db,
+            &config,
+            vid,
+            "new.md",
+            "rust trait generics",
+            &existing,
+            5,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].0, "programming");
@@ -828,7 +854,11 @@ mod tests {
 
         // Deleting the embedding removes it from the store.
         remove_note(&db, vid, "ml.md").await.unwrap();
-        assert!(db.get_note_embedding_hash(vid, "ml.md").await.unwrap().is_none());
+        assert!(db
+            .get_note_embedding_hash(vid, "ml.md")
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[test]

@@ -3,7 +3,9 @@ use crate::models::{
     CreateFileRequest, CreateUploadSessionRequest, UpdateFileRequest, UploadSessionResponse,
 };
 use crate::routes::vaults::AppState;
-use crate::services::{file_service::TrashItem, FileService, ImageService, ReindexService, WikiLinkResolver};
+use crate::services::{
+    file_service::TrashItem, FileService, ImageService, ReindexService, WikiLinkResolver,
+};
 use actix_multipart::Multipart;
 use actix_web::http::header::{ETAG, IF_NONE_MATCH};
 use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse};
@@ -177,7 +179,6 @@ fn get_mime_type(file_path: &str) -> &'static str {
         _ => "application/octet-stream",
     }
 }
-
 
 #[derive(serde::Deserialize)]
 struct SyncFileRequest {
@@ -546,8 +547,7 @@ async fn rename_file(
                 .update_file(&vault_id, &new_path, content.content)?;
         }
         let abs_path = format!("{}/{}", vault.path.trim_end_matches('/'), new_path);
-        if let Err(e) =
-            ReindexService::index_file(&state.db, &vault_id, &new_path, &abs_path).await
+        if let Err(e) = ReindexService::index_file(&state.db, &vault_id, &new_path, &abs_path).await
         {
             tracing::warn!("Entity index_file failed after rename to {new_path}: {e}");
         }
@@ -1263,8 +1263,8 @@ async fn import_archive(
         use std::io::Write as _;
         let mut tmp_file = std::fs::File::create(&tmp_path)?;
         while let Some(chunk) = payload.next().await {
-            let chunk = chunk
-                .map_err(|e| AppError::InternalError(format!("Payload read error: {e}")))?;
+            let chunk =
+                chunk.map_err(|e| AppError::InternalError(format!("Payload read error: {e}")))?;
             tmp_file.write_all(&chunk)?;
         }
     }
@@ -1382,9 +1382,7 @@ async fn import_archive(
         // tar or tar.gz – decompress first if gzip-compressed.
         let file = std::fs::File::open(&tmp_path)?;
         let mut tar = if is_tar_gz {
-            tar::Archive::new(
-                Box::new(flate2::read::GzDecoder::new(file)) as Box<dyn std::io::Read>
-            )
+            tar::Archive::new(Box::new(flate2::read::GzDecoder::new(file)) as Box<dyn std::io::Read>)
         } else {
             tar::Archive::new(Box::new(file) as Box<dyn std::io::Read>)
         };
@@ -1430,9 +1428,8 @@ async fn import_archive(
                     // TAR is a streaming format so we cannot pre-scan; clean up
                     // the files already extracted before returning the error.
                     for already in &extracted {
-                        let _ = std::fs::remove_file(
-                            std::path::Path::new(&vault.path).join(already),
-                        );
+                        let _ =
+                            std::fs::remove_file(std::path::Path::new(&vault.path).join(already));
                     }
                     return Err(AppError::Conflict(format!(
                         "Archive entry already exists: {}",

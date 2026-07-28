@@ -152,9 +152,18 @@ fn synthetic_vectors(n: usize, dim: usize, k: usize) -> Vec<Vec<f32>> {
 /// A synthetic vault of `n` notes spread across three topical folders.
 fn synthetic_vault(n: usize) -> Vec<(String, String)> {
     const TOPICS: [(&str, &str); 3] = [
-        ("projects", "rust async tokio milestone roadmap deliverable sprint planning backend"),
-        ("journal", "today morning coffee weather mood reflection evening walk thoughts"),
-        ("recipes", "flour sugar butter oven bake dough knead proof yeast sourdough"),
+        (
+            "projects",
+            "rust async tokio milestone roadmap deliverable sprint planning backend",
+        ),
+        (
+            "journal",
+            "today morning coffee weather mood reflection evening walk thoughts",
+        ),
+        (
+            "recipes",
+            "flour sugar butter oven bake dough knead proof yeast sourdough",
+        ),
     ];
     (0..n)
         .map(|i| {

@@ -300,7 +300,10 @@ async fn test_logout_all_sessions_revokes_every_refresh_token() {
                 .to_request(),
         )
         .await;
-        assert!(resp.status().is_success(), "refresh should work before logout");
+        assert!(
+            resp.status().is_success(),
+            "refresh should work before logout"
+        );
         // Discard the rotated token — we only care about the final state after logout.
     }
 
@@ -418,7 +421,9 @@ async fn test_totp_pending_token_rejected_after_login_verify() {
     )
     .await;
     let secret = enroll_body["secret"].as_str().unwrap();
-    let secret_bytes = totp_rs::Secret::Encoded(secret.to_string()).to_bytes().unwrap();
+    let secret_bytes = totp_rs::Secret::Encoded(secret.to_string())
+        .to_bytes()
+        .unwrap();
     let totp = TOTP::new(
         Algorithm::SHA1,
         6,
@@ -439,7 +444,10 @@ async fn test_totp_pending_token_rejected_after_login_verify() {
             .to_request(),
     )
     .await;
-    assert!(verify_resp.status().is_success(), "TOTP enrollment verify must succeed");
+    assert!(
+        verify_resp.status().is_success(),
+        "TOTP enrollment verify must succeed"
+    );
 
     // --- Phase 2: fresh login now requires TOTP ---
     let pending_body: serde_json::Value = test::read_body_json(
@@ -470,7 +478,11 @@ async fn test_totp_pending_token_rejected_after_login_verify() {
             .to_request(),
     )
     .await;
-    assert_eq!(me_resp.status().as_u16(), 403, "pending token must be rejected for /me");
+    assert_eq!(
+        me_resp.status().as_u16(),
+        403,
+        "pending token must be rejected for /me"
+    );
 
     // --- Phase 3: complete TOTP login ---
     let verified_body: serde_json::Value = test::read_body_json(
@@ -487,8 +499,14 @@ async fn test_totp_pending_token_rejected_after_login_verify() {
     .await;
     let full_token = verified_body["access_token"].as_str().unwrap().to_string();
     let full_refresh = verified_body["refresh_token"].as_str().unwrap().to_string();
-    assert!(!full_token.is_empty(), "login-verify must return a new access token");
-    assert!(!full_refresh.is_empty(), "login-verify must return a new refresh token");
+    assert!(
+        !full_token.is_empty(),
+        "login-verify must return a new access token"
+    );
+    assert!(
+        !full_refresh.is_empty(),
+        "login-verify must return a new refresh token"
+    );
 
     // --- Phase 4: old pending token must now be rejected ---
     let me_with_pending = test::call_service(
@@ -770,7 +788,10 @@ async fn test_refresh_works_with_only_the_httponly_cookie() {
         "refresh cookie must be HttpOnly"
     );
     let cookie_value = cookie.value().to_string();
-    assert!(!cookie_value.is_empty(), "refresh cookie must carry a token");
+    assert!(
+        !cookie_value.is_empty(),
+        "refresh cookie must carry a token"
+    );
 
     // Refresh with ONLY the cookie — no JSON body token at all.
     let refresh_resp = test::call_service(

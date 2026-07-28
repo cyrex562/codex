@@ -286,7 +286,10 @@ pub async fn run(config: AppConfig) -> anyhow::Result<()> {
 
     match (bootstrap_username, bootstrap_password) {
         (Some(username), Some(password)) => {
-            match db.bootstrap_admin_if_empty(Some(username), Some(password)).await {
+            match db
+                .bootstrap_admin_if_empty(Some(username), Some(password))
+                .await
+            {
                 Ok(true) => info!(
                     "No users were found. Bootstrapped admin user '{username}' from config.toml"
                 ),
@@ -434,22 +437,24 @@ pub async fn run(config: AppConfig) -> anyhow::Result<()> {
             const REINDEX_THROTTLE_PAUSE_MS: u64 = 25;
             for (event_idx, change_event) in events.iter().enumerate() {
                 if event_idx > 0 && event_idx % REINDEX_THROTTLE_EVERY == 0 {
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        REINDEX_THROTTLE_PAUSE_MS,
-                    ))
-                    .await;
+                    tokio::time::sleep(std::time::Duration::from_millis(REINDEX_THROTTLE_PAUSE_MS))
+                        .await;
                 }
                 match &change_event.event_type {
                     models::FileChangeType::Created | models::FileChangeType::Modified => {
                         if change_event.path.ends_with(".md") {
-                            let vault_path = if let Some(p) = vault_cache.get(&change_event.vault_id) {
-                                Some(p.clone())
-                            } else if let Ok(vault) = db_clone.get_vault(&change_event.vault_id).await {
-                                vault_cache.insert(change_event.vault_id.clone(), vault.path.clone());
-                                Some(vault.path)
-                            } else {
-                                None
-                            };
+                            let vault_path =
+                                if let Some(p) = vault_cache.get(&change_event.vault_id) {
+                                    Some(p.clone())
+                                } else if let Ok(vault) =
+                                    db_clone.get_vault(&change_event.vault_id).await
+                                {
+                                    vault_cache
+                                        .insert(change_event.vault_id.clone(), vault.path.clone());
+                                    Some(vault.path)
+                                } else {
+                                    None
+                                };
 
                             if let Some(vpath) = vault_path {
                                 let abs_path = format!(
@@ -465,7 +470,10 @@ pub async fn run(config: AppConfig) -> anyhow::Result<()> {
                                 )
                                 .await
                                 {
-                                    warn!("Entity index_file failed for {}: {e}", change_event.path);
+                                    warn!(
+                                        "Entity index_file failed for {}: {e}",
+                                        change_event.path
+                                    );
                                 }
                             }
                         }
@@ -484,8 +492,7 @@ pub async fn run(config: AppConfig) -> anyhow::Result<()> {
                         }
                     }
                     models::FileChangeType::Renamed { from, to } => {
-                        let _ =
-                            search_index_clone.remove_file(&change_event.vault_id, from);
+                        let _ = search_index_clone.remove_file(&change_event.vault_id, from);
                         if let Err(e) =
                             ReindexService::remove_file(&db_clone, &change_event.vault_id, from)
                                 .await
@@ -493,29 +500,28 @@ pub async fn run(config: AppConfig) -> anyhow::Result<()> {
                             warn!("Entity remove_file (rename from) failed for {from}: {e}");
                         }
                         if to.ends_with(".md") {
-                            let vault_path = if let Some(p) = vault_cache.get(&change_event.vault_id) {
-                                Some(p.clone())
-                            } else if let Ok(vault) =
-                                db_clone.get_vault(&change_event.vault_id).await
-                            {
-                                vault_cache.insert(change_event.vault_id.clone(), vault.path.clone());
-                                Some(vault.path)
-                            } else {
-                                None
-                            };
+                            let vault_path =
+                                if let Some(p) = vault_cache.get(&change_event.vault_id) {
+                                    Some(p.clone())
+                                } else if let Ok(vault) =
+                                    db_clone.get_vault(&change_event.vault_id).await
+                                {
+                                    vault_cache
+                                        .insert(change_event.vault_id.clone(), vault.path.clone());
+                                    Some(vault.path)
+                                } else {
+                                    None
+                                };
 
                             if let Some(vpath) = vault_path {
-                                if let Ok(content) =
-                                    services::FileService::read_file(&vpath, to)
-                                {
+                                if let Ok(content) = services::FileService::read_file(&vpath, to) {
                                     let _ = search_index_clone.update_file(
                                         &change_event.vault_id,
                                         to,
                                         content.content,
                                     );
                                 }
-                                let abs_path =
-                                    format!("{}/{}", vpath.trim_end_matches('/'), to);
+                                let abs_path = format!("{}/{}", vpath.trim_end_matches('/'), to);
                                 if let Err(e) = ReindexService::index_file(
                                     &db_clone,
                                     &change_event.vault_id,
@@ -547,22 +553,35 @@ pub async fn run(config: AppConfig) -> anyhow::Result<()> {
                     };
 
                     if let Some(vpath) = vault_path {
-                        let (event_str, log_path, old_path, hash_path) = match &change_event.event_type {
-                            models::FileChangeType::Created => {
-                                ("created", change_event.path.as_str(), None, Some(change_event.path.as_str()))
-                            }
-                            models::FileChangeType::Modified => {
-                                ("modified", change_event.path.as_str(), None, Some(change_event.path.as_str()))
-                            }
-                            models::FileChangeType::Deleted => {
-                                ("deleted", change_event.path.as_str(), None, None)
-                            }
-                            models::FileChangeType::Renamed { from, to } => {
-                                ("renamed", to.as_str(), Some(from.as_str()), Some(to.as_str()))
-                            }
-                        };
-                        let content_hash = hash_path
-                            .and_then(|p| services::FileService::content_hash(&vpath, p).ok().flatten());
+                        let (event_str, log_path, old_path, hash_path) =
+                            match &change_event.event_type {
+                                models::FileChangeType::Created => (
+                                    "created",
+                                    change_event.path.as_str(),
+                                    None,
+                                    Some(change_event.path.as_str()),
+                                ),
+                                models::FileChangeType::Modified => (
+                                    "modified",
+                                    change_event.path.as_str(),
+                                    None,
+                                    Some(change_event.path.as_str()),
+                                ),
+                                models::FileChangeType::Deleted => {
+                                    ("deleted", change_event.path.as_str(), None, None)
+                                }
+                                models::FileChangeType::Renamed { from, to } => (
+                                    "renamed",
+                                    to.as_str(),
+                                    Some(from.as_str()),
+                                    Some(to.as_str()),
+                                ),
+                            };
+                        let content_hash = hash_path.and_then(|p| {
+                            services::FileService::content_hash(&vpath, p)
+                                .ok()
+                                .flatten()
+                        });
                         if let Err(e) = db_clone
                             .log_file_change(
                                 &change_event.vault_id,

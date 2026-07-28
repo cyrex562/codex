@@ -151,9 +151,15 @@ async fn generate_suggestions(
 
     // LIB-062: semantic/TF-IDF folder placement. When it yields a target, it
     // replaces the heuristic `move_to_folder` suggestion from Tier 1.
-    if let Some(folder_suggestion) =
-        suggest_folder_placement(&state.db, &config.ml, &vault_id, &vault.path, &req.file_path, &content)
-            .await?
+    if let Some(folder_suggestion) = suggest_folder_placement(
+        &state.db,
+        &config.ml,
+        &vault_id,
+        &vault.path,
+        &req.file_path,
+        &content,
+    )
+    .await?
     {
         suggestions
             .suggestions
@@ -167,7 +173,9 @@ async fn generate_suggestions(
             .partial_cmp(&a.confidence)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    suggestions.suggestions.truncate(max_suggestions.clamp(1, 25));
+    suggestions
+        .suggestions
+        .truncate(max_suggestions.clamp(1, 25));
 
     Ok(HttpResponse::Ok().json(suggestions))
 }
@@ -381,12 +389,9 @@ async fn apply_suggestion_core(
             }
         }
         OrganizationSuggestionKind::Category => {
-            let category = suggestion
-                .category
-                .as_ref()
-                .ok_or(AppError::InvalidInput(
-                    "category suggestion requires 'category'".to_string(),
-                ))?;
+            let category = suggestion.category.as_ref().ok_or(AppError::InvalidInput(
+                "category suggestion requires 'category'".to_string(),
+            ))?;
 
             let file = FileService::read_file(&vault.path, file_path)?;
             let mut frontmatter = ensure_frontmatter_object(file.frontmatter);
@@ -440,13 +445,12 @@ async fn apply_suggestion_core(
             }
         }
         OrganizationSuggestionKind::MoveToFolder => {
-            let target_folder =
-                suggestion
-                    .target_folder
-                    .as_ref()
-                    .ok_or(AppError::InvalidInput(
-                        "move_to_folder suggestion requires 'target_folder'".to_string(),
-                    ))?;
+            let target_folder = suggestion
+                .target_folder
+                .as_ref()
+                .ok_or(AppError::InvalidInput(
+                    "move_to_folder suggestion requires 'target_folder'".to_string(),
+                ))?;
 
             let normalized_folder = normalize_target_folder(target_folder)?;
             let filename = Path::new(file_path)
@@ -596,11 +600,10 @@ async fn apply_suggestion_core(
                 // Update the search index for the renamed file itself.
                 let _ = state.search_index.remove_file(vault_id, &original_path);
                 if let Ok(updated_file) = FileService::read_file(&vault.path, &final_path) {
-                    let _ = state.search_index.update_file(
-                        vault_id,
-                        &final_path,
-                        updated_file.content,
-                    );
+                    let _ =
+                        state
+                            .search_index
+                            .update_file(vault_id, &final_path, updated_file.content);
                 }
 
                 updated_file_path = Some(final_path.clone());
@@ -668,12 +671,14 @@ async fn organize_vault(
     .await?;
 
     // Notify subscribers on the authorized WS channel that the plan is ready.
-    let _ = state.ws_broadcaster.send(crate::models::WsMessage::OrganizeComplete {
-        vault_id: vault_id.clone(),
-        plan_id: plan.plan_id.clone(),
-        row_count: plan.rows.len(),
-        cluster_count: plan.cluster_count,
-    });
+    let _ = state
+        .ws_broadcaster
+        .send(crate::models::WsMessage::OrganizeComplete {
+            vault_id: vault_id.clone(),
+            plan_id: plan.plan_id.clone(),
+            row_count: plan.rows.len(),
+            cluster_count: plan.cluster_count,
+        });
 
     Ok(HttpResponse::Ok().json(plan))
 }
@@ -1099,7 +1104,9 @@ async fn suggest_folder_placement(
         .map(|(rel, raw)| (parent_dir(rel.trim_start_matches('/')), raw))
         .collect();
 
-    if let Some((folder, score)) = MlService::nearest_folder_tfidf(content, &notes, ml.min_confidence) {
+    if let Some((folder, score)) =
+        MlService::nearest_folder_tfidf(content, &notes, ml.min_confidence)
+    {
         if folder != current {
             return Ok(Some(folder_move_suggestion(folder, score, "tfidf")));
         }
@@ -1157,8 +1164,14 @@ async fn undo_ml_action(
     body: web::Json<Value>,
 ) -> AppResult<HttpResponse> {
     let vault_id = vault_id.into_inner();
-    let group_id = body.get("group_id").and_then(Value::as_str).map(str::to_string);
-    let receipt_id = body.get("receipt_id").and_then(Value::as_str).map(str::to_string);
+    let group_id = body
+        .get("group_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let receipt_id = body
+        .get("receipt_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
     let vault = state.db.get_vault(&vault_id).await?;
 
@@ -1205,11 +1218,7 @@ async fn undo_ml_action(
 /// Record a reject signal (LIB-075) when an applied organize action is undone:
 /// a folder move that was reverted demotes that destination folder, a tag that
 /// was removed demotes that tag. Other reverse actions carry no folder/tag.
-async fn record_undo_rejection(
-    state: &AppState,
-    vault_id: &str,
-    receipt: &MlUndoReceipt,
-) {
+async fn record_undo_rejection(state: &AppState, vault_id: &str, receipt: &MlUndoReceipt) {
     match &receipt.reverse_action {
         ReverseAction::MoveBack { to_path, .. } => {
             let folder = parent_dir(to_path);
@@ -1338,9 +1347,7 @@ fn apply_reverse_action(
                     None,
                     file.frontmatter.as_ref(),
                 )?;
-                let _ = state
-                    .search_index
-                    .update_file(vault_id, rel, restored_body);
+                let _ = state.search_index.update_file(vault_id, rel, restored_body);
             }
         }
     }

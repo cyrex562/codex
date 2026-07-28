@@ -100,7 +100,10 @@ fn build_desktop(release: bool) {
         args.push("--release");
     }
     eprintln!("→ cargo {}", args.join(" "));
-    run(Command::new("cargo").args(&args).current_dir(&root), "cargo build");
+    run(
+        Command::new("cargo").args(&args).current_dir(&root),
+        "cargo build",
+    );
 
     let profile = if release { "release" } else { "debug" };
     let bin = if cfg!(windows) {
@@ -123,7 +126,10 @@ fn run_desktop(release: bool) {
         args.push("--release");
     }
     eprintln!("→ cargo {}", args.join(" "));
-    run(Command::new("cargo").args(&args).current_dir(&root), "cargo run");
+    run(
+        Command::new("cargo").args(&args).current_dir(&root),
+        "cargo run",
+    );
 }
 
 /// Forward a command to the deployment CLI (`scripts/librarium.py`), passing the
@@ -162,7 +168,10 @@ fn python_exe() -> &'static str {
 fn npm(dir: &Path, args: &[&str]) {
     if cfg!(windows) {
         let line = format!("npm {}", args.join(" "));
-        run(Command::new("cmd").arg("/C").arg(line).current_dir(dir), "npm");
+        run(
+            Command::new("cmd").arg("/C").arg(line).current_dir(dir),
+            "npm",
+        );
     } else {
         run(Command::new("npm").args(args).current_dir(dir), "npm");
     }

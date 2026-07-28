@@ -65,7 +65,9 @@ async fn notify(app: AppHandle, title: String, body: String) -> Result<(), Strin
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     if !is_allowed_external_url(&url) {
-        return Err(format!("refusing to open URL with unsupported scheme: {url}"));
+        return Err(format!(
+            "refusing to open URL with unsupported scheme: {url}"
+        ));
     }
     open::that_detached(&url).map_err(|e| format!("open failed: {e}"))
 }
@@ -87,10 +89,7 @@ fn is_allowed_external_url(url: &str) -> bool {
 /// Silently returns the error string on IO failure — the frontend logs it to
 /// the JS console; we don't want a broken filesystem to bring down real work.
 #[tauri::command]
-fn frontend_log(
-    log: tauri::State<'_, FrontendLog>,
-    record: LogRecord,
-) -> Result<(), String> {
+fn frontend_log(log: tauri::State<'_, FrontendLog>, record: LogRecord) -> Result<(), String> {
     log.append(&record).map_err(|e| e.to_string())
 }
 
@@ -132,9 +131,7 @@ async fn sync_map_vault(
 
 /// List configured remotes (never exposes API keys).
 #[tauri::command]
-async fn sync_list_remotes(
-    handle: tauri::State<'_, SyncHandle>,
-) -> Result<Vec<RemoteDto>, String> {
+async fn sync_list_remotes(handle: tauri::State<'_, SyncHandle>) -> Result<Vec<RemoteDto>, String> {
     handle.list_remotes().await.map_err(|e| e.to_string())
 }
 
@@ -169,7 +166,10 @@ async fn sync_remove_remote(
     handle: tauri::State<'_, SyncHandle>,
     remote_id: String,
 ) -> Result<(), String> {
-    handle.remove_remote(remote_id).await.map_err(|e| e.to_string())
+    handle
+        .remove_remote(remote_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Remove a single local-to-remote vault mapping.
@@ -624,10 +624,7 @@ mod tests {
             "mailto:alice@example.com",
             "tel:+1-555-0100",
         ] {
-            assert!(
-                is_allowed_external_url(url),
-                "expected {url} to be allowed"
-            );
+            assert!(is_allowed_external_url(url), "expected {url} to be allowed");
         }
     }
 

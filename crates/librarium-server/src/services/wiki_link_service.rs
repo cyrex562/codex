@@ -440,9 +440,7 @@ fn rewrite_link_inner(
     old_dir: &str,
 ) -> Option<String> {
     // Target is everything before the first alias/heading/block marker.
-    let target_end = inner
-        .find(['|', '#', '^'])
-        .unwrap_or(inner.len());
+    let target_end = inner.find(['|', '#', '^']).unwrap_or(inner.len());
     let target = inner[..target_end].trim();
     let suffix = &inner[target_end..];
     if target.is_empty() {

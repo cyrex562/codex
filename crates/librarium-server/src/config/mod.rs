@@ -625,8 +625,7 @@ impl AppConfig {
 
     /// Serialize this config and write it to `path`, overwriting any existing file.
     pub fn write_to_file(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        let content = toml::to_string_pretty(self)
-            .context("Failed to serialize config to TOML")?;
+        let content = toml::to_string_pretty(self).context("Failed to serialize config to TOML")?;
         std::fs::write(path, &content)
             .with_context(|| format!("Failed to write config to {}", path.display()))?;
         Ok(())

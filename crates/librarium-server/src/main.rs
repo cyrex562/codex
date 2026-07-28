@@ -48,7 +48,9 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let config_path = locate_config(args.config);
     let config = librarium::config::AppConfig::load_from_file(config_path).unwrap_or_else(|e| {
-        eprintln!("Warning: {e}. Using default configuration plus LIBRARIUM__* environment overrides.");
+        eprintln!(
+            "Warning: {e}. Using default configuration plus LIBRARIUM__* environment overrides."
+        );
         librarium::config::AppConfig::load_from_env_or_default().unwrap_or_else(|env_err| {
             eprintln!("Warning: {env_err}. Using built-in default configuration.");
             librarium::config::AppConfig::default()

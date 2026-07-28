@@ -818,8 +818,7 @@ impl FileService {
                 // 0), whose own name is irrelevant and may legitimately start
                 // with a dot (e.g. a vault under a hidden or temp directory).
                 e.depth() == 0
-                    || e
-                        .file_name()
+                    || e.file_name()
                         .to_str()
                         .map(|n| !n.starts_with('.'))
                         .unwrap_or(false)
@@ -835,7 +834,10 @@ impl FileService {
                 Err(_) => continue,
             };
             let metadata = entry.metadata().ok();
-            let size = metadata.as_ref().map(|m| m.len()).unwrap_or(bytes.len() as u64);
+            let size = metadata
+                .as_ref()
+                .map(|m| m.len())
+                .unwrap_or(bytes.len() as u64);
             let mtime_ms = metadata
                 .and_then(|m| m.modified().ok())
                 .and_then(system_time_to_datetime)

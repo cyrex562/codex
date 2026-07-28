@@ -88,7 +88,10 @@ fn main() {
     //      guaranteeing the assets are re-embedded, not just this script re-run.
     let frontend_dir = std::path::Path::new("../../target/frontend");
     println!("cargo:rerun-if-changed={}", frontend_dir.display());
-    println!("cargo:rustc-env=FRONTEND_STAMP={}", frontend_stamp(frontend_dir));
+    println!(
+        "cargo:rustc-env=FRONTEND_STAMP={}",
+        frontend_stamp(frontend_dir)
+    );
 }
 
 /// A cheap, dependency-free stamp of the built frontend: each file's relative
@@ -97,7 +100,9 @@ fn main() {
 /// Returns "absent" when the folder hasn't been built yet.
 fn frontend_stamp(dir: &std::path::Path) -> u64 {
     fn walk(dir: &std::path::Path, acc: &mut Vec<(String, u64)>) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {

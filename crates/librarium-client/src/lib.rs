@@ -1197,8 +1197,7 @@ impl ObsidianClient {
 
         if let Some(key) = api_key {
             let mut headers = HeaderMap::new();
-            let value =
-                HeaderValue::from_str(&key).map_err(|_| ClientError::InvalidAuthHeader)?;
+            let value = HeaderValue::from_str(&key).map_err(|_| ClientError::InvalidAuthHeader)?;
             headers.insert("X-API-Key", value);
             Ok(Some(headers))
         } else if let Some(token) = token {
