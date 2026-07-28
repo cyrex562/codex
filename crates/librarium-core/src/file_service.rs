@@ -162,7 +162,7 @@ impl FileService {
             .and_then(system_time_to_datetime)
             .unwrap_or_else(Utc::now);
         let (frontmatter, content) = if file_path.ends_with(".md") {
-            crate::services::frontmatter_service::parse_frontmatter(&raw_content)?
+            crate::frontmatter_service::parse_frontmatter(&raw_content)?
         } else {
             (None, raw_content)
         };
@@ -259,7 +259,7 @@ impl FileService {
 
         // Serialize frontmatter with content for markdown files
         let final_content = if file_path.ends_with(".md") {
-            crate::services::frontmatter_service::serialize_frontmatter(frontmatter, content)?
+            crate::frontmatter_service::serialize_frontmatter(frontmatter, content)?
         } else {
             content.to_string()
         };

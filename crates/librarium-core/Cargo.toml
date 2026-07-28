@@ -1,0 +1,42 @@
+[package]
+name = "librarium-core"
+version = "0.101.0"
+edition = "2021"
+
+[dependencies]
+librarium-types = { path = "../librarium-types" }
+serde = { version = "1.0", features = ["derive"] }
+# preserve_order: see librarium-server/Cargo.toml — frontmatter round-trips
+# depend on it to avoid silently reordering the user's YAML keys.
+serde_json = { version = "1.0", features = ["preserve_order"] }
+serde_yaml = "0.9"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+regex = "1.11"
+zip = "2.2"
+walkdir = "2.5"
+sha2 = "0.10"
+
+# Optional integrations. Neither is in the default feature set: this crate is
+# meant to be usable from a mobile client with no actix/sqlx/tokio in its
+# dependency tree. `librarium-server` enables both below.
+actix-web = { version = "4.9", optional = true }
+sqlx = { version = "0.8", optional = true, features = [
+    "runtime-tokio-rustls",
+    "sqlite",
+] }
+
+[features]
+default = []
+# AppError::error_response(): actix-web's ResponseError trait is foreign to
+# this crate, so librarium-server (which depends on both actix-web and this
+# crate) cannot provide the impl itself (orphan rule). Providing it here,
+# behind a feature, is the standard workaround.
+actix = ["dep:actix-web"]
+# AppError::DatabaseError and its constructors, gated so a consumer with no
+# database layer (e.g. a thin mobile client) doesn't pull in sqlx (and,
+# transitively, tokio) just to use AppError for filesystem errors.
+sqlx = ["dep:sqlx"]
+
+[dev-dependencies]
+tempfile = "3.14"

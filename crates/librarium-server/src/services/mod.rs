@@ -1,8 +1,13 @@
 pub mod auth_provider;
 pub mod embedding_service;
 pub mod entity_service;
-pub mod file_service;
-pub mod frontmatter_service;
+// `file_service` and `frontmatter_service` moved to `librarium-core` (LIB
+// Route-C-01): FileService owns path-traversal protection and needed no
+// actix/sqlx dependency, so it's shared with a future thin mobile client.
+// Re-exported as modules here so every existing `crate::services::…` path
+// keeps resolving.
+pub use librarium_core::file_service;
+pub use librarium_core::frontmatter_service;
 pub mod image_service;
 pub mod label_service;
 pub mod ldap_provider;

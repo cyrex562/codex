@@ -1,0 +1,10 @@
+//! Platform-independent core: error type, path-safe file operations, and
+//! frontmatter parsing. No actix, sqlx, or tokio in the default feature set —
+//! this crate is shared between `librarium-server` (which enables the `actix`
+//! and `sqlx` features below) and, eventually, a thin mobile client that
+//! embeds neither.
+
+pub mod error;
+pub mod file_service;
+pub mod frontmatter_service;
+pub mod models;
