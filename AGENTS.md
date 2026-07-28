@@ -5,6 +5,7 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
 ## Repository Map
 
 - `crates/librarium-server`: main Actix Web backend, default workspace member
+- `crates/librarium-core`: platform-independent core (`AppError`, `FileService`, frontmatter read/write) shared with non-server consumers; no actix/sqlx/tokio by default
 - `crates/librarium-types`: shared Rust DTOs and parser traits
 - `crates/librarium-client`: HTTP and WebSocket client crate
 - `crates/librarium-tauri`: desktop shell that embeds the frontend and server
@@ -43,7 +44,7 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
 ## Code Areas To Inspect Carefully
 
 - Auth and session behavior: `crates/librarium-server/src/routes/auth.rs`, `middleware/auth.rs`, `routes/totp.rs`
-- Filesystem mutation paths: `crates/librarium-server/src/services/file_service.rs`
+- Filesystem mutation paths: `crates/librarium-core/src/file_service.rs` (re-exported as `librarium::services::file_service`)
 - Search index consistency: `crates/librarium-server/src/services/search_service.rs`
 - Reindex and entity sync: `crates/librarium-server/src/services/reindex_service.rs`
 - Frontend editor state and tab behavior: `frontend/src/stores`, `frontend/src/components/editor`, `frontend/src/components/tabs`

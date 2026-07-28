@@ -1,6 +1,6 @@
 [package]
 name = "librarium-server"
-version = "0.100.0"
+version = "0.101.0"
 edition = "2021"
 
 [lib]
@@ -101,6 +101,7 @@ image = { version = "0.24", default-features = false, features = [
 ] }
 clap = { version = "4", features = ["derive", "env"] }
 librarium-types = { path = "../librarium-types" }
+librarium-core = { path = "../librarium-core", features = ["actix", "sqlx"] }
 bytes = "1"
 tantivy = { version = "0.22", default-features = false, features = ["mmap"] }
 jsonschema = { version = "0.28", default-features = false }

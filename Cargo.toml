@@ -1,6 +1,7 @@
 [workspace]
 members = [
 	"crates/librarium-server",
+	"crates/librarium-core",
 	"crates/librarium-types",
 	"crates/librarium-client",
 	"crates/librarium-sync",
