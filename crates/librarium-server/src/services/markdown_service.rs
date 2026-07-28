@@ -11,8 +11,8 @@ use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
 // Lazy-loaded syntax set and theme for performance
-static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(|| SyntaxSet::load_defaults_newlines());
-static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(|| ThemeSet::load_defaults());
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 static WIKI_LINK_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(!?)\[\[([^\]|]+)(?:\|([^\]]+))?\]\]").unwrap());
 static TAG_REGEX: LazyLock<Regex> =

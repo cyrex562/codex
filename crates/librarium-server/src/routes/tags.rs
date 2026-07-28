@@ -70,7 +70,7 @@ async fn list_tags(
         })
         .collect();
 
-    entries.sort_by(|a, b| a.tag.to_lowercase().cmp(&b.tag.to_lowercase()));
+    entries.sort_by_key(|a| a.tag.to_lowercase());
 
     Ok(HttpResponse::Ok().json(entries))
 }

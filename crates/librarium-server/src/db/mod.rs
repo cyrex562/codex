@@ -2456,6 +2456,10 @@ impl Database {
     /// skipped. This makes it safe for both an API handler and the watcher to log
     /// the same physical write; whichever runs second observes an identical hash
     /// and does nothing, which is the primary defense against double-logging.
+    // 8 parameters, one over clippy's threshold. Folding them into a params
+    // struct would touch every caller across routes/ and the watcher; that is a
+    // deliberate refactor, not CI hygiene.
+    #[allow(clippy::too_many_arguments)]
     pub async fn log_file_change(
         &self,
         vault_id: &str,

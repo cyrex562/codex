@@ -170,6 +170,12 @@ fn is_upload_path(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    // These tests mutate process-global RATE_LIMIT_* env vars, so they must not
+    // interleave. Holding the guard across the awaits is the point — a
+    // tokio::sync::Mutex would not serialise against the `Drop` impl below, which
+    // is synchronous. Test-only, single-threaded actix runtime, no deadlock risk.
+    #![allow(clippy::await_holding_lock)]
+
     use super::RateLimitMiddleware;
     use actix_web::{http::StatusCode, test, web, App, HttpResponse};
     use std::sync::{Mutex, OnceLock};

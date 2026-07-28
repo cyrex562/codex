@@ -19,6 +19,11 @@ use walkdir::WalkDir;
 struct EntityMeta {
     entity_type: Option<String>,
     labels: Vec<String>,
+    /// Concatenated non-reserved frontmatter string values. Populated by
+    /// `extract_entity_meta` and covered by unit tests, but not yet consumed by
+    /// the indexer — see the PR discussion; either wire it into the searchable
+    /// document or drop it, don't leave it half-connected.
+    #[allow(dead_code)]
     extra_text: String,
 }
 
@@ -404,10 +409,8 @@ impl SearchIndex {
                 .collect();
             if let Ok(json) = serde_json::to_string(&snapshot) {
                 let tmp = mp.with_extension("json.tmp");
-                if std::fs::write(&tmp, &json).is_ok() {
-                    if std::fs::rename(&tmp, mp).is_err() {
-                        let _ = std::fs::remove_file(&tmp);
-                    }
+                if std::fs::write(&tmp, &json).is_ok() && std::fs::rename(&tmp, mp).is_err() {
+                    let _ = std::fs::remove_file(&tmp);
                 }
             }
         }

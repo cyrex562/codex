@@ -1176,6 +1176,10 @@ impl ObsidianClient {
         })
     }
 
+    // `ClientError::WebSocket` wraps a 136-byte tungstenite error. Boxing it to
+    // satisfy the lint would change the public enum's shape for every consumer;
+    // that is an API decision, not CI hygiene.
+    #[allow(clippy::result_large_err)]
     fn auth_header(token: &str) -> Result<HeaderMap, ClientError> {
         let mut headers = HeaderMap::new();
         let value = HeaderValue::from_str(&format!("Bearer {token}"))
@@ -1186,6 +1190,7 @@ impl ObsidianClient {
 
     /// Build the auth headers to attach to a request. An API key (`X-API-Key`)
     /// takes precedence over a bearer token; returns `None` when unauthenticated.
+    #[allow(clippy::result_large_err)]
     fn auth_headers(&self) -> Result<Option<HeaderMap>, ClientError> {
         let (api_key, token) = {
             let auth = self

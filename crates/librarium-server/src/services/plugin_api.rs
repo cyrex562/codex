@@ -314,8 +314,11 @@ pub enum EventType {
     CommandExecute,
 }
 
+/// One subscriber: its id and the callback to invoke.
+type Subscriber = (String, Box<dyn Fn(Event) + Send + Sync>);
+
 pub struct EventBus {
-    subscribers: HashMap<EventType, Vec<(String, Box<dyn Fn(Event) + Send + Sync>)>>,
+    subscribers: HashMap<EventType, Vec<Subscriber>>,
     commands: HashMap<String, Command>,
     next_id: usize,
 }
@@ -338,7 +341,7 @@ impl EventBus {
 
         self.subscribers
             .entry(event_type)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push((id.clone(), callback));
 
         id
@@ -404,7 +407,7 @@ impl PluginStorage {
     pub fn set(&mut self, plugin_id: &str, key: &str, value: serde_json::Value) {
         self.data
             .entry(plugin_id.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(key.to_string(), value);
     }
 

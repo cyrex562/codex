@@ -1,8 +1,4 @@
 use actix_web::{http::header, test, web, App};
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
-    Argon2,
-};
 use librarium::config::AppConfig;
 use librarium::db::Database;
 use librarium::middleware::AuthMiddleware;
@@ -14,14 +10,6 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::{broadcast, Mutex};
 use totp_rs::{Algorithm, Secret, TOTP};
-
-fn password_hash(password: &str) -> String {
-    let salt = SaltString::generate(&mut OsRng);
-    Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .unwrap()
-        .to_string()
-}
 
 #[actix_web::test]
 async fn verify_api_keys_and_totp() {

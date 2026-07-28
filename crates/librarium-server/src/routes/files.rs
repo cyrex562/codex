@@ -999,7 +999,7 @@ fn render_file_tree_to_html(nodes: &[crate::models::FileNode]) -> String {
 
         // Add expand/collapse arrow for folders with children
         let has_children =
-            node.is_directory && node.children.as_ref().map_or(false, |c| !c.is_empty());
+            node.is_directory && node.children.as_ref().is_some_and(|c| !c.is_empty());
         let arrow = if has_children {
             r#"<span class="folder-arrow">▼</span>"#
         } else {

@@ -5,10 +5,11 @@ use serde::{Deserialize, Serialize};
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// The primitive type of a schema field.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FieldType {
     /// Single-line text
+    #[default]
     String,
     /// Multi-line text (not the prose zone)
     Text,
@@ -25,12 +26,6 @@ pub enum FieldType {
     /// Repeating list of any other type
     #[serde(rename = "list")]
     List,
-}
-
-impl Default for FieldType {
-    fn default() -> Self {
-        FieldType::String
-    }
 }
 
 /// Definition of a single field in an entity type.

@@ -380,26 +380,26 @@ pub async fn run(config: AppConfig) -> anyhow::Result<()> {
 
             for event in &events {
                 match &event.event_type {
-                    models::FileChangeType::Created | models::FileChangeType::Modified => {
-                        if event.path.ends_with(".md") {
-                            let vault_path = if let Some(p) = vault_cache.get(&event.vault_id) {
-                                Some(p.clone())
-                            } else if let Ok(vault) = db_clone.get_vault(&event.vault_id).await {
-                                vault_cache.insert(event.vault_id.clone(), vault.path.clone());
-                                Some(vault.path)
-                            } else {
-                                None
-                            };
+                    models::FileChangeType::Created | models::FileChangeType::Modified
+                        if event.path.ends_with(".md") =>
+                    {
+                        let vault_path = if let Some(p) = vault_cache.get(&event.vault_id) {
+                            Some(p.clone())
+                        } else if let Ok(vault) = db_clone.get_vault(&event.vault_id).await {
+                            vault_cache.insert(event.vault_id.clone(), vault.path.clone());
+                            Some(vault.path)
+                        } else {
+                            None
+                        };
 
-                            if let Some(vpath) = vault_path {
-                                if let Ok(content) =
-                                    services::FileService::read_file(&vpath, &event.path)
-                                {
-                                    batch_by_vault
-                                        .entry(event.vault_id.clone())
-                                        .or_default()
-                                        .push((event.path.clone(), content.content));
-                                }
+                        if let Some(vpath) = vault_path {
+                            if let Ok(content) =
+                                services::FileService::read_file(&vpath, &event.path)
+                            {
+                                batch_by_vault
+                                    .entry(event.vault_id.clone())
+                                    .or_default()
+                                    .push((event.path.clone(), content.content));
                             }
                         }
                     }

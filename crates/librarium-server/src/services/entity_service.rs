@@ -209,15 +209,15 @@ impl EntityService {
                 indexed_at  = excluded.indexed_at
             "#,
         )
-        .bind(&id)
+        .bind(id)
         .bind(vault_id)
         .bind(path)
-        .bind(&entity_type)
-        .bind(&plugin_id)
-        .bind(&labels_json)
-        .bind(&fields_json)
+        .bind(entity_type)
+        .bind(plugin_id)
+        .bind(labels_json)
+        .bind(fields_json)
         .bind(file_modified_at)
-        .bind(&now)
+        .bind(now)
         .execute(db.pool())
         .await
         .map_err(|e| AppError::DatabaseError(crate::error::DatabaseErrorContext {
