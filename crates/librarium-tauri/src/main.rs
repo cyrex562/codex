@@ -503,8 +503,17 @@ pub(crate) fn deep_link_to_app_path(url: &str) -> String {
         .strip_prefix("librarium://open")
         .or_else(|| url.strip_prefix("librarium://"))
         .unwrap_or("/");
-    let path = if stripped.is_empty() { "/" } else { stripped };
-    format!("#{path}")
+    // The bare-`librarium://` fallback strips the separator along with the
+    // scheme, so `librarium://vault/xyz` arrives here as `vault/xyz` — emitting
+    // that verbatim yields `#vault/xyz`, which the router cannot match. Root the
+    // path (which also covers the empty case, `librarium://` → `#/`).
+    let mut path = String::with_capacity(stripped.len() + 2);
+    path.push('#');
+    if !stripped.starts_with('/') {
+        path.push('/');
+    }
+    path.push_str(stripped);
+    path
 }
 
 // ── Health polling ────────────────────────────────────────────────────────────
