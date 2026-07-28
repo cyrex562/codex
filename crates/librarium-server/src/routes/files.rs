@@ -1405,22 +1405,32 @@ async fn import_archive(
                 continue;
             }
             let dest = target_dir.join(&raw_name);
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent)?;
+            let Some(parent) = dest.parent() else {
+                continue;
+            };
+            std::fs::create_dir_all(parent)?;
+            // Verify the resolved destination stays inside target_dir. `dest` is
+            // the file we are about to create, so it does not exist yet and
+            // canonicalizing it would ALWAYS fail (silently skipping every new
+            // entry). Canonicalize its parent instead — just created above, so
+            // it resolves — which collapses any symlinked directory component an
+            // archive might have smuggled in. Skip rather than risk an escape if
+            // either path can't be resolved.
+            let (Ok(canonical_parent), Ok(canonical_target)) =
+                (parent.canonicalize(), target_dir.canonicalize())
+            else {
+                continue;
+            };
+            if !canonical_parent.starts_with(&canonical_target) {
+                continue;
             }
-            // Canonicalize the resolved destination and verify it stays inside
-            // target_dir. The parent directory was just created above so
-            // canonicalize should succeed; if it doesn't, skip the entry rather
-            // than risk writing outside the vault.
-            let canonical_dest = match dest.canonicalize() {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            let canonical_target = match target_dir.canonicalize() {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            if !canonical_dest.starts_with(&canonical_target) {
+            // The final component must not be an existing symlink: `unpack`
+            // follows it and would write through to wherever it points.
+            // `symlink_metadata` does not follow, so it sees the link itself.
+            if dest
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink())
+            {
                 continue;
             }
             let final_dest = match (dest.exists(), query.conflict) {
