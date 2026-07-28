@@ -4,6 +4,7 @@ use argon2::{
     Argon2,
 };
 use awc::ws::Frame;
+use futures::StreamExt;
 use librarium::config::AppConfig;
 use librarium::db::Database;
 use librarium::middleware::AuthMiddleware;
@@ -11,7 +12,6 @@ use librarium::models::{VaultRole, WsMessage};
 use librarium::routes::{auth, ws, AppState};
 use librarium::services::{MarkdownParser, SearchIndex};
 use librarium::watcher::FileWatcher;
-use futures::StreamExt;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;

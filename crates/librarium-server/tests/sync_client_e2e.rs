@@ -139,12 +139,18 @@ async fn sync_endpoints_round_trip_over_http_with_api_key() {
     );
 
     // 4. Raw byte download matches what is on disk.
-    let bytes = client.download_file_bytes(&vault_id, "note.md").await.unwrap();
+    let bytes = client
+        .download_file_bytes(&vault_id, "note.md")
+        .await
+        .unwrap();
     let on_disk = std::fs::read(vault_dir.join("note.md")).unwrap();
     assert_eq!(bytes, on_disk);
 
     // 5. A cursor at the head returns no events but still reports the head.
-    let empty = client.get_changes_since_seq(&vault_id, page.head_seq).await.unwrap();
+    let empty = client
+        .get_changes_since_seq(&vault_id, page.head_seq)
+        .await
+        .unwrap();
     assert!(empty.events.is_empty());
     assert_eq!(empty.head_seq, page.head_seq);
 

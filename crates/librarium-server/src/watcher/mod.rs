@@ -181,7 +181,10 @@ impl FileWatcher {
                 EventKind::Modify(_) => FileChangeType::Modified,
                 // Access, Other, etc. — not actionable for the index.
                 _ => {
-                    warn!("Unhandled notify event kind {:?} for {:?}", event.kind, abs_path);
+                    warn!(
+                        "Unhandled notify event kind {:?} for {:?}",
+                        event.kind, abs_path
+                    );
                     continue;
                 }
             };

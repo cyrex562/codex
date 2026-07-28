@@ -186,8 +186,10 @@ async fn totp_login_verify(
         .create_session(&refresh_jti, &user.user_id, refresh_exp)
         .await?;
 
-    let refresh_cookie =
-        crate::routes::auth::build_refresh_cookie(&response.refresh_token, config.auth.refresh_token_ttl);
+    let refresh_cookie = crate::routes::auth::build_refresh_cookie(
+        &response.refresh_token,
+        config.auth.refresh_token_ttl,
+    );
     Ok(HttpResponse::Ok()
         .cookie(refresh_cookie)
         .json(TotpLoginVerifyResponse {

@@ -87,27 +87,82 @@ fn main() {
     //      assets.rs, so the crate's own fingerprint changes when the SPA does —
     //      guaranteeing the assets are re-embedded, not just this script re-run.
     let frontend_dir = std::path::Path::new("../../target/frontend");
+    // Runs before the stamp so the placeholder (when one is needed) is included
+    // in it, and before crate compilation so the RustEmbed derive always finds
+    // a folder to read.
+    ensure_frontend_placeholder(frontend_dir);
     println!("cargo:rerun-if-changed={}", frontend_dir.display());
-    println!("cargo:rustc-env=FRONTEND_STAMP={}", frontend_stamp(frontend_dir));
+    println!(
+        "cargo:rustc-env=FRONTEND_STAMP={}",
+        frontend_stamp(frontend_dir)
+    );
 }
+
+/// The SPA lives in `target/frontend/`, which is gitignored — so in a fresh
+/// clone it does not exist. rust-embed validates `#[folder = ...]` at COMPILE
+/// time, which means `cargo check`/`cargo test` on this crate fails outright
+/// before a single test can run, with an error that points at assets.rs rather
+/// than at the real cause. Seeding a minimal placeholder here fixes that at the
+/// root: build scripts run before the crate (and therefore before the derive
+/// macro expands), so the folder is always present by the time it is read.
+///
+/// Only acts when the folder is missing or contains no files, so it can never
+/// clobber a real `npm run build` / `cargo xtask build-frontend` output. The
+/// placeholder is an ordinary file as far as [`frontend_stamp`] is concerned,
+/// so the first real frontend build still changes the stamp and forces the
+/// assets to be re-embedded — the stale-UI protection stays intact.
+fn ensure_frontend_placeholder(dir: &std::path::Path) {
+    let mut existing = Vec::new();
+    walk(dir, &mut existing);
+    if !existing.is_empty() {
+        return;
+    }
+
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        println!("cargo:warning=could not create {}: {e}", dir.display());
+        return;
+    }
+    if let Err(e) = std::fs::write(dir.join("index.html"), PLACEHOLDER_INDEX_HTML) {
+        println!("cargo:warning=could not write frontend placeholder: {e}");
+        return;
+    }
+    println!(
+        "cargo:warning=frontend not built; embedded a placeholder index.html. \
+         Run `npm --prefix frontend run build` (or `cargo xtask build-frontend`) \
+         to embed the real UI."
+    );
+}
+
+/// Stand-in for the real SPA. Deliberately dependency-free and self-explanatory:
+/// if a binary built this way is ever run, the user sees why the UI is missing
+/// instead of a blank page or a 404.
+const PLACEHOLDER_INDEX_HTML: &str = r#"<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Librarium — frontend not built</title>
+  </head>
+  <body>
+    <h1>Librarium</h1>
+    <p>
+      This server was compiled without a built frontend, so a placeholder page is
+      embedded in place of the Vue SPA. The REST API under <code>/api</code> is
+      fully functional.
+    </p>
+    <p>To build and embed the real UI:</p>
+    <pre>npm --prefix frontend ci
+npm --prefix frontend run build
+cargo build -p librarium-server</pre>
+  </body>
+</html>
+"#;
 
 /// A cheap, dependency-free stamp of the built frontend: each file's relative
 /// path plus its length, folded into a hash. Changes whenever any embedded asset
 /// is added, removed, or resized (which covers Vite's per-build hashed filenames).
 /// Returns "absent" when the folder hasn't been built yet.
 fn frontend_stamp(dir: &std::path::Path) -> u64 {
-    fn walk(dir: &std::path::Path, acc: &mut Vec<(String, u64)>) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, acc);
-            } else if let Ok(meta) = entry.metadata() {
-                acc.push((path.to_string_lossy().into_owned(), meta.len()));
-            }
-        }
-    }
-
     if !dir.exists() {
         return 0;
     }
@@ -124,4 +179,21 @@ fn frontend_stamp(dir: &std::path::Path) -> u64 {
         }
     }
     hash
+}
+
+/// Collects `(path, len)` for every file under `dir`, recursively. A missing or
+/// unreadable directory yields nothing rather than an error — callers treat
+/// "no files" and "no directory" identically.
+fn walk(dir: &std::path::Path, acc: &mut Vec<(String, u64)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk(&path, acc);
+        } else if let Ok(meta) = entry.metadata() {
+            acc.push((path.to_string_lossy().into_owned(), meta.len()));
+        }
+    }
 }

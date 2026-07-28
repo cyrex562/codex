@@ -2,8 +2,8 @@ use crate::error::{AppError, AppResult};
 use crate::middleware::AuthenticatedUser;
 use crate::routes::AppState;
 use crate::services::PluginService;
-use actix_web::{web, HttpMessage, HttpRequest, HttpResponse, Responder};
 use actix_web::ResponseError as _;
+use actix_web::{web, HttpMessage, HttpRequest, HttpResponse, Responder};
 use serde::Deserialize;
 use serde_json::json;
 

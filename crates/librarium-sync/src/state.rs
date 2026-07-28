@@ -486,7 +486,10 @@ mod tests {
         store.set_base_hash("r", "v", "a.md", None).await.unwrap();
         assert_eq!(store.get_base_hash("r", "v", "a.md").await.unwrap(), None);
         // Known hash round-trips.
-        store.set_base_hash("r", "v", "a.md", Some("h1")).await.unwrap();
+        store
+            .set_base_hash("r", "v", "a.md", Some("h1"))
+            .await
+            .unwrap();
         assert_eq!(
             store.get_base_hash("r", "v", "a.md").await.unwrap(),
             Some("h1".to_string())
@@ -517,8 +520,14 @@ mod tests {
     #[tokio::test]
     async fn known_paths_excludes_tombstones() {
         let store = SyncStore::open_in_memory().await.unwrap();
-        store.set_base_hash("r", "v", "keep.md", Some("h")).await.unwrap();
-        store.set_base_hash("r", "v", "gone.md", None).await.unwrap();
+        store
+            .set_base_hash("r", "v", "keep.md", Some("h"))
+            .await
+            .unwrap();
+        store
+            .set_base_hash("r", "v", "gone.md", None)
+            .await
+            .unwrap();
         let paths = store.known_paths("r", "v").await.unwrap();
         assert_eq!(paths, vec!["keep.md".to_string()]);
     }
@@ -545,7 +554,10 @@ mod tests {
             })
             .await
             .unwrap();
-        store.set_base_hash("r", "v", "a.md", Some("h")).await.unwrap();
+        store
+            .set_base_hash("r", "v", "a.md", Some("h"))
+            .await
+            .unwrap();
         store
             .enqueue_outbox("r", "v", "a.md", OutboxOp::Upsert, None, Some("h"), 1)
             .await
@@ -573,7 +585,10 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            store.set_base_hash("r", v, "a.md", Some("h")).await.unwrap();
+            store
+                .set_base_hash("r", v, "a.md", Some("h"))
+                .await
+                .unwrap();
             store
                 .enqueue_outbox("r", v, "a.md", OutboxOp::Upsert, None, Some("h"), 1)
                 .await

@@ -70,7 +70,7 @@ async fn list_tags(
         })
         .collect();
 
-    entries.sort_by(|a, b| a.tag.to_lowercase().cmp(&b.tag.to_lowercase()));
+    entries.sort_by_key(|a| a.tag.to_lowercase());
 
     Ok(HttpResponse::Ok().json(entries))
 }
@@ -317,8 +317,7 @@ fn scan_and_rewrite_tag<P: AsRef<std::path::Path>>(
             continue;
         }
 
-        let new_content =
-            frontmatter_service::serialize_frontmatter(new_fm.as_ref(), &new_body)?;
+        let new_content = frontmatter_service::serialize_frontmatter(new_fm.as_ref(), &new_body)?;
         if std::fs::write(entry.path(), new_content).is_ok() {
             files_modified += 1;
             receipts.push((rel, raw));
@@ -453,8 +452,14 @@ mod tests {
     fn skips_fenced_code_block() {
         let s = "before\n```\n#foo in code\n```\nafter #foo";
         let out = remove_inline_tag(s, "foo", &re());
-        assert!(out.contains("#foo in code"), "fenced tag must survive: {out}");
-        assert!(out.ends_with("after"), "inline tag after fence removed: {out}");
+        assert!(
+            out.contains("#foo in code"),
+            "fenced tag must survive: {out}"
+        );
+        assert!(
+            out.ends_with("after"),
+            "inline tag after fence removed: {out}"
+        );
     }
 
     #[test]
@@ -487,7 +492,10 @@ mod tests {
         // rather than leaving a dangling `tags: []`.
         let mut only = serde_json::json!({ "tags": ["foo"], "title": "x" });
         assert!(remove_tag_from_frontmatter(&mut only, "foo"));
-        assert!(only.get("tags").is_none(), "empty tags array should be dropped");
+        assert!(
+            only.get("tags").is_none(),
+            "empty tags array should be dropped"
+        );
         assert_eq!(only["title"], "x");
     }
 }

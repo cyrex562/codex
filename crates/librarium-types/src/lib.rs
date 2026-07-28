@@ -534,11 +534,20 @@ pub struct ApplyOrganizationSuggestionResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum ReverseAction {
-    RemoveTag { tag: String },
+    RemoveTag {
+        tag: String,
+    },
     /// Restore a file to an exact prior snapshot (used by vault-wide tag delete).
-    RestoreContent { content: String },
-    RestoreCategory { previous_value: Option<String> },
-    MoveBack { from_path: String, to_path: String },
+    RestoreContent {
+        content: String,
+    },
+    RestoreCategory {
+        previous_value: Option<String>,
+    },
+    MoveBack {
+        from_path: String,
+        to_path: String,
+    },
     /// Undo a link-safe rename: move the note back and restore the wiki-link
     /// references in the listed files (rewriting `new_stem` back to `old_stem`).
     RenameWithLinks {

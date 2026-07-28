@@ -388,9 +388,11 @@ async fn organize_vault_then_apply_plan_and_bulk_undo() {
     let moved = vault_path.join("projects/stray.md");
     assert!(moved.exists());
     assert!(std::fs::read_to_string(&moved).unwrap().contains("triaged"));
-    assert!(std::fs::read_to_string(vault_path.join("projects/alpha.md"))
-        .unwrap()
-        .contains("reviewed"));
+    assert!(
+        std::fs::read_to_string(vault_path.join("projects/alpha.md"))
+            .unwrap()
+            .contains("reviewed")
+    );
 
     // 3. Bulk-undo the whole group.
     let undo_req = test::TestRequest::post()
@@ -407,9 +409,11 @@ async fn organize_vault_then_apply_plan_and_bulk_undo() {
     assert!(stray.exists());
     assert!(!moved.exists());
     assert!(!std::fs::read_to_string(&stray).unwrap().contains("triaged"));
-    assert!(!std::fs::read_to_string(vault_path.join("projects/alpha.md"))
-        .unwrap()
-        .contains("reviewed"));
+    assert!(
+        !std::fs::read_to_string(vault_path.join("projects/alpha.md"))
+            .unwrap()
+            .contains("reviewed")
+    );
 
     // The group is single-use.
     let undo_again = test::TestRequest::post()

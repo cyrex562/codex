@@ -53,7 +53,11 @@ impl ReindexService {
             // Parse frontmatter
             if let Some(fm) = EntityService::parse_frontmatter(&content) {
                 // Only upsert if it has a Librarium entity type marker.
-                if fm.get("librarium_type").or_else(|| fm.get("codex_type")).is_some() {
+                if fm
+                    .get("librarium_type")
+                    .or_else(|| fm.get("codex_type"))
+                    .is_some()
+                {
                     // Use file modification time
                     let modified_at = tokio::fs::metadata(abs_path)
                         .await
@@ -167,7 +171,11 @@ impl ReindexService {
         }
 
         if let Some(fm) = EntityService::parse_frontmatter(&content) {
-            if fm.get("librarium_type").or_else(|| fm.get("codex_type")).is_some() {
+            if fm
+                .get("librarium_type")
+                .or_else(|| fm.get("codex_type"))
+                .is_some()
+            {
                 let modified_at = tokio::fs::metadata(abs_path)
                     .await
                     .ok()

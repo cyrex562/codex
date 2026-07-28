@@ -80,9 +80,8 @@ impl FrontendLog {
             *guard = Some(open_append(&self.path)?);
         }
         let file = guard.as_mut().expect("handle just re-opened");
-        writeln!(file, "{line}").with_context(|| {
-            format!("Failed to append to {}", self.path.display())
-        })?;
+        writeln!(file, "{line}")
+            .with_context(|| format!("Failed to append to {}", self.path.display()))?;
         file.flush().ok();
         Ok(())
     }
@@ -125,8 +124,9 @@ fn rotate_generations(current: &std::path::Path) -> Result<()> {
     // Finally, promote the current `frontend.log` to `.1`.
     if current.exists() {
         let to = parent.join(format!("{FILE_NAME}.1"));
-        std::fs::rename(current, &to)
-            .with_context(|| format!("Failed to promote {} → {}", current.display(), to.display()))?;
+        std::fs::rename(current, &to).with_context(|| {
+            format!("Failed to promote {} → {}", current.display(), to.display())
+        })?;
     }
 
     Ok(())
@@ -262,7 +262,8 @@ mod tests {
         let mut rec = make_record("boot");
         rec.level = "warn".into();
         rec.source = "auth".into();
-        rec.context.insert("route".into(), serde_json::json!("/login"));
+        rec.context
+            .insert("route".into(), serde_json::json!("/login"));
         rec.context.insert("attempt".into(), serde_json::json!(2));
 
         let line = format_line(&rec);

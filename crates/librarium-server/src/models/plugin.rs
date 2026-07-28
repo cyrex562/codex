@@ -177,10 +177,11 @@ pub struct Plugin {
 }
 
 /// Plugin runtime state
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum PluginState {
     /// Plugin is not loaded
+    #[default]
     Unloaded,
 
     /// Plugin is currently loading
@@ -194,12 +195,6 @@ pub enum PluginState {
 
     /// Plugin is disabled by user
     Disabled,
-}
-
-impl Default for PluginState {
-    fn default() -> Self {
-        PluginState::Unloaded
-    }
 }
 
 /// Plugin API context - passed to plugins for interaction with host

@@ -3,7 +3,9 @@ use crate::models::{
     CreateFileRequest, CreateUploadSessionRequest, UpdateFileRequest, UploadSessionResponse,
 };
 use crate::routes::vaults::AppState;
-use crate::services::{file_service::TrashItem, FileService, ImageService, ReindexService, WikiLinkResolver};
+use crate::services::{
+    file_service::TrashItem, FileService, ImageService, ReindexService, WikiLinkResolver,
+};
 use actix_multipart::Multipart;
 use actix_web::http::header::{ETAG, IF_NONE_MATCH};
 use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse};
@@ -177,7 +179,6 @@ fn get_mime_type(file_path: &str) -> &'static str {
         _ => "application/octet-stream",
     }
 }
-
 
 #[derive(serde::Deserialize)]
 struct SyncFileRequest {
@@ -546,8 +547,7 @@ async fn rename_file(
                 .update_file(&vault_id, &new_path, content.content)?;
         }
         let abs_path = format!("{}/{}", vault.path.trim_end_matches('/'), new_path);
-        if let Err(e) =
-            ReindexService::index_file(&state.db, &vault_id, &new_path, &abs_path).await
+        if let Err(e) = ReindexService::index_file(&state.db, &vault_id, &new_path, &abs_path).await
         {
             tracing::warn!("Entity index_file failed after rename to {new_path}: {e}");
         }
@@ -999,7 +999,7 @@ fn render_file_tree_to_html(nodes: &[crate::models::FileNode]) -> String {
 
         // Add expand/collapse arrow for folders with children
         let has_children =
-            node.is_directory && node.children.as_ref().map_or(false, |c| !c.is_empty());
+            node.is_directory && node.children.as_ref().is_some_and(|c| !c.is_empty());
         let arrow = if has_children {
             r#"<span class="folder-arrow">▼</span>"#
         } else {
@@ -1263,8 +1263,8 @@ async fn import_archive(
         use std::io::Write as _;
         let mut tmp_file = std::fs::File::create(&tmp_path)?;
         while let Some(chunk) = payload.next().await {
-            let chunk = chunk
-                .map_err(|e| AppError::InternalError(format!("Payload read error: {e}")))?;
+            let chunk =
+                chunk.map_err(|e| AppError::InternalError(format!("Payload read error: {e}")))?;
             tmp_file.write_all(&chunk)?;
         }
     }
@@ -1382,9 +1382,7 @@ async fn import_archive(
         // tar or tar.gz – decompress first if gzip-compressed.
         let file = std::fs::File::open(&tmp_path)?;
         let mut tar = if is_tar_gz {
-            tar::Archive::new(
-                Box::new(flate2::read::GzDecoder::new(file)) as Box<dyn std::io::Read>
-            )
+            tar::Archive::new(Box::new(flate2::read::GzDecoder::new(file)) as Box<dyn std::io::Read>)
         } else {
             tar::Archive::new(Box::new(file) as Box<dyn std::io::Read>)
         };
@@ -1407,22 +1405,32 @@ async fn import_archive(
                 continue;
             }
             let dest = target_dir.join(&raw_name);
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent)?;
+            let Some(parent) = dest.parent() else {
+                continue;
+            };
+            std::fs::create_dir_all(parent)?;
+            // Verify the resolved destination stays inside target_dir. `dest` is
+            // the file we are about to create, so it does not exist yet and
+            // canonicalizing it would ALWAYS fail (silently skipping every new
+            // entry). Canonicalize its parent instead — just created above, so
+            // it resolves — which collapses any symlinked directory component an
+            // archive might have smuggled in. Skip rather than risk an escape if
+            // either path can't be resolved.
+            let (Ok(canonical_parent), Ok(canonical_target)) =
+                (parent.canonicalize(), target_dir.canonicalize())
+            else {
+                continue;
+            };
+            if !canonical_parent.starts_with(&canonical_target) {
+                continue;
             }
-            // Canonicalize the resolved destination and verify it stays inside
-            // target_dir. The parent directory was just created above so
-            // canonicalize should succeed; if it doesn't, skip the entry rather
-            // than risk writing outside the vault.
-            let canonical_dest = match dest.canonicalize() {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            let canonical_target = match target_dir.canonicalize() {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            if !canonical_dest.starts_with(&canonical_target) {
+            // The final component must not be an existing symlink: `unpack`
+            // follows it and would write through to wherever it points.
+            // `symlink_metadata` does not follow, so it sees the link itself.
+            if dest
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink())
+            {
                 continue;
             }
             let final_dest = match (dest.exists(), query.conflict) {
@@ -1430,9 +1438,8 @@ async fn import_archive(
                     // TAR is a streaming format so we cannot pre-scan; clean up
                     // the files already extracted before returning the error.
                     for already in &extracted {
-                        let _ = std::fs::remove_file(
-                            std::path::Path::new(&vault.path).join(already),
-                        );
+                        let _ =
+                            std::fs::remove_file(std::path::Path::new(&vault.path).join(already));
                     }
                     return Err(AppError::Conflict(format!(
                         "Archive entry already exists: {}",

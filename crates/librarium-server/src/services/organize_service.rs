@@ -221,7 +221,11 @@ pub async fn build_plan(
         if let Some(nf) = new_folder {
             if !folder_candidates.iter().any(|c| c.path == nf) {
                 let is_new = !existing_folders.contains(&nf);
-                let confidence = if note_label.contains_key(&i) { 0.7 } else { 0.55 };
+                let confidence = if note_label.contains_key(&i) {
+                    0.7
+                } else {
+                    0.55
+                };
                 folder_candidates.push(FolderCandidate {
                     path: nf,
                     is_new,
@@ -434,7 +438,12 @@ pub fn nested_cluster_labels(
 
         let sub_vectors: Vec<Vec<f32>> = members.iter().map(|&i| vectors[i].clone()).collect();
         let sub_clusters = cluster_by_threshold(&sub_vectors, sub_threshold);
-        let sub_k = sub_clusters.iter().copied().max().map(|m| m + 1).unwrap_or(0);
+        let sub_k = sub_clusters
+            .iter()
+            .copied()
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(0);
         if sub_k < 2 {
             continue; // the cluster did not split — keep it flat
         }

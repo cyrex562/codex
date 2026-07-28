@@ -272,7 +272,9 @@ async fn revoke_vault_user_share(
             actor.as_ref().map(|u| u.user_id.as_str()),
             actor.as_ref().map(|u| u.username.as_str()),
             "vault_share_revoked",
-            Some(&format!("Revoked user share: vault={vault_id} user={user_id}")),
+            Some(&format!(
+                "Revoked user share: vault={vault_id} user={user_id}"
+            )),
             None,
             true,
         )
@@ -299,7 +301,9 @@ async fn revoke_vault_group_share(
             actor.as_ref().map(|u| u.user_id.as_str()),
             actor.as_ref().map(|u| u.username.as_str()),
             "vault_share_revoked",
-            Some(&format!("Revoked group share: vault={vault_id} group={group_id}")),
+            Some(&format!(
+                "Revoked group share: vault={vault_id} group={group_id}"
+            )),
             None,
             true,
         )
@@ -439,10 +443,7 @@ async fn get_vault_changes(
         return Ok(HttpResponse::Ok().json(page));
     }
 
-    let since: i64 = query
-        .get("since")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let since: i64 = query.get("since").and_then(|s| s.parse().ok()).unwrap_or(0);
     let events = state.db.get_file_changes_since(&vault_id, since).await?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "events": events })))
 }
