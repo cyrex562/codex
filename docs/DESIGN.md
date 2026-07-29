@@ -81,7 +81,7 @@ frontend.
 | Member | Path | Role |
 | --- | --- | --- |
 | `librarium-server` | `crates/librarium-server` | Main Actix Web backend + binary; **default workspace member**. |
-| `librarium-core` | `crates/librarium-core` | Platform-independent core shared with non-server consumers: `AppError`/`AppResult`, `FileService` (path-safe disk I/O), frontmatter read/write, Markdown render + Obsidian wiki-link parsing/resolution. No actix/sqlx/tokio in its default feature set; `librarium-server` enables its `actix` and `sqlx` features. |
+| `librarium-core` | `crates/librarium-core` | Platform-independent core shared with non-server consumers: `AppError`/`AppResult`, `FileService` (path-safe disk I/O), frontmatter read/write, Markdown render + Obsidian wiki-link parsing/resolution, Tantivy full-text search (behind a default-on `search` feature). No actix/sqlx/tokio in its default feature set; `librarium-server` enables its `actix` and `sqlx` features. |
 | `librarium-types` | `crates/librarium-types` | Shared Rust DTOs and parser/contract types used across crates. |
 | `librarium-client` | `crates/librarium-client` | Reusable HTTP + WebSocket client for the Librarium API. |
 | `librarium-tauri` | `crates/librarium-tauri` | Tauri 2 desktop shell embedding the server + frontend. |
@@ -133,7 +133,7 @@ shaping only. Notable modules: `auth`, `totp`, `oidc`, `api_keys`, `admin`,
 | Service | Responsibility |
 | --- | --- |
 | `file_service` | All disk I/O. **Owns path-traversal protection** (canonicalize + containment checks), conflict detection, trash/backup on conflict, move/rename. Lives in `librarium-core`, re-exported here. |
-| `search_service` | Tantivy wrapper: per-vault index, incremental updates, query + snippet highlighting. |
+| `search_service` | Tantivy wrapper: per-vault index, incremental updates, query + snippet highlighting. Lives in `librarium-core` (behind its `search` feature), re-exported here. Index directory is resolved here (`LIBRARIUM_INDEX_DIR`/`CODEX_INDEX_DIR`, default `./data/indices`) and passed in explicitly — the core crate has no stable notion of an environment or current directory. |
 | `reindex_service` | Two-pass entity/relation indexer from frontmatter; single source of truth for entity state (distinct from full-text search). |
 | `markdown_service` | Markdown parsing/rendering (`pulldown-cmark`), link rewriting. Lives in `librarium-core`, re-exported here. |
 | `wiki_link_service` | Obsidian `[[wiki link]]` parsing and rewriting. Lives in `librarium-core`, re-exported here. |
