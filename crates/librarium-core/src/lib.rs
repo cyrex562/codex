@@ -7,4 +7,6 @@
 pub mod error;
 pub mod file_service;
 pub mod frontmatter_service;
+pub mod markdown_service;
 pub mod models;
+pub mod wiki_link_service;

@@ -16,6 +16,12 @@ regex = "1.11"
 zip = "2.2"
 walkdir = "2.5"
 sha2 = "0.10"
+pulldown-cmark = "0.12"
+# Syntax highlighting for rendered code blocks. Pulls in `onig` (a C
+# toolchain dependency) via its default regex backend — a known blocker for
+# cross-compiling this crate to Android; tracked separately (#47), not
+# addressed here.
+syntect = "5.2"
 
 # Optional integrations. Neither is in the default feature set: this crate is
 # meant to be usable from a mobile client with no actix/sqlx/tokio in its

@@ -1,4 +1,4 @@
-use crate::services::wiki_link_service::{FileIndex, WikiLinkResolver};
+use crate::wiki_link_service::{FileIndex, WikiLinkResolver};
 use librarium_types::{DocumentParser, Frontmatter, RenderedDocument};
 use pulldown_cmark::{html, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use regex::Regex;
@@ -272,7 +272,7 @@ impl MarkdownService {
                 } else if let Some(current_file) = opts.current_file {
                     // Use relative resolution
                     WikiLinkResolver::resolve_relative(vault_path, base_link, current_file)
-                        .unwrap_or_else(|_| crate::services::wiki_link_service::ResolvedLink {
+                        .unwrap_or_else(|_| crate::wiki_link_service::ResolvedLink {
                             path: format!("{}.md", base_link),
                             exists: false,
                             alternatives: vec![],
@@ -280,7 +280,7 @@ impl MarkdownService {
                 } else {
                     // Use standard resolution
                     WikiLinkResolver::resolve(vault_path, base_link).unwrap_or_else(|_| {
-                        crate::services::wiki_link_service::ResolvedLink {
+                        crate::wiki_link_service::ResolvedLink {
                             path: format!("{}.md", base_link),
                             exists: false,
                             alternatives: vec![],
