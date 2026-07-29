@@ -81,7 +81,7 @@ frontend.
 | Member | Path | Role |
 | --- | --- | --- |
 | `librarium-server` | `crates/librarium-server` | Main Actix Web backend + binary; **default workspace member**. |
-| `librarium-core` | `crates/librarium-core` | Platform-independent core shared with non-server consumers: `AppError`/`AppResult`, `FileService` (path-safe disk I/O), frontmatter read/write. No actix/sqlx/tokio in its default feature set; `librarium-server` enables its `actix` and `sqlx` features. |
+| `librarium-core` | `crates/librarium-core` | Platform-independent core shared with non-server consumers: `AppError`/`AppResult`, `FileService` (path-safe disk I/O), frontmatter read/write, Markdown render + Obsidian wiki-link parsing/resolution. No actix/sqlx/tokio in its default feature set; `librarium-server` enables its `actix` and `sqlx` features. |
 | `librarium-types` | `crates/librarium-types` | Shared Rust DTOs and parser/contract types used across crates. |
 | `librarium-client` | `crates/librarium-client` | Reusable HTTP + WebSocket client for the Librarium API. |
 | `librarium-tauri` | `crates/librarium-tauri` | Tauri 2 desktop shell embedding the server + frontend. |
@@ -134,8 +134,8 @@ shaping only. Notable modules: `auth`, `totp`, `oidc`, `api_keys`, `admin`,
 | `file_service` | All disk I/O. **Owns path-traversal protection** (canonicalize + containment checks), conflict detection, trash/backup on conflict, move/rename. Lives in `librarium-core`, re-exported here. |
 | `search_service` | Tantivy wrapper: per-vault index, incremental updates, query + snippet highlighting. |
 | `reindex_service` | Two-pass entity/relation indexer from frontmatter; single source of truth for entity state (distinct from full-text search). |
-| `markdown_service` | Markdown parsing/rendering (`pulldown-cmark`), link rewriting. |
-| `wiki_link_service` | Obsidian `[[wiki link]]` parsing and rewriting. |
+| `markdown_service` | Markdown parsing/rendering (`pulldown-cmark`), link rewriting. Lives in `librarium-core`, re-exported here. |
+| `wiki_link_service` | Obsidian `[[wiki link]]` parsing and rewriting. Lives in `librarium-core`, re-exported here. |
 | `frontmatter_service` | YAML frontmatter read/write. Lives in `librarium-core`, re-exported here. |
 | `auth_provider` / `ldap_provider` / `oidc_provider` | Pluggable auth: local password (Argon2), LDAP/AD, OIDC. |
 | `entity_service` / `relation_service` / `schema_service` | User-defined entity/relation types and graph queries. |

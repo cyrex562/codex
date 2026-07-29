@@ -5,7 +5,7 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
 ## Repository Map
 
 - `crates/librarium-server`: main Actix Web backend, default workspace member
-- `crates/librarium-core`: platform-independent core (`AppError`, `FileService`, frontmatter read/write) shared with non-server consumers; no actix/sqlx/tokio by default
+- `crates/librarium-core`: platform-independent core (`AppError`, `FileService`, frontmatter read/write, Markdown render + wiki-link resolution) shared with non-server consumers; no actix/sqlx/tokio by default
 - `crates/librarium-types`: shared Rust DTOs and parser traits
 - `crates/librarium-client`: HTTP and WebSocket client crate
 - `crates/librarium-tauri`: desktop shell that embeds the frontend and server

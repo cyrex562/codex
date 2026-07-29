@@ -86,7 +86,7 @@ cargo tauri build    # release desktop bundle
 ```text
 crates/
   librarium-server   Actix Web backend + binary (default workspace member)
-  librarium-core     Platform-independent core (errors, FileService, frontmatter); no actix/sqlx/tokio by default
+  librarium-core     Platform-independent core (errors, FileService, frontmatter, Markdown render); no actix/sqlx/tokio by default
   librarium-types    Shared Rust DTOs / contracts
   librarium-client   HTTP + WebSocket client crate
   librarium-tauri    Tauri 2 desktop shell
