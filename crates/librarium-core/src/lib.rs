@@ -9,4 +9,6 @@ pub mod file_service;
 pub mod frontmatter_service;
 pub mod markdown_service;
 pub mod models;
+#[cfg(feature = "search")]
+pub mod search_service;
 pub mod wiki_link_service;

@@ -1,14 +1,16 @@
 pub mod auth_provider;
 pub mod embedding_service;
 pub mod entity_service;
-// `file_service`, `frontmatter_service`, `markdown_service`, and
-// `wiki_link_service` moved to `librarium-core` (LIB Route-C-01 / Route-C-02):
-// none of them need actix/sqlx, so they're shared with a future thin mobile
-// client that has no server to call for rendering. Re-exported as modules
-// here so every existing `crate::services::…` path keeps resolving.
+// `file_service`, `frontmatter_service`, `markdown_service`,
+// `wiki_link_service`, and `search_service` moved to `librarium-core` (LIB
+// Route-C-01 / -02 / -03): none of them need actix/sqlx, so they're shared
+// with a future thin mobile client that has no server to call for rendering
+// or search. Re-exported as modules here so every existing
+// `crate::services::…` path keeps resolving.
 pub use librarium_core::file_service;
 pub use librarium_core::frontmatter_service;
 pub use librarium_core::markdown_service;
+pub use librarium_core::search_service;
 pub use librarium_core::wiki_link_service;
 pub mod image_service;
 pub mod label_service;
@@ -22,7 +24,6 @@ pub mod plugin_service;
 pub mod reindex_service;
 pub mod relation_service;
 pub mod schema_service;
-pub mod search_service;
 pub mod template_service;
 
 pub use auth_provider::{

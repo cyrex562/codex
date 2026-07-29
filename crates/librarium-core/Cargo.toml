@@ -28,17 +28,25 @@ syntect = { version = "5.2", default-features = false, features = [
     "default-fancy",
 ] }
 
-# Optional integrations. Neither is in the default feature set: this crate is
-# meant to be usable from a mobile client with no actix/sqlx/tokio in its
-# dependency tree. `librarium-server` enables both below.
+# Optional integrations. actix and sqlx are not in the default feature set:
+# this crate is meant to be usable from a mobile client with no actix/sqlx/
+# tokio in its dependency tree. `librarium-server` enables both below.
 actix-web = { version = "4.9", optional = true }
 sqlx = { version = "0.8", optional = true, features = [
     "runtime-tokio-rustls",
     "sqlite",
 ] }
+# Tantivy full-text search. Optional (and default-on, see `search` below) so a
+# consumer that wants to opt out of Tantivy entirely can with
+# `--no-default-features`.
+tantivy = { version = "0.22", optional = true, default-features = false, features = [
+    "mmap",
+] }
+rayon = { version = "1.11.0", optional = true }
+rand = { version = "0.9.2", optional = true }
 
 [features]
-default = []
+default = ["search"]
 # AppError::error_response(): actix-web's ResponseError trait is foreign to
 # this crate, so librarium-server (which depends on both actix-web and this
 # crate) cannot provide the impl itself (orphan rule). Providing it here,
@@ -48,6 +56,10 @@ actix = ["dep:actix-web"]
 # database layer (e.g. a thin mobile client) doesn't pull in sqlx (and,
 # transitively, tokio) just to use AppError for filesystem errors.
 sqlx = ["dep:sqlx"]
+# search_service (Tantivy-backed SearchIndex). Default-on since every current
+# consumer wants it; disable with `--no-default-features` to drop Tantivy
+# from the dependency tree entirely.
+search = ["dep:tantivy", "dep:rayon", "dep:rand"]
 
 [dev-dependencies]
 tempfile = "3.14"
