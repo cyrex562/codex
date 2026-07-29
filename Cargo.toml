@@ -6,6 +6,7 @@ members = [
 	"crates/librarium-client",
 	"crates/librarium-sync",
 	"crates/librarium-tauri",
+	"crates/librarium-mobile",
 	"xtask",
 ]
 default-members = ["crates/librarium-server"]

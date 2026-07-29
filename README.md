@@ -1,6 +1,6 @@
 # Librarium
 
-**Version 0.101.0** · A self-hosted knowledge base and vault manager for
+**Version 0.102.0** · A self-hosted knowledge base and vault manager for
 Obsidian-compatible Markdown vaults.
 
 Librarium keeps your notes as plain Markdown files on disk — they stay portable
@@ -90,6 +90,7 @@ crates/
   librarium-types    Shared Rust DTOs / contracts
   librarium-client   HTTP + WebSocket client crate
   librarium-tauri    Tauri 2 desktop shell
+  librarium-mobile   Route C thin-client command layer (vault list/get, file ops); no frontend wiring yet
 frontend/            Vue 3 + TypeScript + Vuetify SPA
 plugins/             Bundled first-party plugins
 benches/  tests/  scripts/  docs/

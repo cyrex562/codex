@@ -4035,7 +4035,7 @@ checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 
 [[package]]
 name = "librarium-client"
-version = "0.101.0"
+version = "0.102.0"
 dependencies = [
  "futures-util",
  "librarium-types",
@@ -4050,7 +4050,7 @@ dependencies = [
 
 [[package]]
 name = "librarium-core"
-version = "0.101.0"
+version = "0.102.0"
 dependencies = [
  "actix-web",
  "chrono",
@@ -4070,8 +4070,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "librarium-mobile"
+version = "0.102.0"
+dependencies = [
+ "chrono",
+ "librarium-core",
+ "librarium-types",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "librarium-server"
-version = "0.101.0"
+version = "0.102.0"
 dependencies = [
  "actix-cors",
  "actix-files",
@@ -4161,7 +4175,7 @@ dependencies = [
 
 [[package]]
 name = "librarium-tauri"
-version = "0.101.0"
+version = "0.102.0"
 dependencies = [
  "actix-web",
  "anyhow",
@@ -4186,7 +4200,7 @@ dependencies = [
 
 [[package]]
 name = "librarium-types"
-version = "0.101.0"
+version = "0.102.0"
 dependencies = [
  "chrono",
  "serde",

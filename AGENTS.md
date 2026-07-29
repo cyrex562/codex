@@ -9,6 +9,7 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
 - `crates/librarium-types`: shared Rust DTOs and parser traits
 - `crates/librarium-client`: HTTP and WebSocket client crate
 - `crates/librarium-tauri`: desktop shell that embeds the frontend and server
+- `crates/librarium-mobile`: Route C thin-client command layer (vault list/get from a local JSON registry, file/directory ops over `librarium-core::FileService`); no frontend or Tauri-app wiring yet
 - `frontend`: Vue 3 + TypeScript + Vuetify SPA
 - `plugins`: built-in plugin manifests and scripts
 - `tests`: workspace-level Rust integration tests
@@ -38,14 +39,14 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
   ```bash
   rustup target add aarch64-linux-android x86_64-linux-android
   cargo install cargo-ndk --locked
-  cargo ndk -t aarch64-linux-android -P 21 build -p librarium-core -p librarium-sync
-  cargo ndk -t x86_64-linux-android -P 21 build -p librarium-core -p librarium-sync
+  cargo ndk -t aarch64-linux-android -P 21 build -p librarium-core -p librarium-sync -p librarium-mobile
+  cargo ndk -t x86_64-linux-android -P 21 build -p librarium-core -p librarium-sync -p librarium-mobile
   ```
   To confirm no C-toolchain dependency (`openssl-sys`, `onig`) has crept back
-  into these two crates:
+  into these three crates:
   ```bash
-  cargo tree -p librarium-core -p librarium-sync --target aarch64-linux-android -i openssl-sys
-  cargo tree -p librarium-core -p librarium-sync --target aarch64-linux-android -i onig
+  cargo tree -p librarium-core -p librarium-sync -p librarium-mobile --target aarch64-linux-android -i openssl-sys
+  cargo tree -p librarium-core -p librarium-sync -p librarium-mobile --target aarch64-linux-android -i onig
   ```
   Both should error with "did not match any packages" (i.e. not found).
 
