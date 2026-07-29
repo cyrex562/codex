@@ -334,7 +334,16 @@ pub async fn run(config: AppConfig) -> anyhow::Result<()> {
     }
 
     // --- Search & watcher --------------------------------------------------
-    let search_index = SearchIndex::new();
+    // librarium-core has no stable notion of "current directory" or
+    // environment (mobile has neither), so index-directory resolution lives
+    // here rather than in SearchIndex itself. `LIBRARIUM_INDEX_DIR` /
+    // `CODEX_INDEX_DIR` and the `./data/indices` default are unchanged from
+    // before the Route-C extraction.
+    let index_dir = std::env::var("LIBRARIUM_INDEX_DIR")
+        .or_else(|_| std::env::var("CODEX_INDEX_DIR"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("./data/indices"));
+    let search_index = SearchIndex::with_index_dir(Some(index_dir));
     info!("Search index initialized");
 
     let (watcher, mut change_rx) = FileWatcher::new().expect("Failed to create file watcher");

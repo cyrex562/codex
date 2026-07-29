@@ -207,35 +207,31 @@ pub struct SearchIndex {
 }
 
 impl SearchIndex {
+    /// In-memory index: no disk persistence, no incremental manifest, every
+    /// `index_vault` call does a full rebuild. What every test wants, and the
+    /// right default for a caller with no opinion on persistence.
     pub fn new() -> Self {
-        #[cfg(test)]
-        let base_dir: Option<PathBuf> = None;
+        Self::with_index_dir(None)
+    }
 
-        #[cfg(not(test))]
-        let base_dir: Option<PathBuf> = {
-            let dir = std::env::var("LIBRARIUM_INDEX_DIR")
-                .or_else(|_| std::env::var("CODEX_INDEX_DIR"))
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("./data/indices"));
-            std::fs::create_dir_all(&dir).ok();
-            Some(dir)
-        };
+    /// Disk-backed (under `base_dir`, when `Some`) or in-memory (`None`) index.
+    ///
+    /// This crate has no stable notion of "current directory" or environment
+    /// (mobile has neither), so unlike the pre-Route-C version of this
+    /// constructor it does not read `LIBRARIUM_INDEX_DIR`/`CODEX_INDEX_DIR`
+    /// itself — callers that want indices to persist across restarts resolve
+    /// their own directory and pass it here. `librarium-server` does exactly
+    /// that at startup, preserving both env vars and the `./data/indices`
+    /// default unchanged.
+    pub fn with_index_dir(base_dir: Option<PathBuf>) -> Self {
+        if let Some(dir) = &base_dir {
+            std::fs::create_dir_all(dir).ok();
+        }
 
         Self {
             vaults: Arc::new(RwLock::new(HashMap::new())),
             write_locks: Arc::new(Mutex::new(HashMap::new())),
             base_dir,
-        }
-    }
-
-    #[cfg(test)]
-    /// Test-only constructor that backs the index with an on-disk `base_dir`, so
-    /// the incremental-manifest path (LIB-090/091/102) can be exercised.
-    fn with_base_dir(base: PathBuf) -> Self {
-        Self {
-            vaults: Arc::new(RwLock::new(HashMap::new())),
-            write_locks: Arc::new(Mutex::new(HashMap::new())),
-            base_dir: Some(base),
         }
     }
 
@@ -972,7 +968,7 @@ mod tests {
         std::fs::write(vault.path().join("a.md"), "uniqueterm alpha").unwrap();
         let vault_path = vault.path().to_str().unwrap();
 
-        let index = SearchIndex::with_base_dir(base.path().to_path_buf());
+        let index = SearchIndex::with_index_dir(Some(base.path().to_path_buf()));
         index.index_vault("v1", vault_path).unwrap();
         let before = index
             .search("v1", "uniqueterm", 1, 10)
