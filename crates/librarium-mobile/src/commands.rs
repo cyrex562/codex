@@ -1,0 +1,175 @@
+//! `#[tauri::command]` wrappers around the plain, Tauri-free functions in
+//! [`crate::vault`] and [`crate::file`].
+//!
+//! These wrapper functions are deliberately **not** `pub`: with the
+//! `tauri`/`tauri-macros` versions this workspace pins, a `pub fn` annotated
+//! with `#[tauri::command]` fails to compile (`E0255`, "defined multiple
+//! times") — the macro's generated dispatch shim collides with itself once
+//! the function is publicly reachable. Every command in the working
+//! `librarium-tauri` desktop shell is private for the same reason. Visibility
+//! isn't needed here anyway: [`invoke_handler`] is the crate's only public
+//! entry point, and `tauri::generate_handler!` only needs same-module access.
+//!
+//! Every command is generic over `R: tauri::Runtime` rather than tied to the
+//! desktop `Wry` runtime (this crate builds with `tauri`'s default features,
+//! including `wry`, off — see Cargo.toml), so the same command layer can be
+//! registered by both a desktop and a mobile host app.
+//!
+//! Vault-root resolution goes through Tauri's path API
+//! (`AppHandle::path().app_config_dir()`), never a CWD-relative path — this
+//! is what makes app-private storage on Android work, and it's the only
+//! reason this module needs a live `AppHandle` at all. The actual command
+//! logic in `vault`/`file` takes plain paths and has no Tauri dependency.
+
+use crate::file::{DirectoryCreateResult, RenameResult};
+use librarium_types::{FileContent, FileNode, Vault};
+use tauri::{AppHandle, Manager, Runtime};
+
+fn app_config_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map_err(|e| format!("Could not resolve app config directory: {e}"))
+}
+
+async fn resolve_vault_path<R: Runtime>(
+    app: &AppHandle<R>,
+    vault_id: &str,
+) -> Result<String, String> {
+    let config_dir = app_config_dir(app)?;
+    crate::vault::vault_get(&config_dir, vault_id)
+        .await
+        .map(|v| v.path)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn vault_list<R: Runtime>(app: AppHandle<R>) -> Result<Vec<Vault>, String> {
+    let config_dir = app_config_dir(&app)?;
+    crate::vault::vault_list(&config_dir)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn vault_get<R: Runtime>(app: AppHandle<R>, vault_id: String) -> Result<Vault, String> {
+    let config_dir = app_config_dir(&app)?;
+    crate::vault::vault_get(&config_dir, &vault_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn file_tree<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+) -> Result<Vec<FileNode>, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::file::file_tree(&vault_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn file_read<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    file_path: String,
+) -> Result<FileContent, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::file::file_read(&vault_path, &file_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn file_write<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    file_path: String,
+    content: String,
+    last_modified: Option<chrono::DateTime<chrono::Utc>>,
+    frontmatter: Option<serde_json::Value>,
+) -> Result<FileContent, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::file::file_write(
+        &vault_path,
+        &file_path,
+        &content,
+        last_modified,
+        frontmatter,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn file_create<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    file_path: String,
+    content: Option<String>,
+) -> Result<FileContent, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::file::file_create(&vault_path, &file_path, content)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn file_delete<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    file_path: String,
+) -> Result<(), String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::file::file_delete(&vault_path, &file_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn file_rename<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    from: String,
+    to: String,
+    strategy: Option<String>,
+) -> Result<RenameResult, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::file::file_rename(&vault_path, &from, &to, strategy.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn directory_create<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    dir_path: String,
+) -> Result<DirectoryCreateResult, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::file::directory_create(&vault_path, &dir_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The crate's Tauri integration point. Wire it into the app builder with:
+///
+/// ```ignore
+/// tauri::Builder::default()
+///     .invoke_handler(librarium_mobile::invoke_handler())
+///     // ...
+/// ```
+pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
+    tauri::generate_handler![
+        vault_list,
+        vault_get,
+        file_tree,
+        file_read,
+        file_write,
+        file_create,
+        file_delete,
+        file_rename,
+        directory_create,
+    ]
+}

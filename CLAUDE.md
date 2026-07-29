@@ -47,7 +47,7 @@ section of `docs/DESIGN.md` is fully superseded, move the long-form detail to
 **Version bumps** must stay in sync across all of: `crates/*/Cargo.toml`,
 `frontend/package.json`, and `crates/librarium-tauri/tauri.conf.json`. The
 `/api/version` endpoint reads `CARGO_PKG_VERSION`, so the crate versions feed it
-directly. Current version: **0.101.0**.
+directly. Current version: **0.102.0**.
 
 ## Build & test (see AGENTS.md for the full list)
 

@@ -88,10 +88,11 @@ jobs:
           RUST_LOG: debug
 
   # ── Gate 2c: Android cross-compile (catches C-toolchain regressions) ───────
-  # Builds librarium-core + librarium-sync — the two crates a future thin
-  # mobile client depends on — for both Android ABIs. librarium-server is
-  # deliberately excluded: it's not expected to run on mobile, so cross-
-  # compiling it here would prove nothing this job cares about.
+  # Builds librarium-core + librarium-sync + librarium-mobile — the crates a
+  # future thin mobile client depends on — for both Android ABIs.
+  # librarium-server is deliberately excluded: it's not expected to run on
+  # mobile, so cross-compiling it here would prove nothing this job cares
+  # about.
   #
   # This is the gate that keeps #47's fix (dropping openssl-sys and onig, the
   # two native C dependencies that block an Android cross-compile) from
@@ -108,7 +109,7 @@ jobs:
   # image ever drops the bundled NDK, add an `android-actions/setup-android`
   # (or nttld/setup-ndk) step here.
   android-cross-compile:
-    name: Android cross-compile (librarium-core + librarium-sync)
+    name: Android cross-compile (librarium-core + librarium-sync + librarium-mobile)
     runs-on: ubuntu-latest
     needs: lint
     steps:
@@ -126,16 +127,16 @@ jobs:
           set -e
           for target in aarch64-linux-android x86_64-linux-android; do
             for pkg in openssl-sys onig; do
-              if cargo tree -p librarium-core -p librarium-sync --target "$target" -i "$pkg" > /dev/null 2>&1; then
-                echo "::error::$pkg re-entered the librarium-core/librarium-sync dependency tree for $target — this reintroduces the C-toolchain blocker fixed in #47 (see docs/DESIGN.md or issue #47)."
+              if cargo tree -p librarium-core -p librarium-sync -p librarium-mobile --target "$target" -i "$pkg" > /dev/null 2>&1; then
+                echo "::error::$pkg re-entered the librarium-core/librarium-sync/librarium-mobile dependency tree for $target — this reintroduces the C-toolchain blocker fixed in #47 (see docs/DESIGN.md or issue #47)."
                 exit 1
               fi
             done
           done
       - name: Cross-compile for aarch64-linux-android (arm64-v8a)
-        run: cargo ndk -t aarch64-linux-android -P 21 build -p librarium-core -p librarium-sync
+        run: cargo ndk -t aarch64-linux-android -P 21 build -p librarium-core -p librarium-sync -p librarium-mobile
       - name: Cross-compile for x86_64-linux-android (emulator ABI)
-        run: cargo ndk -t x86_64-linux-android -P 21 build -p librarium-core -p librarium-sync
+        run: cargo ndk -t x86_64-linux-android -P 21 build -p librarium-core -p librarium-sync -p librarium-mobile
 
   # ── Gate 3: Frontend unit tests (Vitest) ───────────────────────────────────
   vitest:
