@@ -47,9 +47,6 @@ notify-debouncer-full = "0.4"
 pulldown-cmark = "0.12"
 pulldown-cmark-to-cmark = "18.0"
 
-# Syntax highlighting
-syntect = "5.2"
-
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
@@ -82,7 +79,15 @@ data-encoding = "2"
 
 # OIDC / LDAP
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-ldap3 = "0.11"
+# rustls instead of the default native-tls backend: native-tls pulls in
+# openssl-sys, a C-toolchain dependency and the main blocker for
+# cross-compiling this workspace to Android (LIB Route-C-04). Also drops a
+# second TLS stack — the rest of the workspace (reqwest, sqlx,
+# tokio-tungstenite) already standardizes on rustls.
+ldap3 = { version = "0.11", default-features = false, features = [
+    "sync",
+    "tls-rustls",
+] }
 urlencoding = "2"
 
 # Utilities

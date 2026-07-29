@@ -32,6 +32,22 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
 - Frontend unit tests: `npm --prefix frontend test`
 - Frontend build: `npm --prefix frontend run build`
 - Frontend E2E: `npm --prefix frontend run test:e2e`
+- Android cross-compile check (mirrors the `android-cross-compile` CI job;
+  needs an installed Android NDK, e.g. via Android Studio's SDK Manager —
+  `cargo-ndk` auto-detects it from `$ANDROID_HOME`/`$ANDROID_NDK_HOME`):
+  ```bash
+  rustup target add aarch64-linux-android x86_64-linux-android
+  cargo install cargo-ndk --locked
+  cargo ndk -t aarch64-linux-android -P 21 build -p librarium-core -p librarium-sync
+  cargo ndk -t x86_64-linux-android -P 21 build -p librarium-core -p librarium-sync
+  ```
+  To confirm no C-toolchain dependency (`openssl-sys`, `onig`) has crept back
+  into these two crates:
+  ```bash
+  cargo tree -p librarium-core -p librarium-sync --target aarch64-linux-android -i openssl-sys
+  cargo tree -p librarium-core -p librarium-sync --target aarch64-linux-android -i onig
+  ```
+  Both should error with "did not match any packages" (i.e. not found).
 
 ## Config And Runtime Notes
 
