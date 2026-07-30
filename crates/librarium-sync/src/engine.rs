@@ -55,35 +55,52 @@ pub struct VaultStatus {
 
 type StatusMap = Arc<Mutex<HashMap<(String, String), VaultStatus>>>;
 
+/// Supplies a remote's API key at connection time, so the engine never needs
+/// to persist the secret itself (`sync.db` holds only `id`/`base_url`/
+/// `enabled` — see [`RemoteRecord`]). The closure may block (e.g. querying an
+/// OS keyring); the engine always calls it via `spawn_blocking`.
+pub type ApiKeyProvider = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+/// Run `provider` in a blocking task and turn a missing key into a proper
+/// error, so every call site gets the same "why can't we connect" message.
+async fn fetch_api_key(provider: &ApiKeyProvider, remote_id: &str) -> Result<String, SyncError> {
+    let provider = provider.clone();
+    let owned_id = remote_id.to_string();
+    let key = tokio::task::spawn_blocking(move || provider(&owned_id))
+        .await
+        .map_err(|e| SyncError::State(format!("key provider task join error: {e}")))?;
+    key.ok_or_else(|| SyncError::State(format!("no api key available for remote: {remote_id}")))
+}
+
 /// The public entry point. Holds the shared state store and running tasks.
 pub struct SyncEngine {
     store: SyncStore,
     tasks: Mutex<Vec<JoinHandle<()>>>,
     status: StatusMap,
+    key_provider: ApiKeyProvider,
 }
 
 impl SyncEngine {
     /// Open (creating if needed) the sync state database at `db_path`.
-    pub async fn open(db_path: &Path) -> Result<Self, SyncError> {
+    /// `key_provider` supplies each remote's API key on demand (see
+    /// [`ApiKeyProvider`]).
+    pub async fn open(db_path: &Path, key_provider: ApiKeyProvider) -> Result<Self, SyncError> {
         Ok(Self {
             store: SyncStore::open(db_path).await?,
             tasks: Mutex::new(Vec::new()),
             status: Arc::new(Mutex::new(HashMap::new())),
+            key_provider,
         })
     }
 
-    /// Register (or update) a remote server. Returns its id.
-    pub async fn add_remote(
-        &self,
-        id: String,
-        base_url: String,
-        api_key: String,
-    ) -> Result<String, SyncError> {
+    /// Register (or update) a remote server. Returns its id. The API key
+    /// itself is not passed here — the caller is expected to have already
+    /// stored it wherever its [`ApiKeyProvider`] will read it from.
+    pub async fn add_remote(&self, id: String, base_url: String) -> Result<String, SyncError> {
         self.store
             .upsert_remote(&RemoteRecord {
                 id: id.clone(),
                 base_url,
-                api_key,
                 enabled: true,
             })
             .await?;
@@ -120,7 +137,8 @@ impl SyncEngine {
             .into_iter()
             .find(|r| r.id == remote_id)
             .ok_or_else(|| SyncError::State(format!("unknown remote: {remote_id}")))?;
-        Ok(ObsidianClient::for_cloud(remote.base_url).with_api_key(remote.api_key))
+        let api_key = fetch_api_key(&self.key_provider, &remote.id).await?;
+        Ok(ObsidianClient::for_cloud(remote.base_url).with_api_key(api_key))
     }
 
     /// List the vaults available on a remote server.
@@ -174,6 +192,7 @@ impl SyncEngine {
                     remote: remote.clone(),
                     map,
                     status: self.status.clone(),
+                    key_provider: self.key_provider.clone(),
                 };
                 handles.push(tokio::spawn(async move { ctx.run().await }));
             }
@@ -214,13 +233,24 @@ struct TaskContext {
     remote: RemoteRecord,
     map: VaultMap,
     status: StatusMap,
+    key_provider: ApiKeyProvider,
 }
 
 impl TaskContext {
     async fn run(self) {
         let key = (self.remote.id.clone(), self.map.local_vault_id.clone());
-        let client = ObsidianClient::for_cloud(self.remote.base_url.clone())
-            .with_api_key(self.remote.api_key.clone());
+        let api_key = match fetch_api_key(&self.key_provider, &self.remote.id).await {
+            Ok(k) => k,
+            Err(e) => {
+                self.set_status(&key, VaultSyncState::Offline, Some(format!("api key: {e}")));
+                warn!(
+                    "sync: no api key available for remote {}: {e}",
+                    self.remote.id
+                );
+                return;
+            }
+        };
+        let client = ObsidianClient::for_cloud(self.remote.base_url.clone()).with_api_key(api_key);
 
         // The local watcher lives for the whole task, across reconnects.
         let suppressor = Suppressor::new();
@@ -875,5 +905,68 @@ mod tests {
         assert!(conflict_name("README").starts_with("conflict_README_"));
         let n = conflict_name("img.png");
         assert!(n.starts_with("conflict_img_") && n.ends_with(".png"));
+    }
+
+    #[tokio::test]
+    async fn add_remote_persists_no_api_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = SyncEngine::open(&dir.path().join("sync.db"), Arc::new(|_: &str| None))
+            .await
+            .unwrap();
+
+        engine
+            .add_remote("r1".to_string(), "http://example.invalid".to_string())
+            .await
+            .unwrap();
+
+        // RemoteRecord has no api_key field at all — this is a compile-time
+        // guarantee as much as a runtime one — so there's nothing to assert
+        // beyond the record round-tripping the fields it does have.
+        let remotes = engine.list_remotes().await.unwrap();
+        assert_eq!(remotes.len(), 1);
+        assert_eq!(remotes[0].id, "r1");
+        assert_eq!(remotes[0].base_url, "http://example.invalid");
+    }
+
+    #[tokio::test]
+    async fn missing_api_key_surfaces_a_clear_error_before_any_network_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = SyncEngine::open(&dir.path().join("sync.db"), Arc::new(|_: &str| None))
+            .await
+            .unwrap();
+        engine
+            .add_remote("r1".to_string(), "http://example.invalid".to_string())
+            .await
+            .unwrap();
+
+        let err = engine.list_remote_vaults("r1").await.unwrap_err();
+        assert!(matches!(err, SyncError::State(ref s) if s.contains("no api key available")));
+    }
+
+    #[tokio::test]
+    async fn key_provider_is_consulted_per_remote_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = SyncEngine::open(
+            &dir.path().join("sync.db"),
+            Arc::new(|remote_id: &str| (remote_id == "has-key").then(|| "the-secret".to_string())),
+        )
+        .await
+        .unwrap();
+        engine
+            .add_remote("has-key".to_string(), "http://example.invalid".to_string())
+            .await
+            .unwrap();
+        engine
+            .add_remote("no-key".to_string(), "http://example.invalid".to_string())
+            .await
+            .unwrap();
+
+        // Both attempt a real (failing, since example.invalid resolves nowhere)
+        // network call, but only the keyless remote should fail on the key
+        // lookup itself rather than getting as far as a client error.
+        let err_with_key = engine.list_remote_vaults("has-key").await.unwrap_err();
+        assert!(matches!(err_with_key, SyncError::Client(_)));
+        let err_without_key = engine.list_remote_vaults("no-key").await.unwrap_err();
+        assert!(matches!(err_without_key, SyncError::State(_)));
     }
 }

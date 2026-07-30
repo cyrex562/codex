@@ -24,7 +24,7 @@
 use crate::file::{DirectoryCreateResult, RenameResult};
 use crate::links::{LinkedNote, ResolveWikiLinkResult};
 use crate::metadata::{Bookmark, Favorite, MobileDb};
-use crate::sync::{RemoteDto, SyncHandle};
+use crate::sync::{PairingInfo, RemoteDto, SyncHandle};
 use crate::tags::TagEntry;
 use librarium_core::search_service::SearchIndex;
 use librarium_sync::VaultStatus;
@@ -504,6 +504,32 @@ async fn sync_stop(sync: State<'_, SyncHandle>) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate and pair with a remote, storing its API key in platform secure
+/// storage rather than a config/database file.
+#[tauri::command]
+async fn pairing_set(
+    sync: State<'_, SyncHandle>,
+    base_url: String,
+    api_key: String,
+) -> Result<(), String> {
+    sync.pairing_set(base_url, api_key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The paired remote's base URL and whether a key is stored — never the key
+/// itself, which must never cross the IPC boundary to the WebView.
+#[tauri::command]
+async fn pairing_get(sync: State<'_, SyncHandle>) -> Result<Option<PairingInfo>, String> {
+    sync.pairing_get().await.map_err(|e| e.to_string())
+}
+
+/// Stop syncing, remove the paired remote, and erase the stored key.
+#[tauri::command]
+async fn pairing_clear(sync: State<'_, SyncHandle>) -> Result<(), String> {
+    sync.pairing_clear().await.map_err(|e| e.to_string())
+}
+
 /// The crate's Tauri integration point. Wire it into the app builder with:
 ///
 /// ```ignore
@@ -556,5 +582,8 @@ pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> 
         sync_status,
         sync_start,
         sync_stop,
+        pairing_set,
+        pairing_get,
+        pairing_clear,
     ]
 }

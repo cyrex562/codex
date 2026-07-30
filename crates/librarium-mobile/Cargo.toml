@@ -15,7 +15,22 @@ librarium-types = { path = "../librarium-types" }
 # android-cross-compile job); this crate only adds a thin local bridge that
 # resolves vault ids to paths via `vaults.json` instead of `librarium.db`.
 librarium-sync = { path = "../librarium-sync" }
+# Used directly (not just transitively via librarium-sync) to validate a
+# pairing's base URL/API key with a cheap authenticated call before saving it.
+librarium-client = { path = "../librarium-client" }
 anyhow = "1.0"
+# Platform secure storage for the paired remote's API key: the `v1` default
+# feature covers desktop (Keychain/Credential Manager/Secret Service) for
+# local dev and tests; `android-native-keyring-store` is enabled for the
+# real Android Keystore-backed store — keyring's own Cargo.toml gates that
+# dependency to the Android target already, so enabling the feature has no
+# effect on other targets. Note: unlike desktop, Android has no automatic
+# default-store detection (see keyring::Entry's v1 docs) — the app host must
+# call `keyring_core::set_default_store(android_native_keyring_store::Store::new(...)?)`
+# once at startup (from a live JNI context) before any pairing_* command
+# runs; that registration is app-bootstrap work, out of scope for this crate
+# (see commands.rs's module doc for the broader "no app wiring yet" boundary).
+keyring = { version = "4", features = ["android-native-keyring-store"] }
 tauri = { version = "2", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 # preserve_order: see librarium-core/Cargo.toml — keeps ad-hoc response object
@@ -45,7 +60,6 @@ tempfile = "3.14"
 # Not part of the shipped mobile binary — dev-dependencies aren't included in
 # `cargo ndk build`, so this has no effect on the Android cross-compile job.
 librarium-server = { path = "../librarium-server" }
-librarium-client = { path = "../librarium-client" }
 actix-web = { version = "4.9", features = ["rustls-0_23"] }
 actix-test = "0.1"
 argon2 = "0.5"
