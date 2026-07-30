@@ -9,7 +9,7 @@ name = "librarium_mobile"
 path = "src/lib.rs"
 
 [dependencies]
-librarium-core = { path = "../librarium-core" }
+librarium-core = { path = "../librarium-core", features = ["sqlx"] }
 librarium-types = { path = "../librarium-types" }
 tauri = { version = "2", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
@@ -20,6 +20,13 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 chrono = { version = "0.4", features = ["serde"] }
 walkdir = "2.5"
 regex = "1.11"
+uuid = { version = "1.11", features = ["v4"] }
+# Local metadata store (preferences/recent/favorites/bookmarks) in its own
+# mobile.db — same stack librarium-sync already uses for sync.db. Bundled
+# SQLite (sqlx-sqlite's default for the "sqlite" feature) compiles from
+# vendored C source via the target C compiler, so this cross-compiles to
+# Android the same way librarium-sync already does — no system SQLite needed.
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite"] }
 # Wraps every blocking FileService/std::fs call in spawn_blocking so a slow
 # disk operation never stalls the Tauri IPC executor.
 tokio = { version = "1.42", features = ["rt"] }

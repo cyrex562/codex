@@ -4155,9 +4155,11 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sqlx",
  "tauri",
  "tempfile",
  "tokio",
+ "uuid",
  "walkdir",
 ]
 
