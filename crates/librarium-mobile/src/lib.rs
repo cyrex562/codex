@@ -11,8 +11,7 @@
 //! from `commands` — see that module's doc comment for why the commands
 //! themselves are not.
 //!
-//! Out of scope here (later Route C phases): sync (#53), frontend wiring
-//! (phase 2).
+//! Out of scope here (later Route C phases): frontend wiring (phase 2).
 
 mod commands;
 mod file;
@@ -21,6 +20,7 @@ mod links;
 mod metadata;
 mod render;
 mod search;
+mod sync;
 mod tags;
 mod vault;
 
@@ -37,5 +37,6 @@ pub use render::{render_markdown, render_markdown_in_vault};
 pub use search::{
     build_index, index_size_on_disk, rebuild_index, search, search_paged, update_incremental,
 };
+pub use sync::{RemoteDto, SyncHandle};
 pub use tags::{tag_files, tags_list, TagEntry};
 pub use vault::{vault_get, vault_list};

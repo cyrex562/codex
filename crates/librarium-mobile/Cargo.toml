@@ -11,6 +11,11 @@ path = "src/lib.rs"
 [dependencies]
 librarium-core = { path = "../librarium-core", features = ["sqlx"] }
 librarium-types = { path = "../librarium-types" }
+# The sync engine itself (already cross-compiles to Android — see the CI
+# android-cross-compile job); this crate only adds a thin local bridge that
+# resolves vault ids to paths via `vaults.json` instead of `librarium.db`.
+librarium-sync = { path = "../librarium-sync" }
+anyhow = "1.0"
 tauri = { version = "2", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 # preserve_order: see librarium-core/Cargo.toml — keeps ad-hoc response object
@@ -34,3 +39,13 @@ tokio = { version = "1.42", features = ["rt"] }
 [dev-dependencies]
 tokio = { version = "1.42", features = ["rt", "macros"] }
 tempfile = "3.14"
+# Only pulled in for the `sync_e2e` integration test, which spins up a real
+# in-process librarium-server as the "remote" to validate the sync bridge
+# against actual HTTP + WebSocket traffic (issue #53's acceptance criteria).
+# Not part of the shipped mobile binary — dev-dependencies aren't included in
+# `cargo ndk build`, so this has no effect on the Android cross-compile job.
+librarium-server = { path = "../librarium-server" }
+librarium-client = { path = "../librarium-client" }
+actix-web = { version = "4.9", features = ["rustls-0_23"] }
+actix-test = "0.1"
+argon2 = "0.5"

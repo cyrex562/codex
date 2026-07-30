@@ -24,8 +24,10 @@
 use crate::file::{DirectoryCreateResult, RenameResult};
 use crate::links::{LinkedNote, ResolveWikiLinkResult};
 use crate::metadata::{Bookmark, Favorite, MobileDb};
+use crate::sync::{RemoteDto, SyncHandle};
 use crate::tags::TagEntry;
 use librarium_core::search_service::SearchIndex;
+use librarium_sync::VaultStatus;
 use librarium_types::{FileContent, FileNode, PagedSearchResult, UserPreferences, Vault};
 use tauri::{AppHandle, Manager, Runtime, State};
 
@@ -419,6 +421,89 @@ async fn bookmarks_remove(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn sync_add_remote(
+    sync: State<'_, SyncHandle>,
+    base_url: String,
+    api_key: String,
+) -> Result<String, String> {
+    sync.add_remote(base_url, api_key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sync_map_vault(
+    sync: State<'_, SyncHandle>,
+    remote_id: String,
+    local_vault_id: String,
+    remote_vault_id: String,
+) -> Result<(), String> {
+    sync.map_vault(remote_id, local_vault_id, remote_vault_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sync_list_remotes(sync: State<'_, SyncHandle>) -> Result<Vec<RemoteDto>, String> {
+    sync.list_remotes().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sync_list_remote_vaults(
+    sync: State<'_, SyncHandle>,
+    remote_id: String,
+) -> Result<Vec<Vault>, String> {
+    sync.list_remote_vaults(remote_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sync_create_remote_vault(
+    sync: State<'_, SyncHandle>,
+    remote_id: String,
+    name: String,
+) -> Result<Vault, String> {
+    sync.create_remote_vault(remote_id, name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sync_remove_remote(sync: State<'_, SyncHandle>, remote_id: String) -> Result<(), String> {
+    sync.remove_remote(remote_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sync_unmap_vault(
+    sync: State<'_, SyncHandle>,
+    remote_id: String,
+    local_vault_id: String,
+) -> Result<(), String> {
+    sync.unmap_vault(remote_id, local_vault_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sync_status(sync: State<'_, SyncHandle>) -> Result<Vec<VaultStatus>, String> {
+    Ok(sync.status().await)
+}
+
+#[tauri::command]
+async fn sync_start(sync: State<'_, SyncHandle>) -> Result<(), String> {
+    sync.start().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sync_stop(sync: State<'_, SyncHandle>) -> Result<(), String> {
+    sync.stop().await;
+    Ok(())
+}
+
 /// The crate's Tauri integration point. Wire it into the app builder with:
 ///
 /// ```ignore
@@ -461,5 +546,15 @@ pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> 
         bookmarks_list,
         bookmarks_add,
         bookmarks_remove,
+        sync_add_remote,
+        sync_map_vault,
+        sync_list_remotes,
+        sync_list_remote_vaults,
+        sync_create_remote_vault,
+        sync_remove_remote,
+        sync_unmap_vault,
+        sync_status,
+        sync_start,
+        sync_stop,
     ]
 }
