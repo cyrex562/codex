@@ -144,9 +144,18 @@ describe('pluggable transport (#55)', () => {
         expect(getTransport()).toBe(custom);
     });
 
-    it('localTransport is selectable and reports itself as not implemented yet', async () => {
+    it('localTransport is selectable and dispatches instead of hitting fetch', async () => {
+        // Route/response coverage for what localTransport actually dispatches
+        // to lives in localDispatcher.test.ts (#56); this just confirms
+        // setTransport(localTransport) really takes over from httpTransport.
+        // Outside a Tauri context the underlying command wrapper rejects,
+        // which is enough to prove fetch was never reached.
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
         setTransport(localTransport);
-        await expect(apiListVaults()).rejects.toThrow(/not implemented/i);
+
+        await expect(apiListVaults()).rejects.toThrow();
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('skips the token-refresh path entirely when a non-HTTP transport is active', async () => {

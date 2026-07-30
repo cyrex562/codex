@@ -89,16 +89,18 @@ export const httpTransport: Transport = (url, init) => fetch(url, init);
 /**
  * Dispatches to `librarium-mobile`'s Tauri commands instead of HTTP.
  *
- * Not implemented yet — the dispatcher itself (mapping each REST-shaped
- * `(url, init)` call to the matching `invoke(...)`) is #56 and #57's job.
- * This exists now so the selection plumbing below has a real, correctly
- * typed second implementation to select between, and so tests can exercise
- * both branches structurally ahead of that dispatcher landing.
+ * Vault/file/render routes are implemented (#56, via `localDispatcher.ts`);
+ * search/tags/metadata routes are #57's job. Anything not yet routed throws
+ * `LocalTransportUnsupportedError` (see that module) rather than a generic
+ * error, so callers can distinguish "not available offline" from a bug.
+ *
+ * A lazy `import()` (rather than a static one) avoids pulling the Tauri
+ * command wrappers — and everything they transitively bring in — into
+ * bundles/tests that only ever use `httpTransport`.
  */
-export const localTransport: Transport = async () => {
-    throw new Error(
-        'localTransport is not implemented yet — see Route C issues #56 and #57',
-    );
+export const localTransport: Transport = async (url, init) => {
+    const { dispatchLocal } = await import('./localDispatcher');
+    return dispatchLocal(url, init);
 };
 
 function resolveDefaultTransport(): Transport {

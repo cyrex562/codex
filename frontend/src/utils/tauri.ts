@@ -9,7 +9,7 @@
  * Import from this module instead.
  */
 
-import type { Vault } from '@/api/types';
+import type { FileContent, FileNode, Vault } from '@/api/types';
 
 // ── Sync API types ──────────────────────────────────────────────────────────
 export interface SyncRemoteDto {
@@ -276,4 +276,125 @@ export const syncStop = async (): Promise<void> => {
   if (!isTauri()) return;
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('sync_stop');
+};
+
+// ── Mobile vault/file/render API wrappers (Route C, issue #56) ──────────────
+//
+// Each mirrors one `librarium-mobile` `#[tauri::command]`, invoked directly
+// rather than over HTTP. Used exclusively by `api/localDispatcher.ts` — see
+// that module for the route table mapping REST-shaped calls to these.
+
+export interface MobileRenameResult {
+  from: string;
+  to: string;
+  new_path: string;
+}
+
+export interface MobileDirectoryCreateResult {
+  path: string;
+}
+
+export interface MobileResolveWikiLinkResult {
+  path: string;
+  exists: boolean;
+  alternatives: string[];
+  ambiguous: boolean;
+}
+
+export const mobileVaultList = async (): Promise<Vault[]> => {
+  if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('vault_list');
+};
+
+export const mobileVaultGet = async (vaultId: string): Promise<Vault> => {
+  if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('vault_get', { vaultId });
+};
+
+export const mobileFileTree = async (vaultId: string): Promise<FileNode[]> => {
+  if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('file_tree', { vaultId });
+};
+
+export const mobileFileRead = async (vaultId: string, filePath: string): Promise<FileContent> => {
+  if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('file_read', { vaultId, filePath });
+};
+
+export const mobileFileWrite = async (
+  vaultId: string,
+  filePath: string,
+  content: string,
+  lastModified?: string,
+  frontmatter?: Record<string, unknown>,
+): Promise<FileContent> => {
+  if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('file_write', { vaultId, filePath, content, lastModified, frontmatter });
+};
+
+export const mobileFileCreate = async (
+  vaultId: string,
+  filePath: string,
+  content?: string,
+): Promise<FileContent> => {
+  if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('file_create', { vaultId, filePath, content });
+};
+
+export const mobileFileDelete = async (vaultId: string, filePath: string): Promise<void> => {
+  if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('file_delete', { vaultId, filePath });
+};
+
+export const mobileFileRename = async (
+  vaultId: string,
+  from: string,
+  to: string,
+  strategy?: string,
+): Promise<MobileRenameResult> => {
+  if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('file_rename', { vaultId, from, to, strategy });
+};
+
+export const mobileDirectoryCreate = async (
+  vaultId: string,
+  dirPath: string,
+): Promise<MobileDirectoryCreateResult> => {
+  if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('directory_create', { vaultId, dirPath });
+};
+
+export const mobileRenderMarkdown = async (content: string): Promise<string> => {
+  if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('render_markdown', { content });
+};
+
+export const mobileRenderMarkdownInVault = async (
+  vaultId: string,
+  content: string,
+  currentFile?: string,
+): Promise<string> => {
+  if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('render_markdown_in_vault', { vaultId, content, currentFile });
+};
+
+export const mobileResolveWikiLink = async (
+  vaultId: string,
+  link: string,
+  currentFile?: string,
+): Promise<MobileResolveWikiLinkResult> => {
+  if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('resolve_wiki_link', { vaultId, link, currentFile });
 };
