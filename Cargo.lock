@@ -4152,11 +4152,13 @@ dependencies = [
  "chrono",
  "librarium-core",
  "librarium-types",
+ "regex",
  "serde",
  "serde_json",
  "tauri",
  "tempfile",
  "tokio",
+ "walkdir",
 ]
 
 [[package]]

@@ -22,6 +22,8 @@
 //! logic in `vault`/`file` takes plain paths and has no Tauri dependency.
 
 use crate::file::{DirectoryCreateResult, RenameResult};
+use crate::links::{LinkedNote, ResolveWikiLinkResult};
+use crate::tags::TagEntry;
 use librarium_types::{FileContent, FileNode, Vault};
 use tauri::{AppHandle, Manager, Runtime};
 
@@ -153,6 +155,110 @@ async fn directory_create<R: Runtime>(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn render_markdown(content: String) -> Result<String, String> {
+    Ok(crate::render::render_markdown(&content).await)
+}
+
+#[tauri::command]
+async fn render_markdown_in_vault<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    content: String,
+    current_file: Option<String>,
+) -> Result<String, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    Ok(
+        crate::render::render_markdown_in_vault(&vault_path, &content, current_file.as_deref())
+            .await,
+    )
+}
+
+#[tauri::command]
+async fn resolve_wiki_link<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    link: String,
+    current_file: Option<String>,
+) -> Result<ResolveWikiLinkResult, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::links::resolve_wiki_link(&vault_path, &link, current_file.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn backlinks<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    path: String,
+) -> Result<Vec<LinkedNote>, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::links::backlinks(&vault_path, &path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn outgoing_links<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    file_path: String,
+) -> Result<Vec<LinkedNote>, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::links::outgoing_links(&vault_path, &file_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn tags_list<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+) -> Result<Vec<TagEntry>, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::tags::tags_list(&vault_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn tag_files<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    tag: String,
+) -> Result<Vec<String>, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::tags::tag_files(&vault_path, &tag)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn frontmatter_read<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    file_path: String,
+) -> Result<Option<serde_json::Value>, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::frontmatter::frontmatter_read(&vault_path, &file_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn frontmatter_write<R: Runtime>(
+    app: AppHandle<R>,
+    vault_id: String,
+    file_path: String,
+    frontmatter: Option<serde_json::Value>,
+) -> Result<FileContent, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    crate::frontmatter::frontmatter_write(&vault_path, &file_path, frontmatter)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// The crate's Tauri integration point. Wire it into the app builder with:
 ///
 /// ```ignore
@@ -171,5 +277,14 @@ pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> 
         file_delete,
         file_rename,
         directory_create,
+        render_markdown,
+        render_markdown_in_vault,
+        resolve_wiki_link,
+        backlinks,
+        outgoing_links,
+        tags_list,
+        tag_files,
+        frontmatter_read,
+        frontmatter_write,
     ]
 }
