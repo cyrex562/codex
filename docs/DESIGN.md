@@ -251,6 +251,43 @@ remote: a mobile session's remote credentials live in Rust secure storage
 frontend to call the remote's admin/plugin/ML endpoints directly — that
 would be a separate, larger proxying feature, not a hiding one.
 
+### Contract test suite (Route C, #59)
+
+The capability-set table above documents *which* routes the local transport
+implements; the contract test suite guards that its implementation actually
+*agrees* with the server's. Two implementations of the same route table exist
+— `librarium-server/src/routes/` (HTTP) and `librarium-mobile/src/` (Tauri
+commands, dispatched via `localDispatcher.ts`) — so nothing structurally
+prevents them from drifting apart as either side changes independently.
+
+- **`crates/librarium-mobile/tests/contract_test.rs`** is the real
+  drift-detector: it starts an in-process `librarium-server` and drives every
+  route in #56/#57's scope against both a real HTTP call (`ObsidianClient`, or
+  a raw authenticated request for the handful of routes `ObsidianClient` has
+  no method for) and the equivalent `librarium-mobile` function, operating on
+  the *same on-disk vault directory* for both sides. Responses are compared
+  after stripping a short, reviewed set of legitimately-differing fields:
+  - `created_at`, `updated_at`, `modified` — each side stamps these
+    independently (separate clock/`mtime` reads for the same operation), so
+    the value differs even though both are valid for the same event.
+  - `user_id` — present on the server's `Favorite` (multi-user), *absent* on
+    `librarium-mobile`'s (single-user by construction, #52) — an absence, not
+    a differing value.
+
+  Runs as its own CI gate (`contract-test`), separate from the general
+  `cargo test --workspace` run. See AGENTS.md's Build And Test section for the
+  local command, and the test file's module doc for the full design
+  rationale (including two non-obvious traps it works around: the fire-and-
+  forget `/reindex` route, and `SearchIndex::update_file`'s silent no-op for
+  an unregistered vault).
+- **`frontend/src/api/localDispatcherCoverage.test.ts`** is a lighter,
+  frontend-only static coverage check: it drives every #56/#57 `apiXxx` call
+  in `client.ts` through the real `localDispatcher.ts` route table (via
+  `localTransport`) and asserts none of them throws
+  `LocalTransportUnsupportedError`. It does not compare response values —
+  that's the Rust suite's job — it only catches an `apiXxx` call site
+  drifting to a method/path the dispatcher's table no longer matches.
+
 ---
 
 ## 6. Desktop (`librarium-tauri`)
