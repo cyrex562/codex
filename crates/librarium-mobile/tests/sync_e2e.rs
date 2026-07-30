@@ -1,16 +1,22 @@
 //! End-to-end coverage of the mobile sync bridge (`librarium_mobile::sync`)
-//! against a real, in-process `librarium-server` acting as the remote — the
-//! acceptance criteria for issue #53 ("Wire librarium-sync with no embedded
-//! server"): map a vault, push a local edit, pull a remote edit, observe
-//! convergence; conflict handling producing `conflict_*` siblings; and
-//! offline outbox draining.
+//! against a real, in-process `librarium-server` acting as the remote.
+//!
+//! Covers the acceptance criteria for issue #53 ("Wire librarium-sync with no
+//! embedded server"): map a vault, push a local edit, pull a remote edit,
+//! observe convergence; conflict handling producing `conflict_*` siblings;
+//! and offline outbox draining. Also covers issue #54 ("Secure API-key
+//! storage and remote pairing config"): `pairing_set` validates against the
+//! real remote before persisting anything, and the API key never appears in
+//! `sync.db` (only in the injected `SecretStore`).
 //!
 //! Modeled directly on
 //! `crates/librarium-server/tests/sync_client_e2e.rs` (the existing
 //! desktop-sync wire-contract test), extended with a real WebSocket route and
 //! driven through `librarium_mobile::SyncHandle` instead of a raw
-//! `ObsidianClient`. No changes were made to `crates/librarium-sync` to
-//! support this — `SyncEngine`'s API is already fully server-agnostic.
+//! `ObsidianClient`. No changes were made to `crates/librarium-sync` for #53;
+//! for #54, `SyncEngine` gained an `ApiKeyProvider` so it never has to
+//! persist the raw key itself (see that crate's doc comment for the
+//! rationale).
 
 use actix_web::{web, App};
 use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
@@ -21,7 +27,7 @@ use librarium::middleware::AuthMiddleware;
 use librarium::routes::{files, vaults, ws, AppState};
 use librarium::services::{MarkdownParser, SearchIndex};
 use librarium::watcher::FileWatcher;
-use librarium_mobile::SyncHandle;
+use librarium_mobile::{InMemorySecretStore, SecretStore, SyncHandle};
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
@@ -190,6 +196,7 @@ async fn maps_a_vault_and_converges_push_and_pull() {
     let sync = SyncHandle::new(
         sync_dir.path().join("sync.db"),
         config_dir.path().to_path_buf(),
+        Arc::new(InMemorySecretStore::default()),
     );
     let remote_id = sync
         .add_remote(remote.base_url.clone(), remote.api_key.clone())
@@ -237,6 +244,7 @@ async fn divergent_edits_produce_a_conflict_sibling_and_converge_on_the_remote_c
     let sync = SyncHandle::new(
         sync_dir.path().join("sync.db"),
         config_dir.path().to_path_buf(),
+        Arc::new(InMemorySecretStore::default()),
     );
     let remote_id = sync
         .add_remote(remote.base_url.clone(), remote.api_key.clone())
@@ -287,7 +295,11 @@ async fn a_queued_outbox_entry_drains_on_the_next_sync_cycle() {
     let local_vault_id = "local-v1";
     write_vault_registry(config_dir.path(), local_vault_id, local_vault_dir.path());
 
-    let sync = SyncHandle::new(sync_db_path.clone(), config_dir.path().to_path_buf());
+    let sync = SyncHandle::new(
+        sync_db_path.clone(),
+        config_dir.path().to_path_buf(),
+        Arc::new(InMemorySecretStore::default()),
+    );
     let remote_id = sync
         .add_remote(remote.base_url.clone(), remote.api_key.clone())
         .await
@@ -341,4 +353,51 @@ async fn a_queued_outbox_entry_drains_on_the_next_sync_cycle() {
     .await;
 
     sync.stop().await;
+}
+
+#[actix_web::test]
+async fn pairing_set_validates_persists_and_clears_without_leaking_the_key_into_sync_db() {
+    let remote = start_remote().await;
+
+    let config_dir = TempDir::new().unwrap();
+    let sync_dir = TempDir::new().unwrap();
+    let sync_db_path = sync_dir.path().join("sync.db");
+    let secrets = Arc::new(InMemorySecretStore::default());
+    let sync = SyncHandle::new(
+        sync_db_path.clone(),
+        config_dir.path().to_path_buf(),
+        secrets.clone(),
+    );
+
+    // A wrong key is rejected before anything is persisted.
+    let err = sync
+        .pairing_set(
+            remote.base_url.clone(),
+            "obh_wrongwrongwrongwrongwrongwrong".to_string(),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("could not validate"));
+    assert!(sync.pairing_get().await.unwrap().is_none());
+
+    // The real key pairs successfully.
+    sync.pairing_set(remote.base_url.clone(), remote.api_key.clone())
+        .await
+        .unwrap();
+
+    let info = sync.pairing_get().await.unwrap().expect("pairing recorded");
+    assert_eq!(info.base_url, remote.base_url);
+    assert!(info.key_present);
+
+    // The key never touches sync.db, even after a real, successful pairing.
+    let raw = std::fs::read(&sync_db_path).unwrap();
+    assert!(
+        !raw.windows(remote.api_key.len())
+            .any(|w| w == remote.api_key.as_bytes()),
+        "the raw API key must never appear in sync.db"
+    );
+
+    sync.pairing_clear().await.unwrap();
+    assert!(sync.pairing_get().await.unwrap().is_none());
+    assert!(secrets.get("primary").unwrap().is_none());
 }

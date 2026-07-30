@@ -7,9 +7,10 @@
 use anyhow::Context;
 use librarium::config::SyncRemoteConfig;
 use librarium::db::Database;
-use librarium_sync::{SyncEngine, VaultStatus};
+use librarium_sync::{ApiKeyProvider, SyncEngine, VaultStatus};
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
@@ -29,6 +30,13 @@ pub struct SyncHandle {
     /// `sqlite:`-prefixed URL of the embedded server's database, for resolving
     /// local vault ids to filesystem paths.
     db_url: String,
+    /// In-memory API-key cache the engine's [`ApiKeyProvider`] reads from.
+    /// Desktop has no secure-storage integration yet (`config.toml` already
+    /// holds these remotes' keys in plaintext, same as before this existed),
+    /// so this preserves current behavior while satisfying librarium-sync's
+    /// key-provider API — it no longer persists the key into `sync.db` on
+    /// top of `config.toml`, which is a small improvement, not a regression.
+    keys: Arc<StdMutex<HashMap<String, String>>>,
 }
 
 impl SyncHandle {
@@ -37,7 +45,13 @@ impl SyncHandle {
             inner: Arc::new(Mutex::new(None)),
             sync_db_path,
             db_url,
+            keys: Arc::new(StdMutex::new(HashMap::new())),
         }
+    }
+
+    fn key_provider(&self) -> ApiKeyProvider {
+        let keys = self.keys.clone();
+        Arc::new(move |remote_id: &str| keys.lock().ok()?.get(remote_id).cloned())
     }
 
     /// Create the engine (if not already), seed it from `config.toml` remotes,
@@ -46,7 +60,7 @@ impl SyncHandle {
     pub async fn init_and_start(&self, remotes: &[SyncRemoteConfig]) -> anyhow::Result<()> {
         let mut guard = self.inner.lock().await;
         if guard.is_none() {
-            let engine = SyncEngine::open(&self.sync_db_path)
+            let engine = SyncEngine::open(&self.sync_db_path, self.key_provider())
                 .await
                 .context("open sync.db")?;
             *guard = Some(Arc::new(engine));
@@ -55,12 +69,11 @@ impl SyncHandle {
 
         // Reconcile the config bootstrap into the durable store.
         for remote in remotes {
+            if let Ok(mut keys) = self.keys.lock() {
+                keys.insert(remote.id.clone(), remote.api_key.clone());
+            }
             engine
-                .add_remote(
-                    remote.id.clone(),
-                    remote.base_url.clone(),
-                    remote.api_key.clone(),
-                )
+                .add_remote(remote.id.clone(), remote.base_url.clone())
                 .await?;
             for m in &remote.vault_map {
                 match self.resolve_vault_path(&m.local_vault_id).await {
@@ -89,9 +102,12 @@ impl SyncHandle {
     }
 
     pub async fn add_remote(&self, base_url: String, api_key: String) -> anyhow::Result<String> {
-        let engine = self.ensure_engine().await?;
         let id = uuid::Uuid::new_v4().to_string();
-        engine.add_remote(id.clone(), base_url, api_key).await?;
+        if let Ok(mut keys) = self.keys.lock() {
+            keys.insert(id.clone(), api_key);
+        }
+        let engine = self.ensure_engine().await?;
+        engine.add_remote(id.clone(), base_url).await?;
         Ok(id)
     }
 
@@ -152,6 +168,9 @@ impl SyncHandle {
     pub async fn remove_remote(&self, remote_id: String) -> anyhow::Result<()> {
         let engine = self.ensure_engine().await?;
         engine.remove_remote(&remote_id).await?;
+        if let Ok(mut keys) = self.keys.lock() {
+            keys.remove(&remote_id);
+        }
         // Restart so tasks for the removed remote stop running.
         engine.stop();
         engine.start().await?;
@@ -196,7 +215,7 @@ impl SyncHandle {
     async fn ensure_engine(&self) -> anyhow::Result<Arc<SyncEngine>> {
         let mut guard = self.inner.lock().await;
         if guard.is_none() {
-            let engine = SyncEngine::open(&self.sync_db_path)
+            let engine = SyncEngine::open(&self.sync_db_path, self.key_provider())
                 .await
                 .context("open sync.db")?;
             *guard = Some(Arc::new(engine));

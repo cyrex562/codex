@@ -19,7 +19,7 @@ pub mod reconcile;
 pub mod state;
 pub mod watcher;
 
-pub use engine::{SyncEngine, VaultStatus, VaultSyncState};
+pub use engine::{ApiKeyProvider, SyncEngine, VaultStatus, VaultSyncState};
 pub use state::{OutboxOp, RemoteRecord, SyncStore, VaultMap};
 
 /// Errors surfaced by the sync engine.

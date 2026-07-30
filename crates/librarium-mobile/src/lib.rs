@@ -20,6 +20,7 @@ mod links;
 mod metadata;
 mod render;
 mod search;
+mod secrets;
 mod sync;
 mod tags;
 mod vault;
@@ -37,6 +38,7 @@ pub use render::{render_markdown, render_markdown_in_vault};
 pub use search::{
     build_index, index_size_on_disk, rebuild_index, search, search_paged, update_incremental,
 };
-pub use sync::{RemoteDto, SyncHandle};
+pub use secrets::{InMemorySecretStore, OsKeyringStore, SecretStore};
+pub use sync::{PairingInfo, RemoteDto, SyncHandle};
 pub use tags::{tag_files, tags_list, TagEntry};
 pub use vault::{vault_get, vault_list};

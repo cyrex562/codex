@@ -13,11 +13,15 @@ use std::path::Path;
 use std::str::FromStr;
 
 /// A configured remote server the desktop syncs against.
+///
+/// Deliberately holds no API key: the secret is never persisted here (or
+/// anywhere on disk in plaintext). Callers supply an [`crate::ApiKeyProvider`]
+/// to [`crate::SyncEngine::open`], which is consulted at connection time to
+/// build the client for a given remote.
 #[derive(Debug, Clone)]
 pub struct RemoteRecord {
     pub id: String,
     pub base_url: String,
-    pub api_key: String,
     pub enabled: bool,
 }
 
@@ -108,7 +112,6 @@ impl SyncStore {
             CREATE TABLE IF NOT EXISTS sync_remote (
                 id TEXT PRIMARY KEY NOT NULL,
                 base_url TEXT NOT NULL,
-                api_key TEXT NOT NULL,
                 enabled INTEGER NOT NULL DEFAULT 1
             )
             "#,
@@ -172,17 +175,15 @@ impl SyncStore {
     pub async fn upsert_remote(&self, remote: &RemoteRecord) -> Result<(), SyncError> {
         sqlx::query(
             r#"
-            INSERT INTO sync_remote (id, base_url, api_key, enabled)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO sync_remote (id, base_url, enabled)
+            VALUES (?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 base_url = excluded.base_url,
-                api_key = excluded.api_key,
                 enabled = excluded.enabled
             "#,
         )
         .bind(&remote.id)
         .bind(&remote.base_url)
-        .bind(&remote.api_key)
         .bind(remote.enabled as i64)
         .execute(&self.pool)
         .await?;
@@ -190,7 +191,7 @@ impl SyncStore {
     }
 
     pub async fn list_remotes(&self) -> Result<Vec<RemoteRecord>, SyncError> {
-        let rows = sqlx::query("SELECT id, base_url, api_key, enabled FROM sync_remote")
+        let rows = sqlx::query("SELECT id, base_url, enabled FROM sync_remote")
             .fetch_all(&self.pool)
             .await?;
         Ok(rows
@@ -198,7 +199,6 @@ impl SyncStore {
             .map(|r| RemoteRecord {
                 id: r.get("id"),
                 base_url: r.get("base_url"),
-                api_key: r.get("api_key"),
                 enabled: r.get::<i64, _>("enabled") != 0,
             })
             .collect())
@@ -539,7 +539,6 @@ mod tests {
             .upsert_remote(&RemoteRecord {
                 id: "r".to_string(),
                 base_url: "http://x".to_string(),
-                api_key: "k".to_string(),
                 enabled: true,
             })
             .await

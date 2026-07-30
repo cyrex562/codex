@@ -17,6 +17,7 @@ use librarium_client::ObsidianClient;
 use librarium_sync::SyncEngine;
 use librarium_types::CreateVaultRequest;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 type BoxErr = Box<dyn std::error::Error>;
@@ -82,13 +83,17 @@ async fn scenario(
 
     // 3. Start the sync engine: local temp vault -> remote test vault.
     let sync_db = local.join("_sync.db");
-    let engine = SyncEngine::open(&sync_db).await?;
+    // A single fixed key, in-memory only: this harness has no secure storage
+    // of its own, and the point here is exercising the sync engine, not key
+    // management (see librarium-mobile's OsKeyringStore for the real thing).
+    let owned_api_key = api_key.to_string();
+    let engine = SyncEngine::open(
+        &sync_db,
+        Arc::new(move |_remote_id: &str| Some(owned_api_key.clone())),
+    )
+    .await?;
     let remote_id = engine
-        .add_remote(
-            "live".to_string(),
-            base_url.to_string(),
-            api_key.to_string(),
-        )
+        .add_remote("live".to_string(), base_url.to_string())
         .await?;
     engine
         .map_vault(
