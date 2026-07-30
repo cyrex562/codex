@@ -63,3 +63,6 @@ librarium-server = { path = "../librarium-server" }
 actix-web = { version = "4.9", features = ["rustls-0_23"] }
 actix-test = "0.1"
 argon2 = "0.5"
+# Only for contract_test.rs (#59): favorites/bookmarks have no ObsidianClient
+# methods, so those six routes are driven with plain authenticated requests.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

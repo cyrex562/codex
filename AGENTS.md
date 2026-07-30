@@ -49,6 +49,25 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
   cargo tree -p librarium-core -p librarium-sync -p librarium-mobile --target aarch64-linux-android -i onig
   ```
   Both should error with "did not match any packages" (i.e. not found).
+- Mobile contract test (#59): asserts every route in #56/#57's scope
+  (vault/file/render/resolve-link/backlinks, search, tags, preferences,
+  recent files, favorites, bookmarks, random/daily notes) produces
+  structurally equivalent output from the real `librarium-server` HTTP routes
+  and the `librarium-mobile` functions `localDispatcher.ts` calls into. Runs
+  as its own CI gate (`contract-test`), separate from `cargo test --workspace`:
+  ```bash
+  cargo test -p librarium-mobile --test contract_test
+  ```
+  See `crates/librarium-mobile/tests/contract_test.rs`'s module doc for the
+  normalized-field list (fields stripped before comparison, with
+  justification per field) and design notes.
+- Frontend static coverage check for the same issue: asserts every #56/#57
+  `apiXxx` call in `frontend/src/api/client.ts` still resolves to a route in
+  `localDispatcher.ts`'s table (no live-response comparison — that's the Rust
+  suite's job):
+  ```bash
+  npm --prefix frontend test -- localDispatcherCoverage
+  ```
 
 ## Config And Runtime Notes
 
