@@ -65,6 +65,74 @@ export class ApiError extends Error {
     }
 }
 
+// ── Pluggable transport ──────────────────────────────────────────────────────
+//
+// `request()` below talks to `activeTransport` rather than `fetch` directly,
+// so the whole app can run against a local (Tauri command) backend without
+// touching any of this file's ~60 `apiXxx` consumers. Only two things a
+// transport needs to produce: the subset of `Response` that `request()`
+// actually reads (`ok`/`status`/`headers.get`/`json`/`text` — a real
+// `fetch` `Response` already satisfies this structurally).
+export interface TransportResponseLike {
+    readonly ok: boolean;
+    readonly status: number;
+    readonly headers: { get(name: string): string | null };
+    json(): Promise<unknown>;
+    text(): Promise<string>;
+}
+
+export type Transport = (url: string, init?: RequestInit) => Promise<TransportResponseLike>;
+
+/** Today's behavior, unchanged: a thin passthrough to `fetch`. */
+export const httpTransport: Transport = (url, init) => fetch(url, init);
+
+/**
+ * Dispatches to `librarium-mobile`'s Tauri commands instead of HTTP.
+ *
+ * Not implemented yet — the dispatcher itself (mapping each REST-shaped
+ * `(url, init)` call to the matching `invoke(...)`) is #56 and #57's job.
+ * This exists now so the selection plumbing below has a real, correctly
+ * typed second implementation to select between, and so tests can exercise
+ * both branches structurally ahead of that dispatcher landing.
+ */
+export const localTransport: Transport = async () => {
+    throw new Error(
+        'localTransport is not implemented yet — see Route C issues #56 and #57',
+    );
+};
+
+function resolveDefaultTransport(): Transport {
+    // No mobile shell exists yet (Route C phase 3, issues #61-#63): today's
+    // only Tauri build is the desktop shell, which embeds a real server and
+    // talks HTTP just like the browser build — so `isTauri()` alone can't be
+    // the signal here. Until the mobile shell's own bootstrap can mark
+    // itself distinctly (e.g. by calling `setTransport(localTransport)`
+    // directly), an explicit env override is the only trigger, keeping
+    // today's behavior unchanged for every build that actually exists.
+    if (
+        typeof window !== 'undefined' &&
+        (window as unknown as Record<string, unknown>).__LIBRARIUM_LOCAL_TRANSPORT__
+    ) {
+        return localTransport;
+    }
+    return httpTransport;
+}
+
+let activeTransport: Transport = resolveDefaultTransport();
+
+/**
+ * Override the transport `request()` uses. Exposed so tests (and eventually
+ * the mobile shell's own bootstrap) can select explicitly rather than
+ * relying on environment sniffing.
+ */
+export function setTransport(transport: Transport): void {
+    activeTransport = transport;
+}
+
+export function getTransport(): Transport {
+    return activeTransport;
+}
+
 function requestPath(url: string): string {
     return url.startsWith('http') ? new URL(url).pathname : url.split('?')[0];
 }
@@ -78,6 +146,10 @@ function isAuthLifecyclePath(path: string): boolean {
 }
 
 async function ensureFreshForRequest(url: string) {
+    // The local transport has no token-based auth lifecycle at all — the
+    // remote's API key lives in Rust secure storage (#54), never in the
+    // WebView — so there is nothing to refresh and no HTTP call to make.
+    if (activeTransport !== httpTransport) return;
     if (isAuthLifecyclePath(requestPath(url))) return;
     try {
         const auth = useAuthStore();
@@ -154,7 +226,7 @@ async function request<T>(
         // Pinia not initialized yet (SSR guard or early boot) — skip auth header.
     }
 
-    const response = await fetch(url, {
+    const response = await activeTransport(url, {
         ...options,
         headers: {
             'Content-Type': 'application/json',
@@ -265,7 +337,14 @@ export const apiRenameFile = (
     });
 
 // ── Raw / Assets ─────────────────────────────────────────────────────────────
-
+//
+// Direct-URL inventory (#55 acceptance criterion): these build a path for a
+// consumer to hand straight to the browser (`<img src>`, background-image,
+// direct navigation) rather than fetching through `request()`/the transport.
+// Under the local transport there is no HTTP server for the WebView to
+// navigate to at all, so this needs its own strategy — the Tauri asset
+// protocol (a `librarium://` custom scheme resolved on the Rust side) rather
+// than a URL string — to be designed and implemented in #56.
 export const apiRawFileUrl = (vaultId: string, filePath: string): string =>
     `/api/vaults/${vaultId}/raw/${filePath}`;
 
@@ -463,6 +542,15 @@ export const apiCreateUploadSession = (
         body: JSON.stringify({ filename, total_size: totalSize, path }),
     });
 
+// Direct-URL inventory (#55 acceptance criterion), continued: `apiUploadChunk`,
+// `apiDownloadZip`, `apiDownloadTar`, and `apiImportArchive` below all call
+// `fetch` directly rather than going through `request()`/the transport —
+// they need binary request/response bodies (`Blob`, `File`, chunked PUT)
+// that the current `TransportResponseLike` shape doesn't model. They are not
+// yet transport-abstracted; #56/#57's local dispatcher needs its own
+// streaming/binary strategy for these (Tauri's IPC can carry bytes, but not
+// via this file's `Transport` type as written), tracked alongside the
+// asset-protocol work for the plain URL builders above.
 export const apiUploadChunk = (
     vaultId: string,
     sessionId: string,
@@ -503,6 +591,8 @@ export const apiFinishUploadSession = (
         body: JSON.stringify({ filename, path, conflict }),
     });
 
+// Direct-URL, same as apiRawFileUrl/apiThumbnailUrl above — needs the Tauri
+// asset-protocol strategy from #56 rather than a URL string, under local.
 export const apiDownloadFileUrl = (vaultId: string, filePath: string): string =>
     `/api/vaults/${vaultId}/download/${filePath}`;
 
