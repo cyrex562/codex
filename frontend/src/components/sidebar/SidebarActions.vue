@@ -1,6 +1,7 @@
 <template>
   <div class="sidebar-actions d-flex align-center pa-1 gap-1" style="border-bottom: 1px solid rgb(var(--v-theme-border));">
     <v-btn
+      v-if="canUseEntityGraph"
       icon="mdi-graph-outline"
       size="small"
       density="compact"
@@ -9,6 +10,7 @@
       @click="openGraph"
     />
     <v-btn
+      v-if="canUseEntityGraph"
       icon="mdi-cube-plus-outline"
       size="small"
       density="compact"
@@ -92,7 +94,7 @@
       :disabled="selectedCount === 0"
       @click="deleteSelected"
     />
-    <v-menu>
+    <v-menu v-if="canUseArchiveImportExport">
       <template #activator="{ props: menuProps }">
         <v-btn
           icon="mdi-export"
@@ -148,6 +150,7 @@
 
   <!-- New entity dialog -->
   <NewEntityDialog
+    v-if="canUseEntityGraph"
     v-model="newEntityDialog"
     :initial-type-id="newEntityDialogInitialTypeId"
     :initial-file-name="newEntityDialogInitialFileName"
@@ -217,6 +220,7 @@ import { useFilesStore } from '@/stores/files';
 import { useTabsStore } from '@/stores/tabs';
 import { useUiStore } from '@/stores/ui';
 import { usePreferencesStore } from '@/stores/preferences';
+import { useCapabilities } from '@/composables/useCapabilities';
 import NewEntityDialog from '@/components/modals/NewEntityDialog.vue';
 
 const vaultsStore = useVaultsStore();
@@ -224,6 +228,7 @@ const filesStore = useFilesStore();
 const tabsStore = useTabsStore();
 const uiStore = useUiStore();
 const prefsStore = usePreferencesStore();
+const { canUseEntityGraph, canUseArchiveImportExport } = useCapabilities();
 
 const sort = ref<'asc' | 'desc'>('asc');
 const newNoteDialog = ref(false);

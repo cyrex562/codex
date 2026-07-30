@@ -44,6 +44,7 @@
       <!-- Desktop-only quick buttons; on mobile these live in the account menu -->
       <template v-if="!isMobile">
         <v-btn
+          v-if="canUsePlugins"
           icon="mdi-puzzle-outline"
           size="small"
           density="compact"
@@ -87,6 +88,7 @@
         <v-list density="compact" min-width="220">
           <template v-if="isMobile">
             <v-list-item
+              v-if="canUsePlugins"
               prepend-icon="mdi-puzzle-outline"
               title="Plugins"
               data-testid="user-menu-plugins"
@@ -113,7 +115,7 @@
             @click="goToChangePassword"
           />
           <v-list-item
-            v-if="authStore.isAdmin"
+            v-if="authStore.isAdmin && canUseAdmin"
             prepend-icon="mdi-account-multiple-plus-outline"
             title="Manage users"
             data-testid="user-menu-manage-users"
@@ -143,6 +145,7 @@ import { useTabsStore } from '@/stores/tabs';
 import { useAuthStore } from '@/stores/auth';
 import { useWebSocket } from '@/composables/useWebSocket';
 import { useMobile } from '@/composables/useMobile';
+import { useCapabilities } from '@/composables/useCapabilities';
 import SettingsModal from '@/components/settings/SettingsModal.vue';
 
 const emit = defineEmits<{
@@ -158,6 +161,7 @@ const authStore = useAuthStore();
 const router = useRouter();
 const { connected, disconnect } = useWebSocket(false);
 const { isMobile } = useMobile();
+const { canUseAdmin, canUsePlugins } = useCapabilities();
 
 const dirtyCount = computed(() => tabsStore.dirtyTabs.length);
 const wsConnected = computed(() => connected.value);

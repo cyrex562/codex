@@ -72,6 +72,7 @@
         <span class="text-caption text-secondary">{{ tabFilePath }}</span>
         <v-spacer />
         <v-btn
+          v-if="canUseReindex"
           size="x-small"
           variant="text"
           prepend-icon="mdi-refresh"
@@ -238,9 +239,11 @@ import MarkdownEditor from './MarkdownEditor.vue';
 import EntityRefField from './structural/EntityRefField.vue';
 import ListField from './structural/ListField.vue';
 import { parseFrontmatter, serializeFrontmatter, extractProseZone, replaceProseZone } from '@/editor/structural-utils';
+import { useCapabilities } from '@/composables/useCapabilities';
 
 const props = defineProps<{ tabId: string }>();
 
+const { canUseReindex } = useCapabilities();
 const tabsStore = useTabsStore();
 const vaultsStore = useVaultsStore();
 
