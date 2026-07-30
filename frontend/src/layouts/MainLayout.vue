@@ -55,6 +55,7 @@
       >
         <template v-if="activeMdContent !== null">
           <MlInsightsPanel
+            v-if="canUseMlOrganize"
             :vault-id="vaultsStore.activeVaultId"
             :file-path="tabsStore.activeTab?.filePath ?? ''"
             :content="activeMdContent"
@@ -62,7 +63,7 @@
           <OutlinePanel :content="activeMdContent" />
           <OutgoingLinksPanel :content="activeMdContent" />
           <BacklinksPanel :file-path="tabsStore.activeTab?.filePath ?? ''" />
-          <EntityRelationsPanel :file-path="tabsStore.activeTab?.filePath ?? ''" />
+          <EntityRelationsPanel v-if="canUseEntityGraph" :file-path="tabsStore.activeTab?.filePath ?? ''" />
           <NeighboringFilesPanel :file-path="tabsStore.activeTab?.filePath ?? ''" />
         </template>
 
@@ -90,7 +91,7 @@
   <VaultManager v-model="vaultManagerOpen" />
   <SearchModal v-model="searchOpen" :initial-query="searchInitialQuery" />
   <QuickSwitcher v-model="quickSwitcherOpen" />
-  <PluginManager v-model="pluginsOpen" />
+  <PluginManager v-if="canUsePlugins" v-model="pluginsOpen" />
   <TemplateSelector v-model="uiStore.templateSelectorOpen" />
   <ConflictResolver v-model="uiStore.conflictResolverOpen" />
   <ImportVaultDialog v-model="uiStore.importDialogOpen" />
@@ -113,6 +114,7 @@ import { usePreferencesStore } from '@/stores/preferences';
 import { useEditorStore } from '@/stores/editor';
 import { useWebSocket } from '@/composables/useWebSocket';
 import { useMobile } from '@/composables/useMobile';
+import { useCapabilities } from '@/composables/useCapabilities';
 import type { EditorMode, PersistedEditorMode } from '@/api/types';
 
 import TopBar from '@/components/TopBar.vue';
@@ -149,6 +151,7 @@ const authStore = useAuthStore();
 const router = useRouter();
 
 const { isMobile } = useMobile();
+const { canUseMlOrganize, canUseEntityGraph, canUsePlugins } = useCapabilities();
 
 // Desktop starts with the sidebar visible; mobile starts on the content with
 // the drawer closed (opened via the TopBar hamburger).

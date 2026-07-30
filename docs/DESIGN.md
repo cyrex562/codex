@@ -220,6 +220,37 @@ The frontend's `api/` types are hand-mirrored from the backend's JSON shapes
 (`models/` + `librarium-types`). **Changing one side's payload without the other
 is a breaking change** — keep them in lockstep.
 
+### Capability set (Route C thin mobile client)
+
+`request()` in `api/client.ts` goes through a pluggable `Transport`
+(`httpTransport`, today's `fetch`-based default, vs. `localTransport`,
+dispatching to `librarium-mobile` Tauri commands via `api/localDispatcher.ts`
+— see crate table above). The local transport implements the core editing
+loop (vaults, files, render, search, tags, backlinks, preferences, recent
+files, favorites, bookmarks, random/daily notes) but not the server-only
+features below — those only work against a real `librarium-server`, and the
+capability set is what hides them under the local transport instead of
+letting them fail at runtime:
+
+| Capability (`useCapabilities()`) | Hidden UI | Why not implemented locally |
+| --- | --- | --- |
+| `canUseAdmin` | `/admin/users` route + its `TopBar` menu item | User/role administration is inherently multi-user server state. |
+| `canUseGroupsAndSharing` | `VaultManager`'s "Sharing & Groups" section (shows "not available offline" instead) | Vault sharing, groups, and invitations require a multi-user server; mobile is single-user by construction (#52). |
+| `canUsePlugins` | `PluginManager` modal + its `TopBar` triggers | Plugin execution is server-hosted JavaScript; not ported to the mobile command layer. |
+| `canUseMlOrganize` | `MlInsightsPanel` (outline/analysis/organize-vault) | ML organization (keyphrase extraction, embeddings) is server-only. |
+| `canUseEntityGraph` | `EntityRelationsPanel`, `NewEntityDialog`, graph view, "New entity" (`SidebarActions`) | Entity/relation modeling and the graph view aren't in the mobile command surface. |
+| `canUseReindex` | Reindex buttons (`StructuralEditor`; admin's per-vault reindex is already covered by `canUseAdmin`) | Manual reindex triggers a full Tantivy rebuild via a server-only route. |
+| `canUseArchiveImportExport` | ZIP/tar.gz export menus (`SidebarActions`, `FileTreeNode`); archive (`.zip`/`.tar`/`.tar.gz`/`.tgz`) import fails with a clear message rather than being hidden, since the generic import picker can't tell a file is an archive until after selection | `apiImportArchive`/`apiDownloadZip`/`apiDownloadTar` bypass the transport for binary bodies; not implemented locally. |
+
+All gates are driven off `isLocalTransportActive()` (the active transport),
+**not** `useMobile`'s `isMobile` (viewport size) — a narrow desktop window is
+mobile-*sized* but fully capable, so conflating the two would hide these
+features on desktop too. Every gate hides rather than proxies to a paired
+remote: a mobile session's remote credentials live in Rust secure storage
+(#54) and never reach the WebView, so there's no mechanism today for the
+frontend to call the remote's admin/plugin/ML endpoints directly — that
+would be a separate, larger proxying feature, not a hiding one.
+
 ---
 
 ## 6. Desktop (`librarium-tauri`)

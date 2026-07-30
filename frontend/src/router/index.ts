@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { useCapabilities } from '@/composables/useCapabilities';
 import { getLogger } from '@/utils/logger';
 
 const log = getLogger('router');
@@ -66,7 +67,7 @@ router.beforeEach(async (to) => {
             return { path: '/change-password', query: { redirect: to.fullPath } };
         }
 
-        if (to.name === 'admin-users' && !auth.isAdmin) {
+        if (to.name === 'admin-users' && (!auth.isAdmin || !useCapabilities().canUseAdmin)) {
             return { path: '/' };
         }
 

@@ -135,6 +135,17 @@ export function getTransport(): Transport {
     return activeTransport;
 }
 
+/**
+ * Whether the local (Tauri command) transport is active rather than HTTP.
+ * Drives `useCapabilities` (#58): server-only features hide when this is
+ * true, since `localDispatcher.ts` doesn't implement them (admin, groups,
+ * plugins, ML/organize, entity graph/relations, reindex, archive
+ * import/export — see that module's doc comment).
+ */
+export function isLocalTransportActive(): boolean {
+    return activeTransport !== httpTransport;
+}
+
 function requestPath(url: string): string {
     return url.startsWith('http') ? new URL(url).pathname : url.split('?')[0];
 }
@@ -151,7 +162,7 @@ async function ensureFreshForRequest(url: string) {
     // The local transport has no token-based auth lifecycle at all — the
     // remote's API key lives in Rust secure storage (#54), never in the
     // WebView — so there is nothing to refresh and no HTTP call to make.
-    if (activeTransport !== httpTransport) return;
+    if (isLocalTransportActive()) return;
     if (isAuthLifecyclePath(requestPath(url))) return;
     try {
         const auth = useAuthStore();

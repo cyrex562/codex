@@ -77,7 +77,7 @@
           {{ sharingError }}
         </v-alert>
 
-        <template v-if="vaultsStore.activeVaultId">
+        <template v-if="vaultsStore.activeVaultId && canUseGroupsAndSharing">
           <v-list density="compact" class="mb-2" v-if="shares">
             <v-list-subheader>Current access</v-list-subheader>
             <v-list-item>
@@ -244,6 +244,9 @@
             </v-row>
           </template>
         </template>
+        <div v-else-if="vaultsStore.activeVaultId" class="text-caption text-medium-emphasis" data-testid="sharing-unavailable-offline">
+          Sharing and groups aren't available offline.
+        </div>
         <div v-else class="text-caption text-medium-emphasis">
           Select a vault first to manage sharing.
         </div>
@@ -275,6 +278,7 @@ import {
 } from '@/api/client';
 import type { GroupInfo, GroupMember, VaultRole, VaultShareList } from '@/api/types';
 import { isTauri, openDirectoryDialog } from '@/utils/tauri';
+import { useCapabilities } from '@/composables/useCapabilities';
 
 const props = defineProps<{ modelValue: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [v: boolean] }>();
@@ -284,6 +288,7 @@ const newName = ref('');
 const newPath = ref('');
 const showPathField = ref(false);
 const isTauriEnv = isTauri();
+const { canUseGroupsAndSharing } = useCapabilities();
 const saving = ref(false);
 const vaultError = ref('');
 const sharingBusy = ref(false);

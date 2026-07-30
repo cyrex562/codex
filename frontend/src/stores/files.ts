@@ -19,6 +19,7 @@ import {
     apiDownloadZip,
     apiDownloadTar,
     ApiError,
+    isLocalTransportActive,
 } from '@/api/client';
 import type {
     FileNode,
@@ -271,6 +272,15 @@ export const useFilesStore = defineStore('files', () => {
         // Separate regular files from archives (.zip / .tar / .tar.gz / .tgz)
         const archiveCandidates = candidates.filter((c) => isArchiveFile(c.file.name));
         const regularCandidates = candidates.filter((c) => !isArchiveFile(c.file.name));
+
+        // Archive extraction (#58's "archive import/export" capability) has no
+        // local-transport equivalent — the generic import picker can't hide
+        // this ahead of time (regular files use the same dialog and do work
+        // offline), so a selected archive fails with a clear message instead
+        // of the dispatcher's raw "not available offline" error.
+        if (archiveCandidates.length > 0 && isLocalTransportActive()) {
+            throw new Error('Archive import (.zip/.tar/.tar.gz) is not available offline.');
+        }
 
         const totalFiles = candidates.length;
         const totalBytes = candidates.reduce((sum, candidate) => sum + candidate.file.size, 0);

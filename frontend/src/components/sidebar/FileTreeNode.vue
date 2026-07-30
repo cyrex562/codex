@@ -114,9 +114,11 @@
         <v-list-item v-if="node.is_directory && folderColor" title="Clear folder color" prepend-icon="mdi-palette-swatch-outline" data-testid="ctx-clear-color" @click="clearFolderColor" />
         <v-list-item title="Rename" prepend-icon="mdi-pencil-outline" data-testid="ctx-rename" @click="openRenameDialog" />
         <v-list-item title="Move to…" prepend-icon="mdi-folder-move-outline" data-testid="ctx-move" @click="openMoveDialog" />
-        <v-divider />
-        <v-list-item title="Export as ZIP" prepend-icon="mdi-folder-zip-outline" data-testid="ctx-export-zip" @click="exportAsZip" />
-        <v-list-item title="Export as tar.gz" prepend-icon="mdi-archive-arrow-down-outline" data-testid="ctx-export-tar" @click="exportAsTar" />
+        <template v-if="canUseArchiveImportExport">
+          <v-divider />
+          <v-list-item title="Export as ZIP" prepend-icon="mdi-folder-zip-outline" data-testid="ctx-export-zip" @click="exportAsZip" />
+          <v-list-item title="Export as tar.gz" prepend-icon="mdi-archive-arrow-down-outline" data-testid="ctx-export-tar" @click="exportAsTar" />
+        </template>
         <v-divider />
         <v-list-item title="Delete" prepend-icon="mdi-delete-outline" base-color="error" data-testid="ctx-delete" @click="onDelete" />
       </v-list>
@@ -180,6 +182,7 @@ import { useTabsStore } from '@/stores/tabs';
 import { useUiStore } from '@/stores/ui';
 import { usePreferencesStore } from '@/stores/preferences';
 import { useMobile } from '@/composables/useMobile';
+import { useCapabilities } from '@/composables/useCapabilities';
 import { createImportCandidatesFromDataTransfer, hasFilePayload, parentDirectory } from '@/utils/importEntries';
 import { getFileTreeDragItems, getFileTreeDragPayload, setFileTreeDragPayload } from '@/utils/fileTreeDrag';
 
@@ -191,6 +194,7 @@ const tabsStore = useTabsStore();
 const uiStore = useUiStore();
 const prefsStore = usePreferencesStore();
 const { isMobile } = useMobile();
+const { canUseArchiveImportExport } = useCapabilities();
 
 const expanded = ref(false); // start collapsed
 const hovering = ref(false);
