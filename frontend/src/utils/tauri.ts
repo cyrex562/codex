@@ -9,7 +9,16 @@
  * Import from this module instead.
  */
 
-import type { FileContent, FileNode, Vault } from '@/api/types';
+import type {
+  Bookmark,
+  Favorite,
+  FileContent,
+  FileNode,
+  PagedSearchResult,
+  TagEntry,
+  UserPreferences,
+  Vault,
+} from '@/api/types';
 
 // ── Sync API types ──────────────────────────────────────────────────────────
 export interface SyncRemoteDto {
@@ -397,4 +406,112 @@ export const mobileResolveWikiLink = async (
   if (!isTauri()) throw new Error('local vault access is only available in the mobile app');
   const { invoke } = await import('@tauri-apps/api/core');
   return await invoke('resolve_wiki_link', { vaultId, link, currentFile });
+};
+
+// ── Mobile search/tags/backlinks/metadata API wrappers (issue #57) ──────────
+
+const MOBILE_UNAVAILABLE = 'local vault access is only available in the mobile app';
+
+export const mobileSearchPaged = async (
+  vaultId: string,
+  query: string,
+  page: number,
+  pageSize: number,
+): Promise<PagedSearchResult> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('search_paged', { vaultId, query, page, pageSize });
+};
+
+export const mobileTagsList = async (vaultId: string): Promise<TagEntry[]> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('tags_list', { vaultId });
+};
+
+export const mobileTagFiles = async (vaultId: string, tag: string): Promise<string[]> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('tag_files', { vaultId, tag });
+};
+
+export interface MobileLinkedNote {
+  path: string;
+  title: string;
+}
+
+export const mobileBacklinks = async (vaultId: string, path: string): Promise<MobileLinkedNote[]> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('backlinks', { vaultId, path });
+};
+
+export const mobilePreferencesGet = async (): Promise<UserPreferences> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('preferences_get');
+};
+
+export const mobilePreferencesSet = async (preferences: UserPreferences): Promise<void> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('preferences_set', { preferences });
+};
+
+export const mobilePreferencesReset = async (): Promise<UserPreferences> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('preferences_reset');
+};
+
+export const mobileRecentList = async (vaultId: string): Promise<string[]> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('recent_list', { vaultId });
+};
+
+export const mobileRecentRecord = async (vaultId: string, path: string): Promise<void> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('recent_record', { vaultId, path });
+};
+
+export const mobileFavoritesList = async (vaultId: string): Promise<Favorite[]> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('favorites_list', { vaultId });
+};
+
+export const mobileFavoritesAdd = async (vaultId: string, path: string): Promise<Favorite> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('favorites_add', { vaultId, path });
+};
+
+export const mobileFavoritesRemove = async (vaultId: string, path: string): Promise<void> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('favorites_remove', { vaultId, path });
+};
+
+export const mobileBookmarksList = async (vaultId: string): Promise<Bookmark[]> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('bookmarks_list', { vaultId });
+};
+
+export const mobileBookmarksAdd = async (
+  vaultId: string,
+  path: string,
+  title: string,
+): Promise<Bookmark> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('bookmarks_add', { vaultId, path, title });
+};
+
+export const mobileBookmarksRemove = async (vaultId: string, bookmarkId: string): Promise<void> => {
+  if (!isTauri()) throw new Error(MOBILE_UNAVAILABLE);
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('bookmarks_remove', { vaultId, bookmarkId });
 };
