@@ -24,13 +24,24 @@
 use crate::file::{DirectoryCreateResult, RenameResult};
 use crate::links::{LinkedNote, ResolveWikiLinkResult};
 use crate::tags::TagEntry;
-use librarium_types::{FileContent, FileNode, Vault};
-use tauri::{AppHandle, Manager, Runtime};
+use librarium_core::search_service::SearchIndex;
+use librarium_types::{FileContent, FileNode, PagedSearchResult, Vault};
+use tauri::{AppHandle, Manager, Runtime, State};
 
 fn app_config_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, String> {
     app.path()
         .app_config_dir()
         .map_err(|e| format!("Could not resolve app config directory: {e}"))
+}
+
+/// Search index storage lives under app-private data (not config) storage —
+/// a distinct directory from the vault registry, mirroring the server's own
+/// separation between its SQLite/config location and `./data/indices`.
+fn search_index_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join("search-index"))
+        .map_err(|e| format!("Could not resolve app data directory: {e}"))
 }
 
 async fn resolve_vault_path<R: Runtime>(
@@ -259,6 +270,51 @@ async fn frontmatter_write<R: Runtime>(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn search(
+    index: State<'_, SearchIndex>,
+    vault_id: String,
+    query: String,
+) -> Result<PagedSearchResult, String> {
+    crate::search::search(&index, &vault_id, &query)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn search_paged(
+    index: State<'_, SearchIndex>,
+    vault_id: String,
+    query: String,
+    page: usize,
+    page_size: usize,
+) -> Result<PagedSearchResult, String> {
+    crate::search::search_paged(&index, &vault_id, &query, page, page_size)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn search_index_rebuild<R: Runtime>(
+    app: AppHandle<R>,
+    index: State<'_, SearchIndex>,
+    vault_id: String,
+) -> Result<usize, String> {
+    let vault_path = resolve_vault_path(&app, &vault_id).await?;
+    let index_dir = search_index_dir(&app)?;
+    crate::search::rebuild_index(&index, &index_dir, &vault_id, &vault_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn search_index_size<R: Runtime>(app: AppHandle<R>, vault_id: String) -> Result<u64, String> {
+    let index_dir = search_index_dir(&app)?;
+    crate::search::index_size_on_disk(&index_dir, &vault_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// The crate's Tauri integration point. Wire it into the app builder with:
 ///
 /// ```ignore
@@ -286,5 +342,9 @@ pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> 
         tag_files,
         frontmatter_read,
         frontmatter_write,
+        search,
+        search_paged,
+        search_index_rebuild,
+        search_index_size,
     ]
 }
