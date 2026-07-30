@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { dispatchLocal, LocalTransportUnsupportedError } from './localDispatcher';
+import { dispatchLocal, LocalSearchUnavailableError, LocalTransportUnsupportedError } from './localDispatcher';
+import type { PagedSearchResult } from './types';
 
 // Mock the Tauri core `invoke` the same way utils/tauri.test.ts does (it's a
 // dynamic import inside utils/tauri.ts, which localDispatcher.ts calls into).
@@ -263,7 +264,9 @@ describe('localDispatcher round trip and path encoding (#56)', () => {
 
 describe('localDispatcher unsupported routes (#56)', () => {
     it('throws LocalTransportUnsupportedError for a route not in the table', async () => {
-        await expect(dispatchLocal('/api/vaults/v1/search?q=x', { method: 'GET' }))
+        // Entity/graph routes are server-only on mobile (#57's own out-of-scope
+        // list) — search itself is now a real route as of #57.
+        await expect(dispatchLocal('/api/vaults/v1/entity-graph', { method: 'GET' }))
             .rejects.toBeInstanceOf(LocalTransportUnsupportedError);
     });
 
@@ -276,5 +279,248 @@ describe('localDispatcher unsupported routes (#56)', () => {
         const err = await dispatchLocal('/api/plugins', { method: 'GET' }).catch((e) => e);
         expect(err).toBeInstanceOf(LocalTransportUnsupportedError);
         expect((err as LocalTransportUnsupportedError).message).toBe('GET /api/plugins is not available offline');
+    });
+
+    it('DELETE .../tags/:tag is unsupported (no backing mobile command)', async () => {
+        await expect(dispatchLocal('/api/vaults/v1/tags/urgent', { method: 'DELETE' }))
+            .rejects.toBeInstanceOf(LocalTransportUnsupportedError);
+    });
+});
+
+describe('localDispatcher search route (#57)', () => {
+    it('GET .../search -> search_paged, PagedSearchResult shape preserved', async () => {
+        const invoke = await getInvokeMock();
+        const result: PagedSearchResult = {
+            results: [{ path: 'a.md', title: 'A', matches: [], score: 1, labels: [] }],
+            total_count: 1,
+            page: 1,
+            page_size: 50,
+        };
+        invoke.mockResolvedValueOnce(result);
+
+        const res = await dispatchLocal('/api/vaults/v1/search?q=hello&page=1&page_size=50', { method: 'GET' });
+
+        expect(invoke).toHaveBeenCalledWith('search_paged', {
+            vaultId: 'v1',
+            query: 'hello',
+            page: 1,
+            pageSize: 50,
+        });
+        await expect(res.json()).resolves.toEqual(result);
+    });
+
+    it('decodes an encoded query string', async () => {
+        const invoke = await getInvokeMock();
+        invoke.mockResolvedValueOnce({ results: [], total_count: 0, page: 1, page_size: 50 });
+
+        await dispatchLocal('/api/vaults/v1/search?q=a%20b&page=2&page_size=10', { method: 'GET' });
+
+        expect(invoke).toHaveBeenCalledWith('search_paged', {
+            vaultId: 'v1',
+            query: 'a b',
+            page: 2,
+            pageSize: 10,
+        });
+    });
+
+    it('throws LocalSearchUnavailableError (not an empty result) when no index exists', async () => {
+        const invoke = await getInvokeMock();
+        invoke.mockRejectedValueOnce(
+            new Error('The requested resource was not found: Vault index not found: v1'),
+        );
+
+        const err = await dispatchLocal('/api/vaults/v1/search?q=x', { method: 'GET' }).catch((e) => e);
+
+        expect(err).toBeInstanceOf(LocalSearchUnavailableError);
+        expect(err).not.toBeInstanceOf(LocalTransportUnsupportedError);
+    });
+
+    it('propagates an unrelated search failure unchanged (not misclassified as unavailable)', async () => {
+        const invoke = await getInvokeMock();
+        invoke.mockRejectedValueOnce(new Error('ipc channel closed'));
+
+        const err = await dispatchLocal('/api/vaults/v1/search?q=x', { method: 'GET' }).catch((e) => e);
+
+        expect(err).not.toBeInstanceOf(LocalSearchUnavailableError);
+        expect((err as Error).message).toBe('ipc channel closed');
+    });
+});
+
+describe('localDispatcher tags and backlinks (#57)', () => {
+    it('GET .../tags -> tags_list', async () => {
+        const invoke = await getInvokeMock();
+        const tags = [{ tag: 'urgent', count: 2, files: ['a.md', 'b.md'] }];
+        invoke.mockResolvedValueOnce(tags);
+
+        const res = await dispatchLocal('/api/vaults/v1/tags', { method: 'GET' });
+
+        expect(invoke).toHaveBeenCalledWith('tags_list', { vaultId: 'v1' });
+        await expect(res.json()).resolves.toEqual(tags);
+    });
+
+    it('GET .../tags/:tag -> tag_files', async () => {
+        const invoke = await getInvokeMock();
+        invoke.mockResolvedValueOnce(['a.md', 'b.md']);
+
+        const res = await dispatchLocal('/api/vaults/v1/tags/urgent', { method: 'GET' });
+
+        expect(invoke).toHaveBeenCalledWith('tag_files', { vaultId: 'v1', tag: 'urgent' });
+        await expect(res.json()).resolves.toEqual(['a.md', 'b.md']);
+    });
+
+    it('GET .../backlinks -> backlinks, path from query string', async () => {
+        const invoke = await getInvokeMock();
+        invoke.mockResolvedValueOnce([{ path: 'a.md', title: 'A' }]);
+
+        const res = await dispatchLocal('/api/vaults/v1/backlinks?path=notes%2Fb.md', { method: 'GET' });
+
+        expect(invoke).toHaveBeenCalledWith('backlinks', { vaultId: 'v1', path: 'notes/b.md' });
+        await expect(res.json()).resolves.toEqual([{ path: 'a.md', title: 'A' }]);
+    });
+});
+
+describe('localDispatcher preferences (#57)', () => {
+    it('round-trips: PUT persists, GET returns the same preferences', async () => {
+        const invoke = await getInvokeMock();
+        const prefs = { theme: 'dark', editor_mode: 'raw', font_size: 14 };
+        invoke.mockImplementation(async (cmd: string) => {
+            if (cmd === 'preferences_set') return null;
+            if (cmd === 'preferences_get') return prefs;
+            throw new Error(`unexpected command ${cmd}`);
+        });
+
+        const putRes = await dispatchLocal('/api/preferences', {
+            method: 'PUT',
+            body: JSON.stringify(prefs),
+        });
+        expect(invoke).toHaveBeenCalledWith('preferences_set', { preferences: prefs });
+        await expect(putRes.json()).resolves.toEqual(prefs);
+
+        const getRes = await dispatchLocal('/api/preferences', { method: 'GET' });
+        expect(invoke).toHaveBeenCalledWith('preferences_get');
+        await expect(getRes.json()).resolves.toEqual(prefs);
+    });
+
+    it('POST .../preferences/reset -> preferences_reset', async () => {
+        const invoke = await getInvokeMock();
+        const defaults = { theme: 'light', editor_mode: 'wysiwyg', font_size: 16 };
+        invoke.mockResolvedValueOnce(defaults);
+
+        const res = await dispatchLocal('/api/preferences/reset', { method: 'POST' });
+
+        expect(invoke).toHaveBeenCalledWith('preferences_reset');
+        await expect(res.json()).resolves.toEqual(defaults);
+    });
+});
+
+describe('localDispatcher recent/favorites/bookmarks (#57)', () => {
+    it('GET/POST .../recent -> recent_list / recent_record', async () => {
+        const invoke = await getInvokeMock();
+        invoke.mockResolvedValueOnce(['a.md']);
+        const listRes = await dispatchLocal('/api/vaults/v1/recent', { method: 'GET' });
+        expect(invoke).toHaveBeenCalledWith('recent_list', { vaultId: 'v1' });
+        await expect(listRes.json()).resolves.toEqual(['a.md']);
+
+        invoke.mockResolvedValueOnce(null);
+        await dispatchLocal('/api/vaults/v1/recent', { method: 'POST', body: JSON.stringify({ path: 'b.md' }) });
+        expect(invoke).toHaveBeenCalledWith('recent_record', { vaultId: 'v1', path: 'b.md' });
+    });
+
+    it('GET/POST/DELETE .../favorites -> favorites_list / favorites_add / favorites_remove', async () => {
+        const invoke = await getInvokeMock();
+        invoke.mockResolvedValueOnce([{ vault_id: 'v1', path: 'a.md', created_at: 't' }]);
+        await dispatchLocal('/api/vaults/v1/favorites', { method: 'GET' });
+        expect(invoke).toHaveBeenCalledWith('favorites_list', { vaultId: 'v1' });
+
+        invoke.mockResolvedValueOnce({ vault_id: 'v1', path: 'a.md', created_at: 't' });
+        await dispatchLocal('/api/vaults/v1/favorites', { method: 'POST', body: JSON.stringify({ path: 'a.md' }) });
+        expect(invoke).toHaveBeenCalledWith('favorites_add', { vaultId: 'v1', path: 'a.md' });
+
+        invoke.mockResolvedValueOnce(null);
+        await dispatchLocal('/api/vaults/v1/favorites?path=a.md', { method: 'DELETE' });
+        expect(invoke).toHaveBeenCalledWith('favorites_remove', { vaultId: 'v1', path: 'a.md' });
+    });
+
+    it('GET/POST/DELETE .../bookmarks -> bookmarks_list / bookmarks_add / bookmarks_remove', async () => {
+        const invoke = await getInvokeMock();
+        invoke.mockResolvedValueOnce([]);
+        await dispatchLocal('/api/vaults/v1/bookmarks', { method: 'GET' });
+        expect(invoke).toHaveBeenCalledWith('bookmarks_list', { vaultId: 'v1' });
+
+        invoke.mockResolvedValueOnce({ id: 'bm1', vault_id: 'v1', path: 'a.md', title: 'A', created_at: 't' });
+        await dispatchLocal('/api/vaults/v1/bookmarks', {
+            method: 'POST',
+            body: JSON.stringify({ path: 'a.md', title: 'A' }),
+        });
+        expect(invoke).toHaveBeenCalledWith('bookmarks_add', { vaultId: 'v1', path: 'a.md', title: 'A' });
+
+        invoke.mockResolvedValueOnce(null);
+        await dispatchLocal('/api/vaults/v1/bookmarks/bm1', { method: 'DELETE' });
+        expect(invoke).toHaveBeenCalledWith('bookmarks_remove', { vaultId: 'v1', bookmarkId: 'bm1' });
+    });
+});
+
+describe('localDispatcher random/daily notes (#57)', () => {
+    it('GET .../random picks a markdown file derived from the file tree', async () => {
+        const invoke = await getInvokeMock();
+        invoke.mockResolvedValueOnce([
+            { name: 'a.md', path: 'a.md', is_directory: false },
+            { name: 'notes', path: 'notes', is_directory: true, children: [
+                { name: 'b.md', path: 'notes/b.md', is_directory: false },
+                { name: 'img.png', path: 'notes/img.png', is_directory: false },
+            ] },
+        ]);
+
+        const res = await dispatchLocal('/api/vaults/v1/random', { method: 'GET' });
+
+        expect(invoke).toHaveBeenCalledWith('file_tree', { vaultId: 'v1' });
+        const body = (await res.json()) as { path: string };
+        expect(['a.md', 'notes/b.md']).toContain(body.path);
+    });
+
+    it('GET .../random throws when the vault has no markdown files', async () => {
+        const invoke = await getInvokeMock();
+        invoke.mockResolvedValueOnce([{ name: 'img.png', path: 'img.png', is_directory: false }]);
+
+        await expect(dispatchLocal('/api/vaults/v1/random', { method: 'GET' }))
+            .rejects.toThrow(/no markdown files/i);
+    });
+
+    it('POST .../daily reads an existing daily note without creating it', async () => {
+        const invoke = await getInvokeMock();
+        invoke.mockResolvedValueOnce({ path: '2020-01-01.md', content: 'existing', modified: 't' });
+
+        const res = await dispatchLocal('/api/vaults/v1/daily', {
+            method: 'POST',
+            body: JSON.stringify({ date: '2020-01-01' }),
+        });
+
+        expect(invoke).toHaveBeenCalledWith('file_read', { vaultId: 'v1', filePath: '2020-01-01.md' });
+        await expect(res.json()).resolves.toMatchObject({ content: 'existing' });
+    });
+
+    it('POST .../daily creates the note with a default header when it does not exist yet', async () => {
+        const invoke = await getInvokeMock();
+        invoke.mockImplementation(async (cmd: string) => {
+            if (cmd === 'file_read') {
+                throw new Error('The requested resource was not found: File not found: 2020-01-02.md');
+            }
+            if (cmd === 'file_create') {
+                return { path: '2020-01-02.md', content: '# 2020-01-02\n\n', modified: 't' };
+            }
+            throw new Error(`unexpected command ${cmd}`);
+        });
+
+        const res = await dispatchLocal('/api/vaults/v1/daily', {
+            method: 'POST',
+            body: JSON.stringify({ date: '2020-01-02' }),
+        });
+
+        expect(invoke).toHaveBeenCalledWith('file_create', {
+            vaultId: 'v1',
+            filePath: '2020-01-02.md',
+            content: '# 2020-01-02\n\n',
+        });
+        await expect(res.json()).resolves.toMatchObject({ content: '# 2020-01-02\n\n' });
     });
 });

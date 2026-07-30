@@ -244,7 +244,9 @@ export interface Bookmark {
 }
 
 export interface Favorite {
-    user_id: string;
+    // Absent under the local transport: librarium-mobile is single-user by
+    // construction, so its Favorite has no user_id column (#52, #57).
+    user_id?: string;
     vault_id: string;
     path: string;
     created_at: string;
