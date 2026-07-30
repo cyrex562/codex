@@ -750,7 +750,7 @@ pub struct FileManifestEntry {
     pub mtime_ms: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UserPreferences {
     pub theme: String,
     pub editor_mode: EditorMode,

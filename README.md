@@ -90,7 +90,7 @@ crates/
   librarium-types    Shared Rust DTOs / contracts
   librarium-client   HTTP + WebSocket client crate
   librarium-tauri    Tauri 2 desktop shell
-  librarium-mobile   Route C thin-client command layer (vault, file, render, links, tags, frontmatter, on-device search); no frontend wiring yet
+  librarium-mobile   Route C thin-client command layer (vault, file, render, links, tags, frontmatter, on-device search, local metadata); no frontend wiring yet
 frontend/            Vue 3 + TypeScript + Vuetify SPA
 plugins/             Bundled first-party plugins
 benches/  tests/  scripts/  docs/

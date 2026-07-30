@@ -23,9 +23,10 @@
 
 use crate::file::{DirectoryCreateResult, RenameResult};
 use crate::links::{LinkedNote, ResolveWikiLinkResult};
+use crate::metadata::{Bookmark, Favorite, MobileDb};
 use crate::tags::TagEntry;
 use librarium_core::search_service::SearchIndex;
-use librarium_types::{FileContent, FileNode, PagedSearchResult, Vault};
+use librarium_types::{FileContent, FileNode, PagedSearchResult, UserPreferences, Vault};
 use tauri::{AppHandle, Manager, Runtime, State};
 
 fn app_config_dir<R: Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, String> {
@@ -315,6 +316,109 @@ async fn search_index_size<R: Runtime>(app: AppHandle<R>, vault_id: String) -> R
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn preferences_get(db: State<'_, MobileDb>) -> Result<UserPreferences, String> {
+    db.get_preferences().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn preferences_set(
+    db: State<'_, MobileDb>,
+    preferences: UserPreferences,
+) -> Result<(), String> {
+    db.set_preferences(&preferences)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn preferences_reset(db: State<'_, MobileDb>) -> Result<UserPreferences, String> {
+    db.reset_preferences().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn recent_list(db: State<'_, MobileDb>, vault_id: String) -> Result<Vec<String>, String> {
+    db.list_recent_files(&vault_id, 20)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn recent_record(
+    db: State<'_, MobileDb>,
+    vault_id: String,
+    path: String,
+) -> Result<(), String> {
+    db.record_recent_file(&vault_id, &path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn favorites_list(
+    db: State<'_, MobileDb>,
+    vault_id: String,
+) -> Result<Vec<Favorite>, String> {
+    db.list_favorites(&vault_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn favorites_add(
+    db: State<'_, MobileDb>,
+    vault_id: String,
+    path: String,
+) -> Result<Favorite, String> {
+    db.add_favorite(&vault_id, &path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn favorites_remove(
+    db: State<'_, MobileDb>,
+    vault_id: String,
+    path: String,
+) -> Result<(), String> {
+    db.remove_favorite(&vault_id, &path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn bookmarks_list(
+    db: State<'_, MobileDb>,
+    vault_id: String,
+) -> Result<Vec<Bookmark>, String> {
+    db.list_bookmarks(&vault_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn bookmarks_add(
+    db: State<'_, MobileDb>,
+    vault_id: String,
+    path: String,
+    title: String,
+) -> Result<Bookmark, String> {
+    db.add_bookmark(&vault_id, &path, &title)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn bookmarks_remove(
+    db: State<'_, MobileDb>,
+    vault_id: String,
+    bookmark_id: String,
+) -> Result<(), String> {
+    db.remove_bookmark(&vault_id, &bookmark_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// The crate's Tauri integration point. Wire it into the app builder with:
 ///
 /// ```ignore
@@ -346,5 +450,16 @@ pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> 
         search_paged,
         search_index_rebuild,
         search_index_size,
+        preferences_get,
+        preferences_set,
+        preferences_reset,
+        recent_list,
+        recent_record,
+        favorites_list,
+        favorites_add,
+        favorites_remove,
+        bookmarks_list,
+        bookmarks_add,
+        bookmarks_remove,
     ]
 }
