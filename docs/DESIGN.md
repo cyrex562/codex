@@ -85,7 +85,7 @@ frontend.
 | `librarium-types` | `crates/librarium-types` | Shared Rust DTOs and parser/contract types used across crates. |
 | `librarium-client` | `crates/librarium-client` | Reusable HTTP + WebSocket client for the Librarium API. |
 | `librarium-tauri` | `crates/librarium-tauri` | Tauri 2 desktop shell embedding the server + frontend. |
-| `librarium-mobile` | `crates/librarium-mobile` | Route C thin-client command layer: vault listing (local JSON registry, not SQLite) and file/directory commands over `librarium-core::FileService`. Plain, Tauri-free `pub async fn`s for the actual logic; private `#[tauri::command]` wrappers resolve paths via Tauri's path API. No frontend/Tauri-app wiring yet (later Route C phases). |
+| `librarium-mobile` | `crates/librarium-mobile` | Route C thin-client command layer: vault listing (local JSON registry, not SQLite), file/directory commands over `librarium-core::FileService`, Markdown render, wiki-link resolution/backlinks/outgoing-links, tags, and standalone frontmatter read/write. Plain, Tauri-free `pub async fn`s for the actual logic; private `#[tauri::command]` wrappers resolve paths via Tauri's path API. No frontend/Tauri-app wiring yet (later Route C phases). |
 | `frontend` | `frontend/` | Vue 3 + TypeScript + Vuetify SPA (built with Vite). |
 | `plugins` | `plugins/` | Bundled first-party plugin manifests + scripts. |
 | `benches` | `benches/` | Criterion benchmarks (e.g. Markdown parsing). |
