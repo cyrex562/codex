@@ -9,7 +9,7 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
 - `crates/librarium-types`: shared Rust DTOs and parser traits
 - `crates/librarium-client`: HTTP and WebSocket client crate
 - `crates/librarium-tauri`: desktop shell that embeds the frontend and server
-- `crates/librarium-mobile`: Route C thin-client command layer (vault list/get from a local JSON registry, file/directory ops over `librarium-core::FileService`, Markdown render, wiki-link/backlinks/outgoing-links, tags, frontmatter read/write, on-device Tantivy search, local metadata store — preferences/recent/favorites/bookmarks — in its own `mobile.db`); no frontend or Tauri-app wiring yet
+- `crates/librarium-mobile`: Route C thin-client command layer (vault list/get from a local JSON registry, file/directory ops over `librarium-core::FileService`, Markdown render, wiki-link/backlinks/outgoing-links, tags, frontmatter read/write, on-device Tantivy search, local metadata store — preferences/recent/favorites/bookmarks — in its own `mobile.db`, and a `librarium-sync` bridge — add/list/remove remotes, map/unmap vaults, start/stop/status — resolving local vault ids via the same JSON registry instead of the desktop's `librarium.db`); no frontend or Tauri-app wiring yet
 - `frontend`: Vue 3 + TypeScript + Vuetify SPA
 - `plugins`: built-in plugin manifests and scripts
 - `tests`: workspace-level Rust integration tests

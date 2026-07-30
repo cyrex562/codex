@@ -4149,8 +4149,15 @@ dependencies = [
 name = "librarium-mobile"
 version = "0.102.0"
 dependencies = [
+ "actix-test",
+ "actix-web",
+ "anyhow",
+ "argon2",
  "chrono",
+ "librarium-client",
  "librarium-core",
+ "librarium-server",
+ "librarium-sync",
  "librarium-types",
  "regex",
  "serde",
