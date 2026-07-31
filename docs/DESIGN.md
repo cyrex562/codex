@@ -204,7 +204,7 @@ Markdown). Rendering helpers: `highlight.js` (code), `mermaid` (diagrams),
 | Directory | Contents |
 | --- | --- |
 | `api/` | REST client modules + WebSocket wiring; TypeScript types mirroring backend JSON. |
-| `stores/` | Pinia stores: `auth`, `vaults`, `files`, `editor`, `tabs`, `preferences`, `graph`, `plugins`, `indexing`, `ui`. |
+| `stores/` | Pinia stores: `auth`, `vaults`, `files`, `editor`, `tabs`, `preferences`, `graph`, `plugins`, `indexing`, `ui`, `sync`. |
 | `components/` | Feature-grouped components: `editor/`, `sidebar/`, `tabs/`, `graph/`, `modals/`, `viewers/`, structural/layout. |
 | `composables/` | Reusable logic (`useWebSocket`, `useUndoRedo`, `useNotifications`, `usePlugins`, …). |
 | `pages/` + `layouts/` + `router/` | Routed pages (login, change-password, admin) and the main layout; router guards enforce auth + token freshness. |
@@ -287,6 +287,58 @@ prevents them from drifting apart as either side changes independently.
   `LocalTransportUnsupportedError`. It does not compare response values —
   that's the Rust suite's job — it only catches an `apiXxx` call site
   drifting to a method/path the dispatcher's table no longer matches.
+
+### Offline UX (Route C, #60)
+
+`librarium-mobile`'s pairing (`pairing_set/get/clear`, #54) and sync
+(`sync_status/start/stop`, #53) commands existed with no frontend caller
+until this issue — this is that wiring, entirely gated on
+`useCapabilities().isLocalMode` (#58) and inert until a mobile app host
+(#61-#63) calls `setTransport(localTransport)`.
+
+- **`stores/sync.ts`** owns pairing/status state and a single shared 3s
+  status poll (`startPolling`/`stopPolling`), consumed by both the TopBar
+  chip and the Settings panel rather than each polling independently.
+  `VaultStatus` has no wall-clock "last synced" field (only
+  `last_synced_seq`, a sequence number) — `lastSyncedAt` is a client-side
+  timestamp stamped whenever a poll observes a vault as `live`, the
+  practical proxy for it.
+- **`components/sync/PairingGate.vue`**, rendered by `MainLayout.vue` ahead
+  of the normal vault/editor UI whenever `isLocalMode` is true and the
+  device isn't yet paired with at least one vault mapped, blocks first use
+  until sync is set up. It embeds `PairingSection.vue`, which also doubles
+  as the paired-state view (re-pair status, unpair, map another vault) —
+  reusing `components/settings/sync/VaultMappingSection.vue` as-is for the
+  vault-mapping step, since mobile pairs to the fixed remote id `"primary"`
+  but otherwise shares the exact command surface #53 already gave the
+  desktop bridge.
+- **Conflict surfacing has no dedicated backend command.**
+  `librarium-sync`'s keep-both resolution writes ordinary
+  `conflict_<stem>_<YYYYMMDD_HHMMSS>.<ext>` sibling files
+  (`crates/librarium-sync/src/engine.rs`'s `conflict_name()`), so
+  `stores/sync.ts`'s `scanConflicts()` just walks each mapped vault's
+  existing `file_tree` command and filters on that filename convention —
+  cheap enough given it only runs on demand (when the Settings panel opens
+  or a conflict is resolved), not on the 3s status poll. Resolving a
+  conflict is `mobileFileDelete`/`mobileFileRename` against the existing
+  file commands; no new backend surface was needed for any of this.
+- **`components/modals/SearchModal.vue`** now catches
+  `LocalSearchUnavailableError` (`api/localDispatcher.ts`, thrown when no
+  on-device index exists for a vault) and shows an explicit "not available
+  offline" state instead of the previously-uncaught failure. The rest of the
+  capability-gated empty states (admin, groups/sharing, plugins, ML,
+  entity graph, reindex, archive import/export) already existed from #58.
+- Vitest gained real `@vue/test-utils` component-mount coverage for the
+  first time (`vitest.config.ts` now runs `vite-plugin-vuetify`'s
+  `autoImport` — with `styles: 'none'`, since per-component CSS imports
+  don't resolve under Vitest's transform — and `server.deps.inline` for
+  `vuetify` itself, needed for the same reason; `test-setup.ts` stubs
+  `window.visualViewport`, which happy-dom doesn't implement but Vuetify's
+  overlay positioning references unconditionally).
+
+Not yet exercised end-to-end against a real device/mobile app host — that's
+#61-#63's job (`librarium-tauri`'s restructure, `tauri android init`, and
+first APK bring-up).
 
 ---
 

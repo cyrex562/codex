@@ -33,3 +33,10 @@ class MemoryStorage implements Storage {
 }
 
 vi.stubGlobal('localStorage', new MemoryStorage());
+
+// happy-dom doesn't implement `window.visualViewport`, which Vuetify's
+// overlay/dialog positioning code references unconditionally (`visualViewport
+// ?.addEventListener(...)`) — referencing a truly undeclared global throws a
+// ReferenceError even behind `?.`, so any test mounting a `v-dialog`/`v-menu`
+// needs at least a `null` binding to exist.
+vi.stubGlobal('visualViewport', null);

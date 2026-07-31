@@ -15,6 +15,7 @@
       <v-tabs v-model="activeTab">
         <v-tab value="api-keys">API Keys</v-tab>
         <v-tab v-if="isTauri()" value="sync">Sync</v-tab>
+        <v-tab v-if="isLocalMode" value="offline-sync">Offline Sync</v-tab>
       </v-tabs>
 
       <v-divider />
@@ -26,6 +27,9 @@
           </v-tabs-window-item>
           <v-tabs-window-item v-if="isTauri()" value="sync">
             <SyncSettingsPanel />
+          </v-tabs-window-item>
+          <v-tabs-window-item v-if="isLocalMode" value="offline-sync">
+            <OfflineSyncPanel @close="close" />
           </v-tabs-window-item>
         </v-tabs-window>
       </v-card-text>
@@ -39,18 +43,30 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import ApiKeysPanel from '@/components/settings/ApiKeysPanel.vue';
 import SyncSettingsPanel from '@/components/settings/sync/SyncSettingsPanel.vue';
+import OfflineSyncPanel from '@/components/settings/sync/OfflineSyncPanel.vue';
 import { isTauri } from '@/utils/tauri';
 import { useMobile } from '@/composables/useMobile';
+import { useCapabilities } from '@/composables/useCapabilities';
 
 const { isMobile } = useMobile();
+const { isLocalMode } = useCapabilities();
 
-const props = defineProps<{ modelValue: boolean }>();
+const props = defineProps<{ modelValue: boolean; initialTab?: string }>();
 const emit = defineEmits<{ 'update:modelValue': [v: boolean] }>();
 
-const activeTab = ref('api-keys');
+const activeTab = ref(props.initialTab ?? 'api-keys');
+
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (open && props.initialTab) {
+      activeTab.value = props.initialTab;
+    }
+  },
+);
 
 function close() {
   emit('update:modelValue', false);

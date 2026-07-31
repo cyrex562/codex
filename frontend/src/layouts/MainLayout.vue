@@ -1,4 +1,18 @@
 <template>
+  <!-- Under the local transport, sync must be paired (and at least one
+       vault mapped) before there's anything to browse — block on that
+       first, ahead of the normal vault/editor UI below. Desktop/browser
+       (httpTransport) never enters this branch: `syncBootstrapped` only
+       becomes true after `isLocalMode` bootstrap runs. -->
+  <template v-if="isLocalMode && !syncBootstrapped">
+    <v-container class="fill-height d-flex align-center justify-center">
+      <v-progress-circular indeterminate color="primary" size="32" />
+    </v-container>
+  </template>
+
+  <PairingGate v-else-if="isLocalMode && (!syncStore.isPaired || !syncStore.hasAnyMapping)" />
+
+  <template v-else>
   <!-- Sidebar. Desktop: permanent, resizable. Mobile: overlay (temporary) that
        slides over the content, opened from the TopBar hamburger and auto-closed
        when a note is opened. -->
@@ -96,6 +110,7 @@
   <ConflictResolver v-model="uiStore.conflictResolverOpen" />
   <ImportVaultDialog v-model="uiStore.importDialogOpen" />
   <MoveToFolderModal v-model="uiStore.moveDialogOpen" :source-paths="uiStore.moveSourcePaths" />
+  </template>
 </template>
 
 <script setup lang="ts">
@@ -112,12 +127,14 @@ import { useTabsStore } from '@/stores/tabs';
 import { useUiStore } from '@/stores/ui';
 import { usePreferencesStore } from '@/stores/preferences';
 import { useEditorStore } from '@/stores/editor';
+import { useSyncStore } from '@/stores/sync';
 import { useWebSocket } from '@/composables/useWebSocket';
 import { useMobile } from '@/composables/useMobile';
 import { useCapabilities } from '@/composables/useCapabilities';
 import type { EditorMode, PersistedEditorMode } from '@/api/types';
 
 import TopBar from '@/components/TopBar.vue';
+import PairingGate from '@/components/sync/PairingGate.vue';
 import SidebarActions from '@/components/sidebar/SidebarActions.vue';
 import FileTree from '@/components/sidebar/FileTree.vue';
 import MlInsightsPanel from '@/components/sidebar/MlInsightsPanel.vue';
@@ -148,10 +165,13 @@ const uiStore = useUiStore();
 const prefsStore = usePreferencesStore();
 const editorStore = useEditorStore();
 const authStore = useAuthStore();
+const syncStore = useSyncStore();
 const router = useRouter();
 
 const { isMobile } = useMobile();
-const { canUseMlOrganize, canUseEntityGraph, canUsePlugins } = useCapabilities();
+const { canUseMlOrganize, canUseEntityGraph, canUsePlugins, isLocalMode } = useCapabilities();
+
+const syncBootstrapped = computed(() => syncStore.pairingLoaded && syncStore.statusLoaded);
 
 // Desktop starts with the sidebar visible; mobile starts on the content with
 // the drawer closed (opened via the TopBar hamburger).
@@ -194,19 +214,26 @@ const pluginsOpen = ref(false);
 
 onMounted(async () => {
   log.info('MainLayout onMounted');
-  try {
-    await authStore.ensureFresh();
-    await authStore.loadProfile();
-  } catch (err) {
-    log.warn('MainLayout mount ensureFresh/loadProfile failed → logout + /login', {
-      message: (err as Error)?.message ?? String(err),
-    });
-    await authStore.logout();
-    await router.replace({
-      path: '/login',
-      query: { redirect: router.currentRoute.value.fullPath || '/' },
-    });
-    return;
+
+  // The local transport has no token-based auth lifecycle at all (#54's
+  // remote credentials live in Rust secure storage, never the WebView) —
+  // same reasoning `ensureFreshForRequest` in api/client.ts already applies
+  // per-request. There is nothing to refresh/load and no HTTP server to ask.
+  if (!isLocalMode) {
+    try {
+      await authStore.ensureFresh();
+      await authStore.loadProfile();
+    } catch (err) {
+      log.warn('MainLayout mount ensureFresh/loadProfile failed → logout + /login', {
+        message: (err as Error)?.message ?? String(err),
+      });
+      await authStore.logout();
+      await router.replace({
+        path: '/login',
+        query: { redirect: router.currentRoute.value.fullPath || '/' },
+      });
+      return;
+    }
   }
 
   useWebSocket();
@@ -219,11 +246,17 @@ onMounted(async () => {
     editorStore.setMode(prefsStore.prefs.editor_mode);
   }
 
+  if (isLocalMode) {
+    await Promise.all([syncStore.loadPairing(), syncStore.refreshStatus()]);
+    syncStore.startPolling();
+  }
+
   window.addEventListener('keydown', onGlobalKeydown);
 });
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown);
+  syncStore.stopPolling();
 });
 
 function onVaultChange(id: string) {
