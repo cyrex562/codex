@@ -29,6 +29,7 @@
         <v-icon :start="!isMobile" :icon="dirtyCount > 0 ? 'mdi-content-save-alert-outline' : 'mdi-content-save-check-outline'" />
         <template v-if="!isMobile">{{ dirtyCount > 0 ? `${dirtyCount} unsaved` : 'Saved' }}</template>
       </v-chip>
+      <SyncStatusChip v-if="isLocalMode" @click="openOfflineSync" />
     </div>
 
     <template #append>
@@ -66,7 +67,7 @@
           density="compact"
           title="Settings"
           data-testid="topbar-settings-btn"
-          @click="showSettings = true"
+          @click="openSettings"
         />
       </template>
 
@@ -104,7 +105,7 @@
               prepend-icon="mdi-cog"
               title="Settings"
               data-testid="user-menu-settings"
-              @click="showSettings = true"
+              @click="openSettings"
             />
             <v-divider class="my-1" />
           </template>
@@ -133,7 +134,7 @@
     </template>
   </v-app-bar>
 
-  <SettingsModal v-model="showSettings" />
+  <SettingsModal v-model="showSettings" :initial-tab="settingsInitialTab" />
 </template>
 
 <script setup lang="ts">
@@ -147,6 +148,7 @@ import { useWebSocket } from '@/composables/useWebSocket';
 import { useMobile } from '@/composables/useMobile';
 import { useCapabilities } from '@/composables/useCapabilities';
 import SettingsModal from '@/components/settings/SettingsModal.vue';
+import SyncStatusChip from '@/components/sync/SyncStatusChip.vue';
 
 const emit = defineEmits<{
   'open-search': [];
@@ -161,13 +163,24 @@ const authStore = useAuthStore();
 const router = useRouter();
 const { connected, disconnect } = useWebSocket(false);
 const { isMobile } = useMobile();
-const { canUseAdmin, canUsePlugins } = useCapabilities();
+const { canUseAdmin, canUsePlugins, isLocalMode } = useCapabilities();
 
 const dirtyCount = computed(() => tabsStore.dirtyTabs.length);
 const wsConnected = computed(() => connected.value);
 const username = computed(() => authStore.profile?.username ?? 'Account');
 const hasActiveVault = computed(() => !!vaultsStore.activeVaultId);
 const showSettings = ref(false);
+const settingsInitialTab = ref<string | undefined>(undefined);
+
+function openSettings() {
+  settingsInitialTab.value = undefined;
+  showSettings.value = true;
+}
+
+function openOfflineSync() {
+  settingsInitialTab.value = 'offline-sync';
+  showSettings.value = true;
+}
 
 function toggleTheme() {
   prefsStore.set('theme', prefsStore.prefs.theme === 'dark' ? 'light' : 'dark');

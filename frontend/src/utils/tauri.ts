@@ -43,6 +43,16 @@ export interface SyncVaultStatus {
 }
 
 /**
+ * The paired remote's connection info, as surfaced by `librarium-mobile`'s
+ * opinionated single-remote `pairing_*` commands (#54). The API key itself
+ * never appears here, only whether one is currently stored.
+ */
+export interface PairingInfo {
+  base_url: string;
+  key_present: boolean;
+}
+
+/**
  * Returns `true` when the app is running inside a Tauri WebView.
  *
  * In a normal browser the `__TAURI_INTERNALS__` object injected by Tauri's
@@ -285,6 +295,49 @@ export const syncStop = async (): Promise<void> => {
   if (!isTauri()) return;
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('sync_stop');
+};
+
+// ── Mobile pairing API wrappers (Route C, #54/#60) ───────────────────────────
+//
+// The opinionated single-remote counterpart to the general `sync_*` remote
+// API above: `pairing_set` validates the URL/key against the remote before
+// persisting anything (the API key itself never round-trips back through
+// `pairing_get` — only whether one is stored), then registers it under the
+// fixed remote id `"primary"` (`crates/librarium-mobile/src/sync.rs`).
+
+/**
+ * Validate and store a remote's base URL + API key, registering it as the
+ * paired remote.
+ *
+ * @throws Error if the URL/key can't be validated against the remote, or in
+ *   browser context.
+ */
+export const pairingSet = async (baseUrl: string, apiKey: string): Promise<void> => {
+  if (!isTauri()) throw new Error('pairing is only available in the mobile app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('pairing_set', { baseUrl, apiKey });
+};
+
+/**
+ * Get the currently paired remote's info, or `null` if nothing is paired
+ * yet (including in browser context, mirroring `syncStatus`'s soft-fail
+ * style so callers don't need to special-case non-Tauri environments).
+ */
+export const pairingGet = async (): Promise<PairingInfo | null> => {
+  if (!isTauri()) return null;
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('pairing_get');
+};
+
+/**
+ * Stop syncing, remove the paired remote, and erase its stored key.
+ *
+ * No-op in browser context.
+ */
+export const pairingClear = async (): Promise<void> => {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('pairing_clear');
 };
 
 // ── Mobile vault/file/render API wrappers (Route C, issue #56) ──────────────

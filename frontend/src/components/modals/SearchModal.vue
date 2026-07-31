@@ -37,6 +37,10 @@
           />
         </v-list>
 
+        <v-alert v-else-if="!loading && searched && searchUnavailable" type="info" variant="tonal" class="mt-2">
+          Search isn't available offline for this vault yet — it needs an on-device index.
+        </v-alert>
+
         <p v-else-if="!loading && searched" class="text-caption text-secondary text-center mt-2">
           No results found.
         </p>
@@ -50,6 +54,7 @@ import { ref, watch } from 'vue';
 import { useVaultsStore } from '@/stores/vaults';
 import { useTabsStore } from '@/stores/tabs';
 import { apiSearch } from '@/api/client';
+import { LocalSearchUnavailableError } from '@/api/localDispatcher';
 import { useMobile } from '@/composables/useMobile';
 import type { SearchResult } from '@/api/types';
 
@@ -65,6 +70,7 @@ const query = ref('');
 const results = ref<SearchResult[]>([]);
 const loading = ref(false);
 const searched = ref(false);
+const searchUnavailable = ref(false);
 
 function close() {
   emit('update:modelValue', false);
@@ -92,9 +98,17 @@ async function search() {
   if (!query.value.trim() || !vaultsStore.activeVaultId) return;
   loading.value = true;
   searched.value = false;
+  searchUnavailable.value = false;
   try {
     const page = await apiSearch(vaultsStore.activeVaultId, query.value);
     results.value = page.results;
+  } catch (e) {
+    if (e instanceof LocalSearchUnavailableError) {
+      results.value = [];
+      searchUnavailable.value = true;
+    } else {
+      throw e;
+    }
   } finally {
     loading.value = false;
     searched.value = true;

@@ -15,6 +15,9 @@ import {
   syncStatus,
   syncStart,
   syncStop,
+  pairingSet,
+  pairingGet,
+  pairingClear,
 } from './tauri';
 
 // Mock the Tauri dialog plugin (dynamic import inside tauri.ts).
@@ -331,6 +334,57 @@ describe('sync wrappers', () => {
 
     it('syncStart rejects', async () => {
       await expect(syncStart()).rejects.toThrow();
+    });
+  });
+});
+
+describe('pairing wrappers', () => {
+  describe('in Tauri context (invoke arg mapping)', () => {
+    beforeEach(() => setTauriContext(true));
+
+    it('pairingSet calls invoke with snake_case command and camelCase args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue(undefined);
+
+      await pairingSet('https://sync.example.com', 'obh_k');
+
+      expect(invoke).toHaveBeenCalledWith('pairing_set', {
+        baseUrl: 'https://sync.example.com',
+        apiKey: 'obh_k',
+      });
+    });
+
+    it('pairingGet calls invoke with no args and returns its result', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue({ base_url: 'https://sync.example.com', key_present: true });
+
+      const result = await pairingGet();
+
+      expect(invoke).toHaveBeenCalledWith('pairing_get');
+      expect(result).toEqual({ base_url: 'https://sync.example.com', key_present: true });
+    });
+
+    it('pairingClear calls invoke with no args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue(undefined);
+
+      await pairingClear();
+
+      expect(invoke).toHaveBeenCalledWith('pairing_clear');
+    });
+  });
+
+  describe('in browser context (no Tauri)', () => {
+    it('pairingSet rejects', async () => {
+      await expect(pairingSet('https://sync.example.com', 'k')).rejects.toThrow();
+    });
+
+    it('pairingGet resolves to null', async () => {
+      expect(await pairingGet()).toBeNull();
+    });
+
+    it('pairingClear resolves as a no-op', async () => {
+      await expect(pairingClear()).resolves.toBeUndefined();
     });
   });
 });
