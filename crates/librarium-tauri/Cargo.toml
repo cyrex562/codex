@@ -4,12 +4,32 @@ version = "0.102.0"
 edition = "2021"
 description = "Tauri desktop shell for Librarium"
 
+# `librarium_tauri_lib` (not `librarium-tauri`, which the [[bin]] below keeps)
+# is Tauri's own mobile-template naming convention: Android/iOS load the app
+# as a native library rather than executing a binary, so a lib target with
+# this crate-type is required for `tauri::mobile_entry_point` to work. `main`
+# stays a thin shim calling into it (see src/main.rs) for the desktop binary.
+[lib]
+name = "librarium_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+path = "src/lib.rs"
+
 [[bin]]
 name = "librarium-tauri"
 path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[features]
+default = ["desktop"]
+# Everything needed to embed and drive `librarium-server`: the desktop-only
+# setup path (paths.rs, sync_bridge.rs, run_setup's config/JWT/health-poll
+# logic — see lib.rs). Disabled, this crate has no mobile app host wiring yet
+# (that's #62) but its dependency graph excludes librarium-server/actix-web
+# entirely, which `cargo build -p librarium-tauri --no-default-features` +
+# `cargo tree` verifies without needing an actual Android target installed.
+desktop = ["dep:librarium-server", "dep:actix-web", "dep:reqwest", "dep:librarium-sync", "dep:dirs"]
 
 [dependencies]
 # Tauri core + system tray (tray-icon feature is part of tauri core in v2)
@@ -20,20 +40,22 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-deep-link = "2"
 
-# Embedded server — imported as the `librarium` crate (see [lib] name in librarium-server)
-librarium-server = { path = "../librarium-server" }
+# Embedded server — imported as the `librarium` crate (see [lib] name in librarium-server).
+# Desktop-only: see `desktop` feature above.
+librarium-server = { path = "../librarium-server", optional = true }
 
-# Background sync engine (desktop ↔ remote server)
-librarium-sync = { path = "../librarium-sync" }
+# Background sync engine (desktop ↔ remote server, via sync_bridge.rs). Desktop-only.
+librarium-sync = { path = "../librarium-sync", optional = true }
 
-# Actix runtime needed to spawn the server on a background thread
-actix-web = { version = "4.9", default-features = false }
+# Actix runtime needed to spawn the server on a background thread. Desktop-only.
+actix-web = { version = "4.9", default-features = false, optional = true }
 
-# HTTP client for health polling
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# HTTP client for health polling. Desktop-only.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"], optional = true }
 
-# Platform home-directory detection
-dirs = "5"
+# Platform home-directory detection (paths.rs's portable-mode/default-vault-dir
+# resolution). Desktop-only.
+dirs = { version = "5", optional = true }
 
 # Open URLs in the OS default browser (used by open_external_url command)
 open = "5"
