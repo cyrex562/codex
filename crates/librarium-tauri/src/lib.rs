@@ -46,15 +46,15 @@
 //! Without it, `pairing_set`/`sync_add_remote` fail cleanly (no crash) with
 //! a "no default store" style error instead of persisting the key.
 
+#[cfg(mobile)]
+mod background_sync;
 mod frontend_log;
+#[cfg(target_os = "android")]
+mod headless_bridge_stub;
 #[cfg(desktop)]
 mod paths;
 #[cfg(desktop)]
 mod sync_bridge;
-#[cfg(mobile)]
-mod background_sync;
-#[cfg(target_os = "android")]
-mod headless_bridge_stub;
 
 use anyhow::Context;
 use frontend_log::{FrontendLog, LogRecord};
@@ -368,11 +368,11 @@ pub fn run() {
     // state. `tauri-plugin-background-service`'s own docs require
     // `tauri-plugin-notification` to already be registered (it is, above).
     #[cfg(mobile)]
-    let builder = builder
-        .plugin(tauri_plugin_device_info::init())
-        .plugin(tauri_plugin_background_service::init_with_service(|| {
+    let builder = builder.plugin(tauri_plugin_device_info::init()).plugin(
+        tauri_plugin_background_service::init_with_service(|| {
             background_sync::MobileSyncService::new()
-        }));
+        }),
+    );
 
     builder
         .invoke_handler(invoke_handler())
