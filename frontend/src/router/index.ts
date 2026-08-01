@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { useCapabilities } from '@/composables/useCapabilities';
+import { isLocalTransportActive } from '@/api/client';
 import { getLogger } from '@/utils/logger';
 
 const log = getLogger('router');
@@ -34,6 +35,21 @@ const router = createRouter({
 
 // Navigation guard — enforce login before entering app routes.
 router.beforeEach(async (to) => {
+    // The local transport has no token-based auth lifecycle at all (#54's
+    // remote credentials live in Rust secure storage, never the WebView) —
+    // same reasoning `ensureFreshForRequest` (api/client.ts) and
+    // `MainLayout`'s mount hook already apply. Without this, every
+    // navigation would redirect to /login before MainLayout's own
+    // isLocalMode-gated PairingGate ever got a chance to run, since there is
+    // no login flow to complete under local transport. The admin-capability
+    // gate below still applies either way.
+    if (isLocalTransportActive()) {
+        if (to.name === 'admin-users' && !useCapabilities().canUseAdmin) {
+            return { path: '/' };
+        }
+        return true;
+    }
+
     const auth = useAuthStore();
 
     if (to.meta.public) {
