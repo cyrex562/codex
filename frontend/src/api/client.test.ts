@@ -171,3 +171,33 @@ describe('pluggable transport (#55)', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 });
+
+describe('mobile transport detection (#63)', () => {
+    // resolveDefaultTransport() runs once at module load, keyed off
+    // VITE_LIBRARIUM_MOBILE (set by tauri.android.conf.json's
+    // beforeBuildCommand for that build only — see that file and the
+    // module doc comment). Re-import fresh per test so the module-load-time
+    // check re-evaluates against the stubbed env var.
+    afterEach(() => {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+    });
+
+    it('defaults to the local transport when VITE_LIBRARIUM_MOBILE=true', async () => {
+        vi.stubEnv('VITE_LIBRARIUM_MOBILE', 'true');
+        vi.resetModules();
+
+        const mod = await import('./client');
+
+        expect(mod.isLocalTransportActive()).toBe(true);
+    });
+
+    it('defaults to the HTTP transport when VITE_LIBRARIUM_MOBILE is unset', async () => {
+        vi.stubEnv('VITE_LIBRARIUM_MOBILE', undefined);
+        vi.resetModules();
+
+        const mod = await import('./client');
+
+        expect(mod.isLocalTransportActive()).toBe(false);
+    });
+});

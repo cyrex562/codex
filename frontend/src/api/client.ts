@@ -104,13 +104,19 @@ export const localTransport: Transport = async (url, init) => {
 };
 
 function resolveDefaultTransport(): Transport {
-    // No mobile shell exists yet (Route C phase 3, issues #61-#63): today's
-    // only Tauri build is the desktop shell, which embeds a real server and
-    // talks HTTP just like the browser build — so `isTauri()` alone can't be
-    // the signal here. Until the mobile shell's own bootstrap can mark
-    // itself distinctly (e.g. by calling `setTransport(localTransport)`
-    // directly), an explicit env override is the only trigger, keeping
-    // today's behavior unchanged for every build that actually exists.
+    // `isTauri()` alone can't distinguish the mobile shell from desktop —
+    // both are Tauri WebViews, and desktop embeds a real server and talks
+    // HTTP just like the browser build. The mobile shell marks itself
+    // distinctly at *build* time instead: `tauri.android.conf.json`'s
+    // `beforeBuildCommand` sets `VITE_LIBRARIUM_MOBILE=true` for that one
+    // frontend build only (desktop has no `beforeBuildCommand` at all —
+    // its real UI is served by the embedded server, not Tauri's
+    // static-asset pipeline — so this can never be true there). A runtime
+    // `window.__LIBRARIUM_LOCAL_TRANSPORT__` override still works too, for
+    // tests and manual local-transport debugging in a browser.
+    if (import.meta.env.VITE_LIBRARIUM_MOBILE === 'true') {
+        return localTransport;
+    }
     if (
         typeof window !== 'undefined' &&
         (window as unknown as Record<string, unknown>).__LIBRARIUM_LOCAL_TRANSPORT__

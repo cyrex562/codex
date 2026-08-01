@@ -29,14 +29,22 @@
 //! it has no server dependency and its commands are registered on every
 //! platform.
 //!
-//! **Known gap, not this issue's job:** `librarium_mobile::OsKeyringStore`
-//! (used here for `SyncHandle`'s API-key storage) needs
-//! `keyring_core::set_default_store(...)` called once from the running
-//! Android Activity with a live JNI context before it works on-device — see
-//! `librarium-mobile/src/secrets.rs`'s doc comment. That's app-bootstrap
-//! work for whichever later issue does the actual device bring-up; until
-//! then, `pairing_set`/`sync_add_remote` will error on a real Android
-//! device.
+//! **Known gap:** `librarium_mobile::OsKeyringStore` (used here for
+//! `SyncHandle`'s API-key storage) needs a default `keyring_core` store
+//! registered once at startup on Android — `keyring` v4's own
+//! auto-detection deliberately excludes it. I tried wiring
+//! `android_native_keyring_store::Store::new()` +
+//! `keyring_core::set_default_store(...)` into this `run_setup` during #63's
+//! device bring-up; it compiled and linked fine, but crashed the app on
+//! launch with `SIGABRT` inside `run()`'s FFI boundary (`stop_unwind`,
+//! `tao::platform_impl::platform::ndk_glue::create`'s thread) before any
+//! frontend/tracing output appeared — likely a JNI thread-attachment issue
+//! (the crate's `Store::new()` assumes `ndk-context`'s global is both set
+//! *and* the calling thread is JNI-attached; Tauri's mobile bootstrap may
+//! only guarantee the former). Reverted rather than debug further under
+//! time pressure — filed as its own follow-up with the full backtrace.
+//! Without it, `pairing_set`/`sync_add_remote` fail cleanly (no crash) with
+//! a "no default store" style error instead of persisting the key.
 
 mod frontend_log;
 #[cfg(desktop)]
@@ -522,10 +530,11 @@ fn run_setup(app: &mut tauri::App) -> anyhow::Result<()> {
 
     // API keys are never persisted in plaintext (#54): `OsKeyringStore`
     // backs onto the platform's native credential store. On Android that
-    // store needs a one-time JNI bootstrap this doesn't do yet — see the
-    // module doc's "Known gap" note; `pairing_set`/`sync_add_remote` will
-    // error on a real device until whichever issue does that bring-up adds
-    // it.
+    // store needs a one-time bootstrap this doesn't do yet — see the
+    // module doc's "Known gap" note (attempted during #63, reverted after
+    // it crashed the app; tracked as its own follow-up); `pairing_set`/
+    // `sync_add_remote` will fail cleanly (no crash) on a real device
+    // until that's resolved.
     let secrets: std::sync::Arc<dyn librarium_mobile::SecretStore> =
         std::sync::Arc::new(librarium_mobile::OsKeyringStore);
     app.manage(librarium_mobile::SyncHandle::new(
