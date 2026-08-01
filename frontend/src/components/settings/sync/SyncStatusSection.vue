@@ -23,6 +23,38 @@
         {{ error }}
       </v-alert>
 
+      <v-card class="mb-4" variant="tonal">
+        <v-card-text>
+          <div class="d-flex justify-space-between align-center mb-2">
+            <div>
+              <div class="text-subtitle-2">Background sync (Android)</div>
+              <p class="text-body-2 text-medium-emphasis mb-0">
+                Applies to the background reconcile that keeps syncing while the app isn't open.
+              </p>
+            </div>
+            <v-btn variant="tonal" :loading="reconciling" @click="reconcileNow">Sync now</v-btn>
+          </div>
+          <v-switch
+            v-model="policy.wifi_only"
+            label="Wi-Fi only"
+            density="compact"
+            hide-details
+            color="primary"
+            @update:model-value="savePolicy"
+          />
+          <v-text-field
+            v-model.number="policy.battery_threshold"
+            label="Pause below this battery level (%)"
+            type="number"
+            min="0"
+            max="100"
+            density="compact"
+            style="max-width: 280px;"
+            @change="savePolicy"
+          />
+        </v-card-text>
+      </v-card>
+
       <v-card>
         <v-data-table
           :headers="headers"
@@ -98,8 +130,17 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, onUnmounted, ref } from 'vue';
-import { isTauri, syncStatus, syncStart, syncStop, syncUnmapVault } from '@/utils/tauri';
-import type { SyncVaultStatus, SyncVaultState } from '@/utils/tauri';
+import {
+  isTauri,
+  syncStatus,
+  syncStart,
+  syncStop,
+  syncUnmapVault,
+  syncGetPolicy,
+  syncSetPolicy,
+  syncReconcileOnce,
+} from '@/utils/tauri';
+import type { SyncVaultStatus, SyncVaultState, SyncPolicy } from '@/utils/tauri';
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -110,7 +151,18 @@ const loading = ref(false);
 const starting = ref(false);
 const stopping = ref(false);
 const unmappingId = ref<string | null>(null);
+const reconciling = ref(false);
+const policy = ref<SyncPolicy>({ wifi_only: true, battery_threshold: 20 });
 const error = ref('');
+
+/** Tauri command errors reject with a plain string, not an `Error` — this
+ * repo's other sync-settings components have the `e?.message` bug (#92);
+ * new code here avoids it rather than adding to it. */
+function errorMessage(e: unknown, fallback: string): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  return fallback;
+}
 
 let pollHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -127,6 +179,7 @@ const headers = [
 onMounted(() => {
   if (!tauriAvailable) return;
   void loadStatus();
+  void loadPolicy();
   pollHandle = setInterval(() => {
     void loadStatus();
   }, POLL_INTERVAL_MS);
@@ -181,6 +234,36 @@ async function stopSync() {
     error.value = e?.message ?? 'Failed to stop sync.';
   } finally {
     stopping.value = false;
+  }
+}
+
+async function loadPolicy() {
+  try {
+    policy.value = await syncGetPolicy();
+  } catch (e: unknown) {
+    error.value = errorMessage(e, 'Failed to load sync policy.');
+  }
+}
+
+async function savePolicy() {
+  error.value = '';
+  try {
+    await syncSetPolicy(policy.value);
+  } catch (e: unknown) {
+    error.value = errorMessage(e, 'Failed to save sync policy.');
+  }
+}
+
+async function reconcileNow() {
+  reconciling.value = true;
+  error.value = '';
+  try {
+    await syncReconcileOnce();
+    await loadStatus();
+  } catch (e: unknown) {
+    error.value = errorMessage(e, 'Failed to sync now.');
+  } finally {
+    reconciling.value = false;
   }
 }
 

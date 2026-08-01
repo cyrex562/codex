@@ -4,5 +4,10 @@
     "frontendDist": "../../target/frontend",
     "beforeBuildCommand": "VITE_LIBRARIUM_MOBILE=true npm --prefix ../frontend run build",
     "beforeDevCommand": "VITE_LIBRARIUM_MOBILE=true npm --prefix ../frontend run dev"
+  },
+  "plugins": {
+    "background-service": {
+      "androidForegroundServiceTypes": ["dataSync"]
+    }
   }
 }

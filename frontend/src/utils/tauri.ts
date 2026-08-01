@@ -297,6 +297,74 @@ export const syncStop = async (): Promise<void> => {
   await invoke('sync_stop');
 };
 
+// ── Background sync policy + manual trigger (Route C, #64) ──────────────────
+//
+// The Android background reconcile service (`crates/librarium-tauri/src/
+// background_sync.rs`) reads this policy on each wake before deciding
+// whether to call `sync_reconcile_once`; these wrappers are also how the
+// settings UI reads/writes it and offers a manual "sync now".
+
+export interface SyncPolicy {
+  wifi_only: boolean;
+  battery_threshold: number;
+}
+
+/**
+ * Get the background-sync policy (Wi-Fi-only, battery threshold).
+ *
+ * @returns The stored policy, or the default (`wifi_only: true`,
+ *   `battery_threshold: 20`) in browser context.
+ */
+export const syncGetPolicy = async (): Promise<SyncPolicy> => {
+  if (!isTauri()) return { wifi_only: true, battery_threshold: 20 };
+  const { invoke } = await import('@tauri-apps/api/core');
+  return await invoke('sync_get_policy');
+};
+
+/**
+ * Set the background-sync policy.
+ *
+ * No-op in browser context.
+ */
+export const syncSetPolicy = async (policy: SyncPolicy): Promise<void> => {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('sync_set_policy', { policy });
+};
+
+/**
+ * Manual "sync now": one coarse reconcile pass for every mapped vault, with
+ * no live socket kept open afterward — the same one-shot the background
+ * service's periodic tick calls.
+ *
+ * @throws Error in browser context.
+ */
+export const syncReconcileOnce = async (): Promise<void> => {
+  if (!isTauri()) throw new Error('sync is only available in the desktop app');
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('sync_reconcile_once');
+};
+
+/**
+ * Start the Android background reconcile service (`tauri-plugin-background-
+ * service`'s foreground service, wrapping `MobileSyncService`). Desktop/
+ * browser never registers this plugin's commands at all (see librarium-
+ * tauri's Cargo.toml — mobile-target-gated), so this must only ever be
+ * called from the mobile shell's local-mode bootstrap, never unconditionally.
+ *
+ * No-op in browser context (mirrors `syncStop`'s soft-fail style, since this
+ * is fire-and-forget bootstrap plumbing rather than a user action with an
+ * error path worth surfacing).
+ */
+export const startBackgroundSyncService = async (): Promise<void> => {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('plugin:background-service|start', {
+    serviceLabel: 'Librarium sync',
+    foregroundServiceType: 'dataSync',
+  });
+};
+
 // ── Mobile pairing API wrappers (Route C, #54/#60) ───────────────────────────
 //
 // The opinionated single-remote counterpart to the general `sync_*` remote

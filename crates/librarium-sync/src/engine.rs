@@ -203,6 +203,41 @@ impl SyncEngine {
         Ok(())
     }
 
+    /// Coarse "wake, reconcile, sleep" pass for every enabled remote +
+    /// mapped vault — no watcher, no live WebSocket, returns once done. For
+    /// a background caller (e.g. Android, where holding a live task alive
+    /// while backgrounded isn't allowed) that just needs drift repaired and
+    /// the outbox drained periodically, rather than [`Self::start`]'s
+    /// always-live per-vault tasks.
+    ///
+    /// One vault's failure (offline, bad key, ...) doesn't abort the rest —
+    /// each is caught, recorded via the same status map [`Self::status`]
+    /// already surfaces, and reconciliation continues with the next vault.
+    /// Only a failure to list remotes/mappings from `sync.db` itself — the
+    /// one thing every vault needs — is returned as an error.
+    pub async fn reconcile_once(&self) -> Result<(), SyncError> {
+        let remotes = self.store.list_remotes().await?;
+        for remote in remotes.into_iter().filter(|r| r.enabled) {
+            let maps = self.store.list_vault_maps(&remote.id).await?;
+            for map in maps {
+                let ctx = TaskContext {
+                    store: self.store.clone(),
+                    remote: remote.clone(),
+                    map,
+                    status: self.status.clone(),
+                    key_provider: self.key_provider.clone(),
+                };
+                if let Err(e) = ctx.reconcile_once().await {
+                    warn!(
+                        "background reconcile of vault {} on remote {} failed: {e}",
+                        ctx.map.local_vault_id, ctx.remote.id
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Abort all running sync tasks.
     pub fn stop(&self) {
         if let Ok(mut tasks) = self.tasks.lock() {
@@ -335,6 +370,57 @@ impl TaskContext {
             );
         }
     }
+
+    /// One coarse reconcile pass with no watcher and no live socket — for a
+    /// background caller that wakes, reconciles, and goes back to sleep
+    /// (see [`SyncEngine::reconcile_once`]). `reconcile_pass` never reads
+    /// `suppressor`/`local_rx` beyond `write_local`'s harmless
+    /// suppress-the-hash-we-just-wrote call, so an unwatched suppressor and
+    /// an immediately-dropped channel sender are fine here — there is no
+    /// watcher to race against.
+    async fn reconcile_once(&self) -> Result<(), SyncError> {
+        let key = (self.remote.id.clone(), self.map.local_vault_id.clone());
+        let api_key = fetch_api_key(&self.key_provider, &self.remote.id)
+            .await
+            .inspect_err(|e| {
+                self.set_status(&key, VaultSyncState::Offline, Some(format!("api key: {e}")));
+            })?;
+        let client = ObsidianClient::for_cloud(self.remote.base_url.clone()).with_api_key(api_key);
+
+        let last_seq = self
+            .store
+            .list_vault_maps(&self.remote.id)
+            .await
+            .ok()
+            .and_then(|maps| {
+                maps.into_iter()
+                    .find(|m| m.local_vault_id == self.map.local_vault_id)
+                    .map(|m| m.last_synced_seq)
+            })
+            .unwrap_or(0);
+
+        let (_local_tx, local_rx) = mpsc::unbounded_channel();
+        let mut vault = VaultSync {
+            store: self.store.clone(),
+            client,
+            remote_id: self.remote.id.clone(),
+            local_vault_id: self.map.local_vault_id.clone(),
+            local_vault_path: PathBuf::from(&self.map.local_vault_path),
+            remote_vault_id: self.map.remote_vault_id.clone(),
+            suppressor: Suppressor::new(),
+            local_rx,
+            remote_hashes: HashMap::new(),
+            last_seq,
+            status: self.status.clone(),
+            status_key: key.clone(),
+        };
+
+        let result = vault.reconcile_pass().await;
+        if let Err(e) = &result {
+            vault.set_state(VaultSyncState::Offline, Some(e.to_string()));
+        }
+        result
+    }
 }
 
 /// The mutable working state for one vault's sync.
@@ -356,11 +442,13 @@ struct VaultSync {
 }
 
 impl VaultSync {
-    /// One connection lifetime: full reconcile, drain outbox, catch up, then
-    /// stay live until the socket closes or an error occurs.
-    async fn connect_and_run(&mut self) -> Result<(), SyncError> {
-        self.set_state(VaultSyncState::Connecting, None);
-
+    /// Full reconcile, drain outbox, catch up — the coarse "wake, reconcile,
+    /// sleep" pass a background (no live socket) caller needs. Shared by the
+    /// live [`Self::connect_and_run`] path (which runs this once per
+    /// connection, before going live) and [`SyncEngine::reconcile_once`]'s
+    /// one-shot background path (which runs this and returns, holding no
+    /// socket open at all).
+    async fn reconcile_pass(&mut self) -> Result<(), SyncError> {
         // The full reconcile (manifest + initial push/pull) is the long phase for
         // a large vault, so report it as Syncing with file progress rather than
         // leaving the UI stuck on "connecting".
@@ -369,6 +457,14 @@ impl VaultSync {
         self.drain_outbox().await?;
         self.set_state(VaultSyncState::CatchingUp, None);
         self.pull_changes().await?;
+        Ok(())
+    }
+
+    /// One connection lifetime: full reconcile, drain outbox, catch up, then
+    /// stay live until the socket closes or an error occurs.
+    async fn connect_and_run(&mut self) -> Result<(), SyncError> {
+        self.set_state(VaultSyncState::Connecting, None);
+        self.reconcile_pass().await?;
 
         let mut ws = self.client.connect_ws().await?;
         self.set_state(VaultSyncState::Live, None);
@@ -941,6 +1037,58 @@ mod tests {
 
         let err = engine.list_remote_vaults("r1").await.unwrap_err();
         assert!(matches!(err, SyncError::State(ref s) if s.contains("no api key available")));
+    }
+
+    #[tokio::test]
+    async fn reconcile_once_with_no_mapped_vaults_is_a_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = SyncEngine::open(&dir.path().join("sync.db"), Arc::new(|_: &str| None))
+            .await
+            .unwrap();
+        engine
+            .add_remote("r1".to_string(), "http://example.invalid".to_string())
+            .await
+            .unwrap();
+
+        // No vault mapped to "r1" — nothing to do, and no live-socket/watcher
+        // ever gets started (this returning at all, quickly, is the test).
+        engine.reconcile_once().await.unwrap();
+        assert!(engine.status().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reconcile_once_records_a_failed_vault_instead_of_returning_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_dir = tempfile::tempdir().unwrap();
+        // No key provider entry for "r1" — every mapped vault under it should
+        // fail at the api-key step (same error `TaskContext::run` surfaces),
+        // but `reconcile_once` itself must still return `Ok`.
+        let engine = SyncEngine::open(&dir.path().join("sync.db"), Arc::new(|_: &str| None))
+            .await
+            .unwrap();
+        engine
+            .add_remote("r1".to_string(), "http://example.invalid".to_string())
+            .await
+            .unwrap();
+        engine
+            .map_vault(
+                "r1".to_string(),
+                "local-vault".to_string(),
+                vault_dir.path().to_string_lossy().to_string(),
+                "remote-vault".to_string(),
+            )
+            .await
+            .unwrap();
+
+        engine.reconcile_once().await.unwrap();
+
+        let statuses = engine.status();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].state, VaultSyncState::Offline);
+        assert!(statuses[0]
+            .last_error
+            .as_deref()
+            .is_some_and(|e| e.contains("no api key available")));
     }
 
     #[tokio::test]

@@ -197,6 +197,17 @@ impl SyncHandle {
         }
     }
 
+    /// One coarse reconcile pass for every mapped vault, with no live
+    /// WebSocket kept open afterward — for a background caller (Android's
+    /// `MobileSyncService`, or a manual "sync now") rather than the
+    /// always-live tasks [`Self::start`] spawns. See
+    /// [`librarium_sync::SyncEngine::reconcile_once`].
+    pub async fn reconcile_once(&self) -> anyhow::Result<()> {
+        let engine = self.ensure_engine().await?;
+        engine.reconcile_once().await?;
+        Ok(())
+    }
+
     /// Validate `base_url`/`api_key` against the remote with a cheap
     /// authenticated call — so a wrong key surfaces immediately here rather
     /// than as a silent, perpetually-offline sync task — then store the key
@@ -414,5 +425,14 @@ mod tests {
         let sync_dir = TempDir::new().unwrap();
         let h = handle(&config, &sync_dir);
         h.pairing_clear().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reconcile_once_with_nothing_mapped_is_a_noop() {
+        let config = TempDir::new().unwrap();
+        let sync_dir = TempDir::new().unwrap();
+        let h = handle(&config, &sync_dir);
+        h.reconcile_once().await.unwrap();
+        assert!(h.status().await.is_empty());
     }
 }

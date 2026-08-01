@@ -33,7 +33,7 @@ pub use file::{DirectoryCreateResult, RenameResult};
 pub use frontmatter::{frontmatter_read, frontmatter_write};
 pub use links::{backlinks, outgoing_links, resolve_wiki_link};
 pub use links::{LinkedNote, ResolveWikiLinkResult};
-pub use metadata::{Bookmark, Favorite, MobileDb};
+pub use metadata::{Bookmark, Favorite, MobileDb, SyncPolicy};
 pub use render::{render_markdown, render_markdown_in_vault};
 pub use search::{
     build_index, index_size_on_disk, rebuild_index, search, search_paged, update_incremental,
