@@ -21,16 +21,6 @@ path = "src/main.rs"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
-[features]
-default = ["desktop"]
-# Everything needed to embed and drive `librarium-server`: the desktop-only
-# setup path (paths.rs, sync_bridge.rs, run_setup's config/JWT/health-poll
-# logic — see lib.rs). Disabled, this crate has no mobile app host wiring yet
-# (that's #62) but its dependency graph excludes librarium-server/actix-web
-# entirely, which `cargo build -p librarium-tauri --no-default-features` +
-# `cargo tree` verifies without needing an actual Android target installed.
-desktop = ["dep:librarium-server", "dep:actix-web", "dep:reqwest", "dep:librarium-sync", "dep:dirs"]
-
 [dependencies]
 # Tauri core + system tray (tray-icon feature is part of tauri core in v2)
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
@@ -40,22 +30,15 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-deep-link = "2"
 
-# Embedded server — imported as the `librarium` crate (see [lib] name in librarium-server).
-# Desktop-only: see `desktop` feature above.
-librarium-server = { path = "../librarium-server", optional = true }
-
-# Background sync engine (desktop ↔ remote server, via sync_bridge.rs). Desktop-only.
-librarium-sync = { path = "../librarium-sync", optional = true }
-
-# Actix runtime needed to spawn the server on a background thread. Desktop-only.
-actix-web = { version = "4.9", default-features = false, optional = true }
-
-# HTTP client for health polling. Desktop-only.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"], optional = true }
-
-# Platform home-directory detection (paths.rs's portable-mode/default-vault-dir
-# resolution). Desktop-only.
-dirs = { version = "5", optional = true }
+# Route C thin-client command layer (mobile only — see run()/run_setup() in
+# lib.rs), plus librarium-core directly for its `SearchIndex` type (the
+# mobile setup path manages one; the type itself isn't re-exported by
+# librarium-mobile). Both are already ordinary workspace members built on
+# every desktop-host CI run and cross-compiled for Android in the
+# `android-cross-compile` job, so pulling them in unconditionally (no
+# gating needed) is safe on both sides.
+librarium-mobile = { path = "../librarium-mobile" }
+librarium-core = { path = "../librarium-core" }
 
 # Open URLs in the OS default browser (used by open_external_url command)
 open = "5"
@@ -68,6 +51,34 @@ serde_json = "1"
 tokio = { version = "1", features = ["time", "sync", "rt", "macros"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
+
+# Desktop-only: embeds and drives `librarium-server` (config/JWT/tray/
+# deep-links/actix-thread/health-poll/`sync_bridge` — see lib.rs's
+# `#[cfg(desktop)]`-gated code). Gated by *target*, not a Cargo feature —
+# `cargo tauri android build` has no flag to disable default features, so
+# these must be automatically absent from any android/ios cross-compile
+# rather than needing to be manually opted out of (#62; #61 originally used
+# a default-on Cargo feature, which this replaces — see lib.rs's module
+# doc for why). `librarium-server`'s actix/sqlx/ring dependency chain was
+# never verified for Android, unlike librarium-core/librarium-sync/
+# librarium-mobile (#47/48), so excluding it outright — not attempting to
+# cross-compile it — matches that established boundary.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Embedded server — imported as the `librarium` crate (see [lib] name in librarium-server).
+librarium-server = { path = "../librarium-server" }
+
+# Background sync engine (desktop ↔ remote server, via sync_bridge.rs).
+librarium-sync = { path = "../librarium-sync" }
+
+# Actix runtime needed to spawn the server on a background thread.
+actix-web = { version = "4.9", default-features = false }
+
+# HTTP client for health polling.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# Platform home-directory detection (paths.rs's portable-mode/default-vault-dir
+# resolution).
+dirs = "5"
 
 [dev-dependencies]
 tempfile = "3"

@@ -6,28 +6,49 @@
 //! Desktop embeds `librarium-server` and drives it exactly as before this
 //! split — that logic (config loading, JWT-secret persistence, the tray,
 //! deep links, the actix thread, health-poll-then-navigate, and the
-//! `sync_bridge` commands) is gated behind the default-on `desktop` Cargo
-//! feature so a mobile build's dependency graph excludes `librarium-server`/
-//! `actix-web` entirely (verify with `cargo build -p librarium-tauri
-//! --no-default-features` + `cargo tree`). Mobile's own command wiring
-//! (registering `librarium-mobile`'s commands) is a later issue's scope, so
-//! `run_setup` below is a near-no-op without the `desktop` feature — it
-//! still initializes the generic frontend log (no server dependency, and
-//! the `frontend_log`/`frontend_log_path` commands are registered on every
-//! platform), just via Tauri's own path API instead of `paths.rs`, which is
-//! desktop-only (portable-mode detection tied to `librarium.db`).
+//! `sync_bridge` commands) is gated behind `#[cfg(desktop)]`/`#[cfg(mobile)]`
+//! (Tauri's own OS-based cfg flags — true `desktop` = not android/ios).
+//! Cargo.toml gates the underlying dependencies (`librarium-server`,
+//! `actix-web`, `reqwest`, `librarium-sync`, `dirs`) the same way, by
+//! *target* rather than a Cargo feature: `cargo tauri android build` has no
+//! flag to disable default features, so exclusion has to be automatic for
+//! any android/ios build rather than something a flag opts out of (verify
+//! with `cargo tree -p librarium-tauri --target aarch64-linux-android -e
+//! normal`, which should show neither crate). `librarium-server`'s
+//! actix/sqlx/ring dependency chain was never verified for Android, unlike
+//! `librarium-core`/`librarium-sync`/`librarium-mobile` (#47/48) — excluding
+//! it outright matches that established boundary rather than trying to
+//! cross-compile it.
+//!
+//! Mobile registers `librarium-mobile`'s commands (`invoke_handler`) and
+//! constructs the Tauri-managed state they need (`SearchIndex`, `MobileDb`,
+//! `SyncHandle` — see that crate's own doc comments for why each is
+//! stateful) in the `#[cfg(mobile)]` `run_setup` below — the first real app
+//! host for that crate; only tests constructed this state before. The
+//! frontend log is the one piece of desktop setup mobile also does, since
+//! it has no server dependency and its commands are registered on every
+//! platform.
+//!
+//! **Known gap, not this issue's job:** `librarium_mobile::OsKeyringStore`
+//! (used here for `SyncHandle`'s API-key storage) needs
+//! `keyring_core::set_default_store(...)` called once from the running
+//! Android Activity with a live JNI context before it works on-device — see
+//! `librarium-mobile/src/secrets.rs`'s doc comment. That's app-bootstrap
+//! work for whichever later issue does the actual device bring-up; until
+//! then, `pairing_set`/`sync_add_remote` will error on a real Android
+//! device.
 
 mod frontend_log;
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 mod paths;
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 mod sync_bridge;
 
+use anyhow::Context;
 use frontend_log::{FrontendLog, LogRecord};
 use tauri::{AppHandle, Manager};
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 use {
-    anyhow::Context,
     librarium::config::AppConfig,
     paths::{create_dirs, resolve_paths},
     sync_bridge::{RemoteDto, SyncHandle},
@@ -38,18 +59,25 @@ use {
 
 // ── Tray icon pixel data ──────────────────────────────────────────────────────
 
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 const TRAY_ICON_YELLOW: &[u8] = include_bytes!("../icons/tray-yellow.png");
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 const TRAY_ICON_GREEN: &[u8] = include_bytes!("../icons/tray-green.png");
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 const TRAY_ICON_RED: &[u8] = include_bytes!("../icons/tray-red.png");
 
 // ── Tauri commands (generic — no server dependency, registered on every platform) ──
 
 /// Open a native directory picker dialog and return the selected path.
 ///
+/// Desktop-only: `tauri-plugin-dialog`'s mobile implementation has no
+/// `pick_folder` (only `pick_file`) — Android has no equivalent native
+/// folder picker in the same sense, and mobile vault management doesn't go
+/// through this anyway (`librarium-mobile`'s local JSON vault registry is
+/// populated by the pairing flow, not a folder picker).
+///
 /// Called from the Vue frontend via `window.__TAURI__.core.invoke()`.
+#[cfg(desktop)]
 #[tauri::command]
 async fn open_directory_dialog(app: AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
@@ -127,7 +155,7 @@ fn frontend_log_path(log: tauri::State<'_, FrontendLog>) -> String {
 // ── Sync commands (desktop-only: librarium.db-resolved vault paths) ─────────
 
 /// Register a remote server to sync with. Returns the generated remote id.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 #[tauri::command]
 async fn sync_add_remote(
     handle: tauri::State<'_, SyncHandle>,
@@ -141,7 +169,7 @@ async fn sync_add_remote(
 }
 
 /// Map a local vault to a remote vault under a registered remote.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 #[tauri::command]
 async fn sync_map_vault(
     handle: tauri::State<'_, SyncHandle>,
@@ -156,14 +184,14 @@ async fn sync_map_vault(
 }
 
 /// List configured remotes (never exposes API keys).
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 #[tauri::command]
 async fn sync_list_remotes(handle: tauri::State<'_, SyncHandle>) -> Result<Vec<RemoteDto>, String> {
     handle.list_remotes().await.map_err(|e| e.to_string())
 }
 
 /// List the vaults available on a registered remote.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 #[tauri::command]
 async fn sync_list_remote_vaults(
     handle: tauri::State<'_, SyncHandle>,
@@ -176,7 +204,7 @@ async fn sync_list_remote_vaults(
 }
 
 /// Create a new vault on a registered remote.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 #[tauri::command]
 async fn sync_create_remote_vault(
     handle: tauri::State<'_, SyncHandle>,
@@ -190,7 +218,7 @@ async fn sync_create_remote_vault(
 }
 
 /// Remove a registered remote and everything mapped to it.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 #[tauri::command]
 async fn sync_remove_remote(
     handle: tauri::State<'_, SyncHandle>,
@@ -203,7 +231,7 @@ async fn sync_remove_remote(
 }
 
 /// Remove a single local-to-remote vault mapping.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 #[tauri::command]
 async fn sync_unmap_vault(
     handle: tauri::State<'_, SyncHandle>,
@@ -217,7 +245,7 @@ async fn sync_unmap_vault(
 }
 
 /// Per-vault sync status snapshots.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 #[tauri::command]
 async fn sync_status(
     handle: tauri::State<'_, SyncHandle>,
@@ -226,14 +254,14 @@ async fn sync_status(
 }
 
 /// (Re)start the background sync tasks.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 #[tauri::command]
 async fn sync_start(handle: tauri::State<'_, SyncHandle>) -> Result<(), String> {
     handle.start().await.map_err(|e| e.to_string())
 }
 
 /// Stop the background sync tasks.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 #[tauri::command]
 async fn sync_stop(handle: tauri::State<'_, SyncHandle>) -> Result<(), String> {
     handle.stop().await;
@@ -250,7 +278,7 @@ async fn sync_stop(handle: tauri::State<'_, SyncHandle>) -> Result<(), String> {
 // `run()` below always builds a concrete `tauri::Builder<Wry>`, unlike
 // `librarium-mobile`, which is written to be embeddable under any runtime.
 
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool {
     tauri::generate_handler![
         open_directory_dialog,
@@ -271,15 +299,46 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool {
     ]
 }
 
-#[cfg(not(feature = "desktop"))]
+// `Invoke<R>` isn't `Clone`, so two separately built `Fn(Invoke<R>) -> bool`
+// handlers (the generic commands' `generate_handler!` closure and
+// `librarium_mobile::invoke_handler()`, the crate's only public entry point
+// — its individual command fns are deliberately private, so they can't be
+// merged into one `generate_handler!` list) can't just be tried in sequence
+// against the same value. Peek at the command name first (a `&str` borrow,
+// no move) to pick exactly one to hand `invoke` to.
+#[cfg(mobile)]
+const GENERIC_COMMAND_NAMES: &[&str] = &[
+    "notify",
+    "open_external_url",
+    "frontend_log",
+    "frontend_log_path",
+];
+
+// `generate_handler!`'s expansion is an untyped `move |invoke| {...}`
+// closure that relies entirely on external context to pin its parameter's
+// runtime generic — that only works when the macro invocation is the
+// direct return expression of a function with an explicit `impl
+// Fn(Invoke<Wry>) -> bool` return type (as `generic_handler` is here and
+// desktop's `invoke_handler` already was); storing it in a `let` first, or
+// calling it inline before it has a concrete type, leaves the type
+// unresolved.
+#[cfg(mobile)]
+fn generic_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool {
+    tauri::generate_handler![notify, open_external_url, frontend_log, frontend_log_path]
+}
+
+#[cfg(mobile)]
 fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool {
-    tauri::generate_handler![
-        open_directory_dialog,
-        notify,
-        open_external_url,
-        frontend_log,
-        frontend_log_path
-    ]
+    let generic = generic_handler();
+    let mobile = librarium_mobile::invoke_handler();
+
+    move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
+        if GENERIC_COMMAND_NAMES.contains(&invoke.message.command()) {
+            generic(invoke)
+        } else {
+            mobile(invoke)
+        }
+    }
 }
 
 // ── run ───────────────────────────────────────────────────────────────────────
@@ -300,7 +359,7 @@ pub fn run() {
 ///
 /// Returning `anyhow::Result` makes it easy to use `?` throughout; the
 /// closure converts the error to `Box<dyn std::error::Error>` at the boundary.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 fn run_setup(app: &mut tauri::App) -> anyhow::Result<()> {
     let handle = app.handle().clone();
 
@@ -427,29 +486,73 @@ fn run_setup(app: &mut tauri::App) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// No mobile app host is wired up yet — registering `librarium-mobile`'s
-/// commands (vault/file/sync/search/etc.) and any mobile-specific bootstrap
-/// is a later issue's scope. This keeps `run()` buildable and launchable on
-/// a mobile target today without pulling in `librarium-server`/`actix-web`.
-///
-/// Still initializes the frontend log: unlike the rest of desktop's setup,
-/// it has no server dependency, the `frontend_log`/`frontend_log_path`
-/// commands are registered on every platform (see `invoke_handler` above),
-/// and leaving it unmanaged would make those commands panic on unmanaged
-/// state if the frontend ever calls them.
-#[cfg(not(feature = "desktop"))]
+/// The first real app host for `librarium-mobile`'s command layer (#62) —
+/// only tests constructed this Tauri-managed state before now (see
+/// `search.rs`/`metadata.rs`/`sync.rs` in that crate, each of which
+/// explicitly documents what "the eventual Tauri app" is expected to do
+/// here).
+#[cfg(mobile)]
 fn run_setup(app: &mut tauri::App) -> anyhow::Result<()> {
-    if let Ok(data_dir) = app.path().app_data_dir() {
-        if let Ok(fl) = FrontendLog::init(data_dir.join("logs")) {
-            app.manage(fl);
-        }
+    let handle = app.handle().clone();
+
+    let data_dir = handle
+        .path()
+        .app_data_dir()
+        .context("resolve app data dir")?;
+    let config_dir = handle
+        .path()
+        .app_config_dir()
+        .context("resolve app config dir")?;
+    std::fs::create_dir_all(&data_dir).context("create app data dir")?;
+    std::fs::create_dir_all(&config_dir).context("create app config dir")?;
+
+    // No server dependency, and frontend_log/frontend_log_path are
+    // registered on every platform (see invoke_handler above) — leaving
+    // this unmanaged would make those commands panic on unmanaged state.
+    if let Ok(fl) = FrontendLog::init(data_dir.join("logs")) {
+        app.manage(fl);
     }
+
+    // A `SearchIndex` holds open Tantivy handles per vault in memory, so one
+    // long-lived instance must be shared across calls (search.rs's doc
+    // comment) — hence managed state rather than constructed per-command.
+    app.manage(librarium_core::search_service::SearchIndex::with_index_dir(
+        Some(data_dir.join("search-index")),
+    ));
+
+    // API keys are never persisted in plaintext (#54): `OsKeyringStore`
+    // backs onto the platform's native credential store. On Android that
+    // store needs a one-time JNI bootstrap this doesn't do yet — see the
+    // module doc's "Known gap" note; `pairing_set`/`sync_add_remote` will
+    // error on a real device until whichever issue does that bring-up adds
+    // it.
+    let secrets: std::sync::Arc<dyn librarium_mobile::SecretStore> =
+        std::sync::Arc::new(librarium_mobile::OsKeyringStore);
+    app.manage(librarium_mobile::SyncHandle::new(
+        data_dir.join("sync.db"),
+        config_dir,
+        secrets,
+    ));
+
+    // `MobileDb::open` runs its (idempotent) migrations before returning —
+    // block on it rather than spawning, since any metadata command
+    // (preferences/recent/favorites/bookmarks) needs it already managed.
+    // Desktop's setup hook already does comparable synchronous startup I/O.
+    match tauri::async_runtime::block_on(librarium_mobile::MobileDb::open(
+        &data_dir.join("mobile.db"),
+    )) {
+        Ok(db) => {
+            app.manage(db);
+        }
+        Err(e) => tracing::warn!("Failed to open mobile.db: {e:#}"),
+    }
+
     Ok(())
 }
 
 /// Block until the embedded server answers `GET /api/health`, or a 30s deadline
 /// passes. Used to gate sync startup on the metadata DB being ready.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 async fn wait_for_health(port: u16) {
     let url = format!("http://127.0.0.1:{port}/api/health");
     let client = match reqwest::Client::builder()
@@ -476,7 +579,7 @@ async fn wait_for_health(port: u16) {
 
 // ── System tray ───────────────────────────────────────────────────────────────
 
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 fn setup_tray(app: &tauri::App) -> anyhow::Result<()> {
     let open_item = MenuItem::with_id(app, "open", "Open Librarium", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
@@ -527,7 +630,7 @@ fn setup_tray(app: &tauri::App) -> anyhow::Result<()> {
 /// Update the tray icon and tooltip to reflect the current server status.
 ///
 /// `status` is one of `"starting"`, `"healthy"`, or `"error"`.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 fn update_tray_status(app: &AppHandle, status: &str) {
     let Some(tray) = app.tray_by_id("main-tray") else {
         return;
@@ -547,7 +650,7 @@ fn update_tray_status(app: &AppHandle, status: &str) {
 
 // ── Deep links ────────────────────────────────────────────────────────────────
 
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 fn setup_deep_links(handle: &AppHandle) -> anyhow::Result<()> {
     use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -583,7 +686,7 @@ fn setup_deep_links(handle: &AppHandle) -> anyhow::Result<()> {
 /// `librarium://open/vault/abc/file/note.md` → `#/vault/abc/file/note.md`
 ///
 /// Any URL that doesn't match `librarium://open/...` is mapped to `#/`.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 pub(crate) fn deep_link_to_app_path(url: &str) -> String {
     // Strip the scheme and host part ("librarium://open"), keep the path.
     let stripped = url
@@ -611,7 +714,7 @@ pub(crate) fn deep_link_to_app_path(url: &str) -> String {
 /// and updates the tray icon to green.
 /// On timeout or a server startup error received via `err_rx`, shows an inline
 /// error screen and updates the tray icon to red.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 async fn poll_until_healthy_then_navigate(
     port: u16,
     window: tauri::WebviewWindow,
@@ -666,7 +769,7 @@ async fn poll_until_healthy_then_navigate(
 }
 
 /// Classify a server startup error string into a user-readable message.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 pub(crate) fn classify_server_error(raw: &str, port: u16) -> String {
     let lower = raw.to_lowercase();
     if lower.contains("address already in use")
@@ -693,7 +796,7 @@ pub(crate) fn classify_server_error(raw: &str, port: u16) -> String {
 }
 
 /// Replace the WebView content with a simple error screen.
-#[cfg(feature = "desktop")]
+#[cfg(desktop)]
 fn show_error_screen(window: &tauri::WebviewWindow, message: &str) {
     let escaped = message
         .replace('\\', "\\\\")
@@ -709,7 +812,7 @@ font-family:system-ui,sans-serif;color:#c00;padding:24px;text-align:center">\
     let _ = window.eval(&js);
 }
 
-#[cfg(all(test, feature = "desktop"))]
+#[cfg(all(test, desktop))]
 mod tests {
     use super::*;
 

@@ -8,8 +8,8 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
 - `crates/librarium-core`: platform-independent core (`AppError`, `FileService`, frontmatter read/write, Markdown render + wiki-link resolution, Tantivy search behind a default-on `search` feature) shared with non-server consumers; no actix/sqlx/tokio by default
 - `crates/librarium-types`: shared Rust DTOs and parser traits
 - `crates/librarium-client`: HTTP and WebSocket client crate
-- `crates/librarium-tauri`: desktop shell that embeds the frontend and server. Has a `[lib]` (`librarium_tauri_lib`) alongside its `[[bin]]` for the Android/iOS native-library entry point (#61); desktop-only setup (config/JWT/tray/deep-links/actix/health-poll, `sync_*` commands) is gated behind a default-on `desktop` Cargo feature
-- `crates/librarium-mobile`: Route C thin-client command layer (vault list/get from a local JSON registry, file/directory ops over `librarium-core::FileService`, Markdown render, wiki-link/backlinks/outgoing-links, tags, frontmatter read/write, on-device Tantivy search, local metadata store — preferences/recent/favorites/bookmarks — in its own `mobile.db`, and a `librarium-sync` bridge — add/list/remove remotes, map/unmap vaults, start/stop/status, plus single-remote `pairing_set`/`pairing_get`/`pairing_clear` — resolving local vault ids via the same JSON registry instead of the desktop's `librarium.db`, and storing API keys in platform secure storage via a `SecretStore` trait rather than any plaintext file); no frontend or Tauri-app wiring yet
+- `crates/librarium-tauri`: desktop shell that embeds the frontend and server, **and** the Android app host (#61/#62). Has a `[lib]` (`librarium_tauri_lib`) alongside its `[[bin]]` for the Android/iOS native-library entry point; desktop-only setup (config/JWT/tray/deep-links/actix/health-poll, `sync_*` commands) vs. mobile setup (registers `librarium-mobile`'s commands, constructs its `SearchIndex`/`MobileDb`/`SyncHandle` state) is gated by `#[cfg(desktop)]`/`#[cfg(mobile)]` in `src/lib.rs`, with the underlying dependencies gated by *target* in `Cargo.toml` (not a Cargo feature — see Build And Test below for why). `gen/android` (from `cargo tauri android init`) is committed, not regenerated
+- `crates/librarium-mobile`: Route C thin-client command layer (vault list/get from a local JSON registry, file/directory ops over `librarium-core::FileService`, Markdown render, wiki-link/backlinks/outgoing-links, tags, frontmatter read/write, on-device Tantivy search, local metadata store — preferences/recent/favorites/bookmarks — in its own `mobile.db`, and a `librarium-sync` bridge — add/list/remove remotes, map/unmap vaults, start/stop/status, plus single-remote `pairing_set`/`pairing_get`/`pairing_clear` — resolving local vault ids via the same JSON registry instead of the desktop's `librarium.db`, and storing API keys in platform secure storage via a `SecretStore` trait rather than any plaintext file); wired into `librarium-tauri`'s mobile entry point (#62), but Android Keystore registration still needs a one-time JNI bootstrap from the host Activity that hasn't been added yet (`crates/librarium-mobile/src/secrets.rs`) — pairing/sync will error on a real device until that lands
 - `frontend`: Vue 3 + TypeScript + Vuetify SPA
 - `plugins`: built-in plugin manifests and scripts
 - `tests`: workspace-level Rust integration tests
@@ -49,17 +49,59 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
   cargo tree -p librarium-core -p librarium-sync -p librarium-mobile --target aarch64-linux-android -i onig
   ```
   Both should error with "did not match any packages" (i.e. not found).
-- `librarium-tauri` mobile dependency-graph check (#61): confirms the
+- `librarium-tauri` mobile dependency-graph check (#61/#62): confirms the
   desktop-only setup (config loading, JWT persistence, the tray, deep links,
   the actix thread, health polling, `sync_*` commands) is fully excluded
-  from a mobile-config build, without needing an actual Android target
-  installed — `--no-default-features` disables the default-on `desktop`
-  Cargo feature on the normal host triple:
+  from an Android/iOS build. Gated by *target* (`[target.'cfg(not(any(
+  target_os = "android", target_os = "ios")))'.dependencies]` in
+  `crates/librarium-tauri/Cargo.toml`), not a Cargo feature — `cargo tauri
+  android build` has no flag to disable default features, so exclusion has
+  to be automatic for the real target rather than something a flag opts out
+  of. Verify against the actual Android target (needs the Rust target
+  installed via `rustup target add aarch64-linux-android`, but not the full
+  NDK — `cargo tree`/`cargo check` don't link):
   ```bash
-  cargo build -p librarium-tauri --no-default-features
-  cargo tree -p librarium-tauri --no-default-features -e normal | grep -E "librarium-server|actix-web"
+  cargo check -p librarium-tauri --target aarch64-linux-android
+  cargo tree -p librarium-tauri --target aarch64-linux-android -e normal | grep -E "librarium-server|actix-web"
   ```
-  The `grep` should find nothing.
+  The `grep` should find nothing. (`cargo check --target aarch64-linux-android`
+  alone will still fail without NDK env vars set — `ring`'s build script
+  needs a C compiler — that's expected; it's `cargo ndk`/`cargo tauri
+  android` that set those up, see below.)
+- **Android build (#62)** — prerequisites: JDK 17+ (`java -version`), the
+  Android SDK (`$ANDROID_HOME`) with build-tools/platform-tools installed,
+  NDK 27+ (via Android Studio's SDK Manager, or `sdkmanager
+  "ndk;27.2.12479018"`), `cargo install cargo-ndk --locked` (this crate's
+  Android cross-compile check above also needs it), `cargo install
+  tauri-cli --locked` (or `cargo binstall tauri-cli`), and the Rust targets:
+  ```bash
+  rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+  ```
+  `ANDROID_NDK_HOME` (or `NDK_HOME`) must point at the versioned NDK dir
+  (`$ANDROID_HOME/ndk/<version>`) — unlike `ANDROID_HOME`, this is rarely
+  set by default installers. From `crates/librarium-tauri/`:
+  ```bash
+  cargo tauri android init   # generates gen/android — already committed, do not regenerate over local edits
+  cargo tauri android build --apk --debug -t aarch64 x86_64
+  ```
+  Produces one universal debug APK (containing both ABIs' native libs) at
+  `gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`
+  — `arm64-v8a` for real devices, `x86_64` for emulators on Intel/AMD hosts
+  (Apple Silicon Macs: `armv7`/`aarch64` targets in an ARM emulator image
+  instead). Debug builds allow cleartext HTTP (`android:usesCleartextTraffic`
+  manifest placeholder, `crates/librarium-tauri/gen/android/app/build.gradle.kts` —
+  `cargo tauri android init`'s own default, not something this repo added)
+  so syncing with a plain-`http://` LAN server works; release builds keep it
+  blocked. From inside an Android **emulator**, the host machine's loopback
+  is `10.0.2.2`, not `127.0.0.1` or `localhost` — needed when pointing a
+  paired remote at a Librarium server running on the same dev machine.
+  `cargo tauri android init`'s `beforeBuildCommand`/`beforeDevCommand`
+  (`crates/librarium-tauri/tauri.android.conf.json`) run with a working
+  directory one level up from `crates/librarium-tauri/` (empirically —
+  `npm --prefix ../frontend`, not `../../frontend` as you'd expect from the
+  config file's own location), unlike desktop's build, which has no
+  `beforeBuildCommand` at all (desktop's real UI is served by the embedded
+  server, not Tauri's static-asset pipeline — see `docs/DESIGN.md`).
 - Mobile contract test (#59): asserts every route in #56/#57's scope
   (vault/file/render/resolve-link/backlinks, search, tags, preferences,
   recent files, favorites, bookmarks, random/daily notes) produces
