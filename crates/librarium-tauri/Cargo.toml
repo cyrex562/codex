@@ -80,5 +80,33 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # resolution).
 dirs = "5"
 
+# Mobile-only: background reconcile service (#64) — `MobileSyncService` in
+# background_sync.rs. `tauri-plugin-background-service` runs its
+# `BackgroundService::run()` loop inside an Android foreground service
+# (persistent notification, `START_STICKY`) instead of the always-live
+# WebSocket task `librarium-sync`'s desktop-facing `SyncEngine::start()`
+# uses — Android kills an ordinary backgrounded process, so background sync
+# needs its own coarse "wake, reconcile, sleep" mechanism
+# (`SyncEngine::reconcile_once`) rather than that live task. Desktop keeps
+# its current always-on `sync_bridge.rs` model untouched; registering this
+# plugin there too would just be a redundant, always-alive `tokio::spawn`.
+# `tauri-plugin-device-info` supplies the Wi-Fi/battery checks the service's
+# policy gate needs, via a `DeviceInfoExt` trait callable directly from Rust
+# (not just JS `invoke()`), so it works from inside the background loop with
+# no webview involved.
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-background-service = "1"
+tauri-plugin-device-info = "1"
+async-trait = "0.1"
+
+# Android-only: `headless_bridge_stub.rs` exports the JNI symbols
+# `tauri-plugin-background-service`'s `LifecycleService.kt` requires before
+# it accepts a `startKeepalive`/stop — see that module's doc comment for why
+# this is needed despite the plugin's own docs claiming otherwise (upstream
+# bug, filed as a follow-up). iOS has no JNI/native-core-bridge equivalent in
+# this plugin, so this is Android-specific, not the broader mobile group.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
 [dev-dependencies]
 tempfile = "3"

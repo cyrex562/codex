@@ -52,6 +52,34 @@ pub struct Favorite {
     pub created_at: String,
 }
 
+/// Policy for the Android background reconcile service
+/// (`crates/librarium-tauri/src/background_sync.rs`, #64): whether it may
+/// run off Wi-Fi, and the battery level below which it skips a tick (unless
+/// charging).
+///
+/// Deliberately **not** folded into `UserPreferences` even though that type
+/// already has a device-local storage path through this same file — these
+/// two fields are Android-background-sync-specific and meaningless on
+/// desktop/server, and `UserPreferences` is also the server's synced
+/// `/api/preferences` type. Doing so would be exactly the kind of
+/// unsynced-concept scope creep this module's doc comment already warns
+/// preferences/favorites/bookmarks against; a dedicated table keeps it
+/// contained to `librarium-mobile`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct SyncPolicy {
+    pub wifi_only: bool,
+    pub battery_threshold: u8,
+}
+
+impl Default for SyncPolicy {
+    fn default() -> Self {
+        Self {
+            wifi_only: true,
+            battery_threshold: 20,
+        }
+    }
+}
+
 fn editor_mode_from_str(value: &str) -> EditorMode {
     match value {
         "raw" => EditorMode::Raw,
@@ -193,6 +221,20 @@ impl MobileDb {
         .await
         .map_err(AppError::from)?;
 
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sync_policy (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                wifi_only INTEGER NOT NULL,
+                battery_threshold INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
         Ok(())
     }
 
@@ -265,6 +307,50 @@ impl MobileDb {
         let default = UserPreferences::default();
         self.set_preferences(&default).await?;
         Ok(default)
+    }
+
+    // ── Sync policy (#64) ────────────────────────────────────────────────
+
+    /// Returns the stored background-sync policy, or — on a fresh database —
+    /// inserts and returns [`SyncPolicy::default`].
+    pub async fn get_sync_policy(&self) -> AppResult<SyncPolicy> {
+        let row: Option<(i64, i64)> =
+            sqlx::query_as("SELECT wifi_only, battery_threshold FROM sync_policy WHERE id = 1")
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(AppError::from)?;
+
+        if let Some((wifi_only, battery_threshold)) = row {
+            return Ok(SyncPolicy {
+                wifi_only: wifi_only != 0,
+                battery_threshold: battery_threshold as u8,
+            });
+        }
+
+        let default = SyncPolicy::default();
+        self.set_sync_policy(&default).await?;
+        Ok(default)
+    }
+
+    pub async fn set_sync_policy(&self, policy: &SyncPolicy) -> AppResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO sync_policy (id, wifi_only, battery_threshold, updated_at)
+            VALUES (1, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                wifi_only = excluded.wifi_only,
+                battery_threshold = excluded.battery_threshold,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(policy.wifi_only as i64)
+        .bind(policy.battery_threshold as i64)
+        .bind(Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        Ok(())
     }
 
     // ── Recent files ─────────────────────────────────────────────────────
@@ -464,6 +550,30 @@ mod tests {
             db.get_preferences().await.unwrap(),
             UserPreferences::default()
         );
+    }
+
+    #[tokio::test]
+    async fn fresh_db_sync_policy_matches_default() {
+        let db = MobileDb::open_in_memory().await.unwrap();
+        let policy = db.get_sync_policy().await.unwrap();
+        assert_eq!(policy, SyncPolicy::default());
+        assert!(policy.wifi_only);
+        assert_eq!(policy.battery_threshold, 20);
+    }
+
+    #[tokio::test]
+    async fn sync_policy_round_trips() {
+        let db = MobileDb::open_in_memory().await.unwrap();
+        db.set_sync_policy(&SyncPolicy {
+            wifi_only: false,
+            battery_threshold: 50,
+        })
+        .await
+        .unwrap();
+
+        let reloaded = db.get_sync_policy().await.unwrap();
+        assert!(!reloaded.wifi_only);
+        assert_eq!(reloaded.battery_threshold, 50);
     }
 
     #[tokio::test]

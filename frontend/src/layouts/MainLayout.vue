@@ -128,6 +128,7 @@ import { useUiStore } from '@/stores/ui';
 import { usePreferencesStore } from '@/stores/preferences';
 import { useEditorStore } from '@/stores/editor';
 import { useSyncStore } from '@/stores/sync';
+import { startBackgroundSyncService } from '@/utils/tauri';
 import { useWebSocket } from '@/composables/useWebSocket';
 import { useMobile } from '@/composables/useMobile';
 import { useCapabilities } from '@/composables/useCapabilities';
@@ -249,6 +250,11 @@ onMounted(async () => {
   if (isLocalMode) {
     await Promise.all([syncStore.loadPairing(), syncStore.refreshStatus()]);
     syncStore.startPolling();
+    // Android background reconcile service (#64) — a no-op everywhere else
+    // (browser context, and the plugin's commands aren't even registered on
+    // desktop). Started once per app launch here rather than left to the
+    // user, since it's what keeps edits syncing while backgrounded.
+    void startBackgroundSyncService();
   }
 
   window.addEventListener('keydown', onGlobalKeydown);

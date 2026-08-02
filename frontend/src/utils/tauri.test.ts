@@ -15,6 +15,10 @@ import {
   syncStatus,
   syncStart,
   syncStop,
+  syncGetPolicy,
+  syncSetPolicy,
+  syncReconcileOnce,
+  startBackgroundSyncService,
   pairingSet,
   pairingGet,
   pairingClear,
@@ -334,6 +338,74 @@ describe('sync wrappers', () => {
 
     it('syncStart rejects', async () => {
       await expect(syncStart()).rejects.toThrow();
+    });
+  });
+});
+
+describe('background sync policy wrappers (#64)', () => {
+  describe('in Tauri context (invoke arg mapping)', () => {
+    beforeEach(() => setTauriContext(true));
+
+    it('syncGetPolicy calls invoke with no args and returns its result', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue({ wifi_only: false, battery_threshold: 40 });
+
+      const result = await syncGetPolicy();
+
+      expect(invoke).toHaveBeenCalledWith('sync_get_policy');
+      expect(result).toEqual({ wifi_only: false, battery_threshold: 40 });
+    });
+
+    it('syncSetPolicy calls invoke with the policy nested under a policy key', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue(undefined);
+
+      await syncSetPolicy({ wifi_only: false, battery_threshold: 40 });
+
+      expect(invoke).toHaveBeenCalledWith('sync_set_policy', {
+        policy: { wifi_only: false, battery_threshold: 40 },
+      });
+    });
+
+    it('syncReconcileOnce calls invoke with no args', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue(undefined);
+
+      await syncReconcileOnce();
+
+      expect(invoke).toHaveBeenCalledWith('sync_reconcile_once');
+    });
+
+    it('startBackgroundSyncService calls invoke on the plugin-namespaced command', async () => {
+      const invoke = await getInvokeMock();
+      invoke.mockResolvedValue(undefined);
+
+      await startBackgroundSyncService();
+
+      expect(invoke).toHaveBeenCalledWith('plugin:background-service|start', {
+        serviceLabel: 'Librarium sync',
+        foregroundServiceType: 'dataSync',
+      });
+    });
+  });
+
+  describe('in browser context (no Tauri)', () => {
+    it('syncGetPolicy resolves to the default policy', async () => {
+      expect(await syncGetPolicy()).toEqual({ wifi_only: true, battery_threshold: 20 });
+    });
+
+    it('syncSetPolicy resolves as a no-op', async () => {
+      await expect(
+        syncSetPolicy({ wifi_only: false, battery_threshold: 40 }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('syncReconcileOnce rejects', async () => {
+      await expect(syncReconcileOnce()).rejects.toThrow();
+    });
+
+    it('startBackgroundSyncService resolves as a no-op', async () => {
+      await expect(startBackgroundSyncService()).resolves.toBeUndefined();
     });
   });
 });

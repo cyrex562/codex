@@ -46,7 +46,11 @@
 //! Without it, `pairing_set`/`sync_add_remote` fail cleanly (no crash) with
 //! a "no default store" style error instead of persisting the key.
 
+#[cfg(mobile)]
+mod background_sync;
 mod frontend_log;
+#[cfg(target_os = "android")]
+mod headless_bridge_stub;
 #[cfg(desktop)]
 mod paths;
 #[cfg(desktop)]
@@ -353,10 +357,24 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_deep_link::init());
+
+    // Android background reconcile service (#64) — mobile-only; desktop
+    // keeps its current always-on sync_bridge.rs model. Registered here
+    // rather than in run_setup because it's a `.plugin()`, not managed
+    // state. `tauri-plugin-background-service`'s own docs require
+    // `tauri-plugin-notification` to already be registered (it is, above).
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_device_info::init()).plugin(
+        tauri_plugin_background_service::init_with_service(|| {
+            background_sync::MobileSyncService::new()
+        }),
+    );
+
+    builder
         .invoke_handler(invoke_handler())
         .setup(|app| run_setup(app).map_err(|e| e.into()))
         .run(tauri::generate_context!())

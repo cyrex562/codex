@@ -18,7 +18,7 @@
     ],
     "security": {
       "csp": null,
-      "capabilities": ["default"]
+      "capabilities": ["default", "mobile"]
     }
   },
   "bundle": {

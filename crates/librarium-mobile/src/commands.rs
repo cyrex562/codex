@@ -23,7 +23,7 @@
 
 use crate::file::{DirectoryCreateResult, RenameResult};
 use crate::links::{LinkedNote, ResolveWikiLinkResult};
-use crate::metadata::{Bookmark, Favorite, MobileDb};
+use crate::metadata::{Bookmark, Favorite, MobileDb, SyncPolicy};
 use crate::sync::{PairingInfo, RemoteDto, SyncHandle};
 use crate::tags::TagEntry;
 use librarium_core::search_service::SearchIndex;
@@ -530,6 +530,26 @@ async fn pairing_clear(sync: State<'_, SyncHandle>) -> Result<(), String> {
     sync.pairing_clear().await.map_err(|e| e.to_string())
 }
 
+/// The Android background reconcile service's Wi-Fi-only / battery-threshold
+/// policy (#64).
+#[tauri::command]
+async fn sync_get_policy(db: State<'_, MobileDb>) -> Result<SyncPolicy, String> {
+    db.get_sync_policy().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sync_set_policy(db: State<'_, MobileDb>, policy: SyncPolicy) -> Result<(), String> {
+    db.set_sync_policy(&policy).await.map_err(|e| e.to_string())
+}
+
+/// Manual "sync now": one coarse reconcile pass for every mapped vault, with
+/// no live socket kept open afterward. Also what the background service
+/// (`crates/librarium-tauri/src/background_sync.rs`) calls on each tick.
+#[tauri::command]
+async fn sync_reconcile_once(sync: State<'_, SyncHandle>) -> Result<(), String> {
+    sync.reconcile_once().await.map_err(|e| e.to_string())
+}
+
 /// The crate's Tauri integration point. Wire it into the app builder with:
 ///
 /// ```ignore
@@ -585,5 +605,8 @@ pub fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> 
         pairing_set,
         pairing_get,
         pairing_clear,
+        sync_get_policy,
+        sync_set_policy,
+        sync_reconcile_once,
     ]
 }

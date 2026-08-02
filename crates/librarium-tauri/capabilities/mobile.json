@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/acl/capability.json",
+  "identifier": "mobile",
+  "description": "Mobile-only capability set (Route C 21, #64): the background reconcile service, whose plugin (tauri-plugin-background-service) is only a dependency on Android/iOS — see librarium-tauri/Cargo.toml's target-cfg gating.",
+  "platforms": ["android", "iOS"],
+  "windows": ["main"],
+  "permissions": ["background-service:default"]
+}
