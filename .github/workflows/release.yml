@@ -179,6 +179,85 @@ jobs:
           name: desktop-windows
           path: dist/Librarium-${{ github.ref_name }}-windows-x86_64-setup.exe
 
+  # ── Mobile (Tauri) — Android (signed release APK) ─────────────────────────
+  # Skips entirely when the signing secrets aren't set (a fork, or before a
+  # real keystore has been generated — see AGENTS.md's "Android release
+  # signing" section) rather than failing the whole release pipeline.
+  android:
+    name: Mobile – Android (signed release APK)
+    runs-on: ubuntu-latest
+    if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-release
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      # Relies on the Android SDK/NDK already bundled on GitHub's
+      # `ubuntu-latest` runner image (same as the `android-cross-compile`
+      # CI gate) — just need to point ANDROID_NDK_HOME at the installed
+      # version, since (unlike cargo-ndk) `cargo tauri android build`
+      # doesn't auto-detect it.
+      - name: Resolve ANDROID_NDK_HOME
+        run: |
+          ndk_version=$(ls "$ANDROID_HOME/ndk" | sort -V | tail -1)
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk_version" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version '^2' --locked
+
+      # Reconstructed from repo secrets, never committed — see
+      # gen/android/.gitignore and AGENTS.md's "Android release signing"
+      # section for the keystore.properties shape this file expects.
+      - name: Reconstruct release keystore
+        working-directory: crates/librarium-tauri/gen/android
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.jks
+          cat > keystore.properties <<EOF
+          storeFile=release.jks
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      - name: Build signed release APK
+        working-directory: crates/librarium-tauri
+        run: cargo tauri android build --apk -t aarch64
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp crates/librarium-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
+             dist/Librarium-${{ github.ref_name }}-android-universal.apk
+
+      - name: Remove keystore from the runner
+        if: always()
+        run: rm -f crates/librarium-tauri/gen/android/release.jks crates/librarium-tauri/gen/android/keystore.properties
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/Librarium-${{ github.ref_name }}-android-universal.apk
+
   # ── Server — Windows portable zip ─────────────────────────────────────────
   server-windows-portable:
     name: Server – Windows portable (zip)
@@ -250,7 +329,12 @@ jobs:
   # ── GitHub Release — publish all artifacts ────────────────────────────────
   release:
     name: Publish GitHub Release
-    needs: [server-linux, server-windows, desktop-linux, desktop-windows, server-windows-portable, desktop-windows-portable]
+    needs: [server-linux, server-windows, desktop-linux, desktop-windows, server-windows-portable, desktop-windows-portable, android]
+    # `android` is conditionally skipped (no signing secrets configured yet
+    # — see that job's `if`), which must not skip this job too: default
+    # `needs` semantics treat "any needed job skipped" the same as failed.
+    # Run unless something actually failed or was cancelled.
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

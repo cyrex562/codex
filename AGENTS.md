@@ -102,6 +102,44 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
   config file's own location), unlike desktop's build, which has no
   `beforeBuildCommand` at all (desktop's real UI is served by the embedded
   server, not Tauri's static-asset pipeline — see `docs/DESIGN.md`).
+- **Android release signing (#67)** — `gen/android/app/build.gradle.kts`'s
+  `signingConfigs["release"]` reads a gitignored `keystore.properties` at
+  the Android project root (`gen/android/keystore.properties` — see
+  `gen/android/.gitignore`); its absence is the fallback to AGP's default
+  unsigned release build, so a release build works either way, signed or
+  not. To sign one locally, generate a keystore once:
+  ```bash
+  keytool -genkeypair -v -keystore /path/to/librarium-release.jks \
+    -alias librarium -keyalg RSA -keysize 2048 -validity 10000
+  ```
+  then create `crates/librarium-tauri/gen/android/keystore.properties`:
+  ```properties
+  storeFile=/path/to/librarium-release.jks
+  storePassword=...
+  keyAlias=librarium
+  keyPassword=...
+  ```
+  **Never commit the `.jks`/`.keystore` file or `keystore.properties`** —
+  both are gitignored; store the keystore and its passwords somewhere
+  durable outside the repo (a password manager, not a chat log or a
+  throwaway note) — losing it means every future release needs a new app
+  identity, since Android refuses to install an update signed by a
+  different key over an existing install. Then build a release (not debug)
+  APK:
+  ```bash
+  cargo tauri android build --apk -t aarch64
+  ```
+  Output lands at
+  `gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`.
+  Verify it's actually signed (not just built) with
+  `apksigner verify --print-certs <apk>` (part of the Android SDK
+  build-tools) or `jarsigner -verify -verbose -certs <apk>`.
+  CI (`.github/workflows/release.yml`'s `android` job) reconstructs
+  `keystore.properties` from four repo secrets on a tag push —
+  `ANDROID_KEYSTORE_BASE64` (the `.jks` file, base64-encoded),
+  `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`
+  — and skips entirely if they're unset, so the release pipeline doesn't
+  break before a real keystore exists.
 - Mobile contract test (#59): asserts every route in #56/#57's scope
   (vault/file/render/resolve-link/backlinks, search, tags, preferences,
   recent files, favorites, bookmarks, random/daily notes) produces
