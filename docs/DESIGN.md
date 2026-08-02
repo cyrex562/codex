@@ -336,11 +336,29 @@ until this issue — this is that wiring, entirely gated on
   `window.visualViewport`, which happy-dom doesn't implement but Vuetify's
   overlay positioning references unconditionally).
 
-Not yet exercised end-to-end against a real device/emulator — a debug APK
-now builds (`cargo tauri android build --apk --debug`, #61/#62) and installs
-`librarium-mobile`'s commands, but launching it and actually pairing/
-syncing/browsing on hardware is #63's job, including the Android Keystore
-JNI bootstrap noted in the crate table above.
+Verified end-to-end on an Android emulator (#63/#64): launch, pair, sync,
+browse/edit, and background sync via an Android foreground service all
+work, modulo the still-open Android Keystore JNI bootstrap gap noted in the
+crate table above (pairing/sync currently need a temporary in-memory secret
+store swap for device testing until that lands). Physical-device
+verification remains outstanding — the sandboxed environment these issues
+were developed in has no attached hardware.
+
+**Distribution (#67): sideload-only**, not the Play Store. Librarium talks
+only to a server the user already configures — there's no first-party
+backend, telemetry, or data collection for a store listing to review, and
+self-hosted-tool users are already comfortable enabling "install unknown
+apps" for the desktop build's package-manager-free installers. Sideloading
+avoids the Play Store's review/policy surface and data-safety declaration
+process entirely. Release APKs are signed (`gen/android/app/build.gradle.kts`'s
+`signingConfigs["release"]`, keyed off a gitignored `keystore.properties` —
+see `AGENTS.md`'s "Android release signing" section) and published on tagged
+GitHub releases (`.github/workflows/release.yml`'s `android` job) alongside
+the existing desktop/server artifacts; the job is a no-op until a real
+signing keystore's secrets are added to the repo. Revisit Play Store
+distribution only if sideload friction turns out to matter in practice —
+`--aab` (Play Store's required bundle format) is a one-flag addition to the
+same `cargo tauri android build` invocation whenever that's decided.
 
 ---
 

@@ -79,6 +79,27 @@ cargo tauri dev      # from crates/librarium-tauri — dev with auto-reload
 cargo tauri build    # release desktop bundle
 ```
 
+### Android app
+
+Librarium's Android app is a thin sync client — it doesn't embed a server;
+pair it with a Librarium server you already run (see [Quick start](#quick-start)
+above). Distribution is sideload-only for now (see
+[docs/DESIGN.md](docs/DESIGN.md) for why): download the latest
+`Librarium-*-android-universal.apk` from the
+[Releases page](https://github.com/cyrex562/librarium/releases), then on
+your device:
+
+1. Open the downloaded APK (from your browser's downloads or a file
+   manager). Android will prompt to allow installs from that app if it's
+   the first time — allow it, install, then open Librarium.
+2. On first launch, pair with your Librarium server: enter its URL (e.g.
+   `https://librarium.example.com`) and an API key from that server's
+   admin settings.
+3. Map a local vault to a vault on the server to start syncing.
+
+Building it yourself: see `AGENTS.md`'s "Android build" and "Android
+release signing" sections.
+
 ---
 
 ## Repository layout
