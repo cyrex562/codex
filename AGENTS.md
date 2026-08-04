@@ -102,6 +102,11 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
   config file's own location), unlike desktop's build, which has no
   `beforeBuildCommand` at all (desktop's real UI is served by the embedded
   server, not Tauri's static-asset pipeline — see `docs/DESIGN.md`).
+  To build and install onto a connected device/emulator in one step
+  (replacing whatever's currently installed), use
+  `scripts/android-deploy.sh` instead of the raw `cargo tauri`/`adb`
+  commands above — `bash scripts/android-deploy.sh --help` for options
+  (target arch, `--release`, device serial when more than one is attached).
 - **Android release signing (#67)** — `gen/android/app/build.gradle.kts`'s
   `signingConfigs["release"]` reads a gitignored `keystore.properties` at
   the Android project root (`gen/android/keystore.properties` — see
