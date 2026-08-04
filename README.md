@@ -76,8 +76,35 @@ first login. See the [Deployment guide](docs/archive/DEPLOYMENT.md).
 
 ```bash
 cargo tauri dev      # from crates/librarium-tauri — dev with auto-reload
-cargo tauri build    # release desktop bundle
+cargo tauri build    # release desktop bundle (installer)
 ```
+
+#### Windows (via `cargo xtask`)
+
+`cargo xtask` (the `xtask/` crate, aliased in `.cargo/config.toml`) wraps
+the frontend + Tauri build into one command and works the same way on
+Windows, WSL, or Linux/macOS. Prerequisites: [Rust](https://rustup.rs) and
+[Node.js](https://nodejs.org); Windows 11 (and most Windows 10 installs)
+already has the WebView2 runtime Tauri needs — if not, get it from
+[Microsoft's WebView2 page](https://developer.microsoft.com/microsoft-edge/webview2/).
+
+From a PowerShell or Command Prompt at the repo root:
+
+```powershell
+cargo xtask build-desktop            # release build -> target\release\librarium-tauri.exe
+cargo xtask build-desktop --debug    # faster, unoptimized build
+cargo xtask run-desktop              # build, then launch it directly
+```
+
+This produces a runnable binary, not an installer — good for local testing
+without installing anything. For a distributable installer (NSIS `.exe`
+setup), use `cargo tauri build` instead (needs `cargo install tauri-cli`
+first) — that's what `.github/workflows/release.yml` produces for tagged
+releases, or you can run it yourself the same way on your own machine.
+
+`cargo xtask` has other subcommands too — run `cargo xtask help` (or see
+`xtask/src/main.rs`'s module doc) for `build-frontend` and the
+deploy/status/logs/doctor commands used for managing a remote server.
 
 ### Android app
 
