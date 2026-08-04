@@ -102,6 +102,7 @@ import {
   syncAddRemote,
   syncListRemotes,
   syncRemoveRemote,
+  tauriErrorMessage,
 } from '@/utils/tauri';
 import type { SyncRemoteDto } from '@/utils/tauri';
 
@@ -140,7 +141,7 @@ async function loadRemotes() {
   try {
     remotes.value = await syncListRemotes();
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to load sync remotes.';
+    error.value = tauriErrorMessage(e, 'Failed to load sync remotes.');
   } finally {
     loading.value = false;
   }
@@ -175,7 +176,7 @@ async function addRemote() {
     await loadRemotes();
     emit('changed');
   } catch (e: any) {
-    addError.value = e?.message ?? 'Failed to add sync remote.';
+    addError.value = tauriErrorMessage(e, 'Failed to add sync remote.');
   } finally {
     adding.value = false;
   }
@@ -193,7 +194,7 @@ async function removeRemote(remote: SyncRemoteDto) {
     await loadRemotes();
     emit('changed');
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to remove sync remote.';
+    error.value = tauriErrorMessage(e, 'Failed to remove sync remote.');
   } finally {
     removingId.value = null;
   }

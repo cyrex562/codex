@@ -63,6 +63,22 @@ export const isTauri = (): boolean =>
   ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
 
 /**
+ * Extract a human-readable message from a failed `invoke()` call.
+ *
+ * Tauri rejects with whatever the Rust command's `Err` value serializes to.
+ * Every command in this codebase returns `Result<T, String>`, so that
+ * rejection is a plain string — which has no `.message` property. Callers
+ * that wrote `e?.message ?? fallback` therefore always got `fallback`,
+ * silently discarding the real error text (e.g. "connection refused",
+ * "invalid API key") in favor of a generic message. Use this instead.
+ */
+export function tauriErrorMessage(e: unknown, fallback: string): string {
+  if (typeof e === 'string' && e) return e;
+  if (e instanceof Error && e.message) return e.message;
+  return fallback;
+}
+
+/**
  * Open a native directory picker dialog.
  *
  * Returns the selected directory path, or `null` when:

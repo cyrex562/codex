@@ -94,6 +94,7 @@ import {
   syncListRemoteVaults,
   syncCreateRemoteVault,
   syncMapVault,
+  tauriErrorMessage,
 } from '@/utils/tauri';
 import type { SyncRemoteDto } from '@/utils/tauri';
 import { apiListVaults } from '@/api/client';
@@ -153,7 +154,7 @@ async function loadRemotes() {
   try {
     remotes.value = await syncListRemotes();
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to load remotes.';
+    error.value = tauriErrorMessage(e, 'Failed to load remotes.');
   } finally {
     loadingRemotes.value = false;
   }
@@ -165,7 +166,7 @@ async function loadLocalVaults() {
   try {
     localVaults.value = await apiListVaults();
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to load local vaults.';
+    error.value = tauriErrorMessage(e, 'Failed to load local vaults.');
   } finally {
     loadingLocalVaults.value = false;
   }
@@ -181,7 +182,7 @@ async function onRemoteSelected(remoteId: string | null) {
   try {
     remoteVaults.value = await syncListRemoteVaults(remoteId);
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to load remote vaults.';
+    error.value = tauriErrorMessage(e, 'Failed to load remote vaults.');
   } finally {
     loadingRemoteVaults.value = false;
   }
@@ -198,7 +199,7 @@ async function createRemoteVault() {
     selectedRemoteVaultId.value = created.id;
     newRemoteVaultName.value = '';
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to create remote vault.';
+    error.value = tauriErrorMessage(e, 'Failed to create remote vault.');
   } finally {
     creatingRemoteVault.value = false;
   }
@@ -215,7 +216,7 @@ async function createMapping() {
     successMessage.value = 'Mapping created successfully.';
     emit('changed');
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to create mapping.';
+    error.value = tauriErrorMessage(e, 'Failed to create mapping.');
   } finally {
     creatingMapping.value = false;
   }
