@@ -52,6 +52,17 @@ router.beforeEach(async (to) => {
 
     const auth = useAuthStore();
 
+    // A server started with `auth.enabled = false` never bootstraps an admin
+    // account and skips auth enforcement on every route server-side (see
+    // librarium-server's AuthMiddleware) — so a login screen gated only on
+    // "is there a valid token" would deadlock here too: no token can ever be
+    // obtained. Bypass entirely, matching the server's own "no restrictions"
+    // behavior in this mode, rather than trying to reproduce admin/capability
+    // gating that doesn't map to "nobody is logged in."
+    if (!(await auth.checkServerAuthEnabled())) {
+        return true;
+    }
+
     if (to.meta.public) {
         if (to.name === 'login' && auth.isAuthenticated) {
             try {

@@ -8,6 +8,8 @@ vi.mock('@/api/client', () => ({
     apiMe: vi.fn(),
     apiChangePassword: vi.fn(),
     apiVerifyTotpLogin: vi.fn(),
+    apiOidcCallback: vi.fn(),
+    apiGetHealth: vi.fn(),
 }));
 
 vi.mock('@/utils/tauri', () => ({
@@ -21,6 +23,7 @@ import {
     apiRefreshToken,
     apiChangePassword,
     apiVerifyTotpLogin,
+    apiGetHealth,
 } from '@/api/client';
 import { isTauri } from '@/utils/tauri';
 import { useAuthStore } from './auth';
@@ -300,5 +303,61 @@ describe('useAuthStore', () => {
         expect(store.isAuthenticated).toBe(true);
         expect(store.profile).toEqual(mockProfile);
         expect(apiMe).toHaveBeenCalledTimes(1);
+    });
+
+    describe('checkServerAuthEnabled', () => {
+        it('returns true and caches it when the server reports auth enabled', async () => {
+            vi.mocked(apiGetHealth).mockResolvedValueOnce({
+                status: 'healthy',
+                database: 'connected',
+                auth_enabled: true,
+            });
+
+            const store = useAuthStore();
+            expect(await store.checkServerAuthEnabled()).toBe(true);
+            expect(await store.checkServerAuthEnabled()).toBe(true);
+            // Cached after the first call — no second /api/health round trip.
+            expect(apiGetHealth).toHaveBeenCalledTimes(1);
+        });
+
+        it('returns false when the server reports auth disabled', async () => {
+            vi.mocked(apiGetHealth).mockResolvedValueOnce({
+                status: 'healthy',
+                database: 'connected',
+                auth_enabled: false,
+            });
+
+            const store = useAuthStore();
+            expect(await store.checkServerAuthEnabled()).toBe(false);
+        });
+
+        it('fails closed (assumes auth is enabled) when the health check errors', async () => {
+            vi.mocked(apiGetHealth).mockRejectedValueOnce(new Error('network error'));
+
+            const store = useAuthStore();
+            expect(await store.checkServerAuthEnabled()).toBe(true);
+        });
+
+        it('de-duplicates concurrent calls into a single request', async () => {
+            let resolveHealth!: (value: {
+                status: string;
+                database: string;
+                auth_enabled: boolean;
+            }) => void;
+            vi.mocked(apiGetHealth).mockReturnValueOnce(
+                new Promise((resolve) => {
+                    resolveHealth = resolve;
+                }),
+            );
+
+            const store = useAuthStore();
+            const first = store.checkServerAuthEnabled();
+            const second = store.checkServerAuthEnabled();
+            resolveHealth({ status: 'healthy', database: 'connected', auth_enabled: false });
+
+            expect(await first).toBe(false);
+            expect(await second).toBe(false);
+            expect(apiGetHealth).toHaveBeenCalledTimes(1);
+        });
     });
 });
