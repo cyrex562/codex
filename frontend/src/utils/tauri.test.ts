@@ -22,6 +22,7 @@ import {
   pairingSet,
   pairingGet,
   pairingClear,
+  tauriErrorMessage,
 } from './tauri';
 
 // Mock the Tauri dialog plugin (dynamic import inside tauri.ts).
@@ -88,6 +89,32 @@ describe('isTauri', () => {
       configurable: true,
     });
     expect(isTauri()).toBe(true);
+  });
+});
+
+// ── tauriErrorMessage ────────────────────────────────────────────────────
+
+describe('tauriErrorMessage', () => {
+  it('returns the value directly when it is a non-empty string (Tauri invoke rejection)', () => {
+    expect(tauriErrorMessage('connection refused', 'fallback')).toBe('connection refused');
+  });
+
+  it('returns the fallback when the string is empty', () => {
+    expect(tauriErrorMessage('', 'fallback')).toBe('fallback');
+  });
+
+  it('returns .message when the value is an Error instance', () => {
+    expect(tauriErrorMessage(new Error('boom'), 'fallback')).toBe('boom');
+  });
+
+  it('returns the fallback for an Error with an empty message', () => {
+    expect(tauriErrorMessage(new Error(''), 'fallback')).toBe('fallback');
+  });
+
+  it('returns the fallback for null/undefined/other types', () => {
+    expect(tauriErrorMessage(null, 'fallback')).toBe('fallback');
+    expect(tauriErrorMessage(undefined, 'fallback')).toBe('fallback');
+    expect(tauriErrorMessage(42, 'fallback')).toBe('fallback');
   });
 });
 

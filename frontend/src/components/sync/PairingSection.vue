@@ -83,6 +83,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useSyncStore } from '@/stores/sync';
+import { tauriErrorMessage } from '@/utils/tauri';
 import VaultMappingSection from '@/components/settings/sync/VaultMappingSection.vue';
 
 const syncStore = useSyncStore();
@@ -109,7 +110,7 @@ async function doPair() {
     // Never keep the API key around after entry (#54).
     apiKey.value = '';
   } catch (e: any) {
-    pairError.value = e?.message ?? 'Failed to pair with the server.';
+    pairError.value = tauriErrorMessage(e, 'Failed to pair with the server.');
   } finally {
     pairing.value = false;
   }
@@ -126,7 +127,7 @@ async function doUnpair() {
     await syncStore.unpair();
     showMapAnother.value = false;
   } catch (e: any) {
-    unpairError.value = e?.message ?? 'Failed to unpair.';
+    unpairError.value = tauriErrorMessage(e, 'Failed to unpair.');
   } finally {
     unpairing.value = false;
   }

@@ -139,6 +139,7 @@ import {
   syncGetPolicy,
   syncSetPolicy,
   syncReconcileOnce,
+  tauriErrorMessage as errorMessage,
 } from '@/utils/tauri';
 import type { SyncVaultStatus, SyncVaultState, SyncPolicy } from '@/utils/tauri';
 
@@ -154,15 +155,6 @@ const unmappingId = ref<string | null>(null);
 const reconciling = ref(false);
 const policy = ref<SyncPolicy>({ wifi_only: true, battery_threshold: 20 });
 const error = ref('');
-
-/** Tauri command errors reject with a plain string, not an `Error` — this
- * repo's other sync-settings components have the `e?.message` bug (#92);
- * new code here avoids it rather than adding to it. */
-function errorMessage(e: unknown, fallback: string): string {
-  if (e instanceof Error) return e.message;
-  if (typeof e === 'string') return e;
-  return fallback;
-}
 
 let pollHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -201,7 +193,7 @@ async function loadStatus(showSpinner = false) {
     statuses.value = await syncStatus();
     error.value = '';
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to load sync status.';
+    error.value = errorMessage(e, 'Failed to load sync status.');
   } finally {
     if (showSpinner) loading.value = false;
   }
@@ -218,7 +210,7 @@ async function startSync() {
     await syncStart();
     await loadStatus();
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to start sync.';
+    error.value = errorMessage(e, 'Failed to start sync.');
   } finally {
     starting.value = false;
   }
@@ -231,7 +223,7 @@ async function stopSync() {
     await syncStop();
     await loadStatus();
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to stop sync.';
+    error.value = errorMessage(e, 'Failed to stop sync.');
   } finally {
     stopping.value = false;
   }
@@ -282,7 +274,7 @@ async function unmapVault(item: SyncVaultStatus) {
     await syncUnmapVault(item.remote_id, item.local_vault_id);
     await loadStatus();
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to unmap vault.';
+    error.value = errorMessage(e, 'Failed to unmap vault.');
   } finally {
     unmappingId.value = null;
   }

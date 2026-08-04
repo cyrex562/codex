@@ -69,7 +69,7 @@ import { useSyncStore } from '@/stores/sync';
 import { useVaultsStore } from '@/stores/vaults';
 import { useFilesStore } from '@/stores/files';
 import { useTabsStore } from '@/stores/tabs';
-import { mobileFileDelete, mobileFileRename } from '@/utils/tauri';
+import { mobileFileDelete, mobileFileRename, tauriErrorMessage } from '@/utils/tauri';
 import type { ConflictFile } from '@/stores/sync';
 
 const emit = defineEmits<{ 'file-opened': [] }>();
@@ -101,7 +101,7 @@ async function refresh() {
   try {
     await syncStore.scanConflicts();
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to scan for conflicts.';
+    error.value = tauriErrorMessage(e, 'Failed to scan for conflicts.');
   } finally {
     scanning.value = false;
   }
@@ -144,7 +144,7 @@ async function resolveKeep(c: ConflictFile) {
     await mobileFileRename(c.vaultId, c.path, c.originalPath);
     await afterResolve(c.vaultId);
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to resolve conflict.';
+    error.value = tauriErrorMessage(e, 'Failed to resolve conflict.');
   } finally {
     resolvingKey.value = null;
   }
@@ -157,7 +157,7 @@ async function resolveDiscard(c: ConflictFile) {
     await mobileFileDelete(c.vaultId, c.path);
     await afterResolve(c.vaultId);
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to resolve conflict.';
+    error.value = tauriErrorMessage(e, 'Failed to resolve conflict.');
   } finally {
     resolvingKey.value = null;
   }

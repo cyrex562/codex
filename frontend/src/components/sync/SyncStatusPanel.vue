@@ -66,6 +66,7 @@ import { ref } from 'vue';
 import { useSyncStore } from '@/stores/sync';
 import { useVaultsStore } from '@/stores/vaults';
 import { stateColor, stateLabel, stateIcon } from '@/utils/syncStateDisplay';
+import { tauriErrorMessage } from '@/utils/tauri';
 
 const syncStore = useSyncStore();
 const vaultsStore = useVaultsStore();
@@ -89,7 +90,7 @@ async function start() {
   try {
     await syncStore.startSync();
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to start sync.';
+    error.value = tauriErrorMessage(e, 'Failed to start sync.');
   } finally {
     starting.value = false;
   }
@@ -101,7 +102,7 @@ async function stop() {
   try {
     await syncStore.stopSync();
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to stop sync.';
+    error.value = tauriErrorMessage(e, 'Failed to stop sync.');
   } finally {
     stopping.value = false;
   }
