@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import { apiLogin, apiRefreshToken, apiLogout, apiMe, apiChangePassword, apiVerifyTotpLogin, apiOidcCallback } from '@/api/client';
+import { apiLogin, apiRefreshToken, apiLogout, apiMe, apiChangePassword, apiVerifyTotpLogin, apiOidcCallback, apiGetHealth } from '@/api/client';
 import type { LoginResponse, AuthenticatedUserProfile } from '@/api/types';
 import { isTauri } from '@/utils/tauri';
 import { getLogger } from '@/utils/logger';
@@ -209,6 +209,42 @@ export const useAuthStore = defineStore('auth', () => {
         }
     }
 
+    // Cached across calls in this tab — `/api/health` is cheap but there is no
+    // reason to hit it on every navigation once we know the answer.  `null`
+    // means "not yet checked"; the router guard awaits this before its first
+    // decision.
+    const serverAuthEnabled = ref<boolean | null>(null);
+    let serverAuthEnabledPromise: Promise<boolean> | null = null;
+
+    // Whether the server this desktop/browser build talks to enforces auth at
+    // all. A server started with `auth.enabled = false` never bootstraps an
+    // admin account (see `librarium-server`'s `lib.rs::run`), so a login
+    // screen gated only on "is there a valid token" would deadlock — no token
+    // can ever be obtained. The router guard uses this to bypass login
+    // entirely in that case, mirroring how the local (mobile) transport
+    // bypasses it for its own, unrelated reason.
+    async function checkServerAuthEnabled(): Promise<boolean> {
+        if (serverAuthEnabled.value !== null) return serverAuthEnabled.value;
+        serverAuthEnabledPromise ??= apiGetHealth()
+            .then((health) => {
+                serverAuthEnabled.value = health.auth_enabled;
+                return health.auth_enabled;
+            })
+            .catch((err) => {
+                log.warn('checkServerAuthEnabled: /api/health failed — assuming auth is enabled', {
+                    message: (err as Error)?.message ?? String(err),
+                });
+                // Fail closed: if we can't tell, keep requiring login rather
+                // than accidentally granting unauthenticated access.
+                serverAuthEnabled.value = true;
+                return true;
+            })
+            .finally(() => {
+                serverAuthEnabledPromise = null;
+            });
+        return serverAuthEnabledPromise;
+    }
+
     async function changePassword(currentPassword: string, newPassword: string) {
         await apiChangePassword({
             current_password: currentPassword,
@@ -245,5 +281,7 @@ export const useAuthStore = defineStore('auth', () => {
         loadProfile,
         changePassword,
         flagPendingTotp,
+        serverAuthEnabled,
+        checkServerAuthEnabled,
     };
 });

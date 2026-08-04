@@ -293,6 +293,20 @@ async function getAuthHeaders(url: string): Promise<Record<string, string>> {
     return {};
 }
 
+// ── Health ───────────────────────────────────────────────────────────────────
+
+export interface HealthStatus {
+    status: string;
+    database: string;
+    /** Whether the server enforces auth — see `stores/auth.ts`'s
+     * `checkServerAuthEnabled` for why the frontend needs to know this before
+     * deciding whether to show the login screen at all. */
+    auth_enabled: boolean;
+}
+
+export const apiGetHealth = (): Promise<HealthStatus> =>
+    request('/api/health');
+
 // ── Vaults ───────────────────────────────────────────────────────────────────
 
 export const apiListVaults = (): Promise<Vault[]> =>

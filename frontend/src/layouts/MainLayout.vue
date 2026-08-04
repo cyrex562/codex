@@ -220,7 +220,15 @@ onMounted(async () => {
   // remote credentials live in Rust secure storage, never the WebView) —
   // same reasoning `ensureFreshForRequest` in api/client.ts already applies
   // per-request. There is nothing to refresh/load and no HTTP server to ask.
-  if (!isLocalMode) {
+  //
+  // A server with auth disabled never sets an `AuthenticatedUser` on the
+  // request (librarium-server's AuthMiddleware skips that step entirely in
+  // this mode — see `checkServerAuthEnabled`'s doc comment), so `/api/auth/me`
+  // always 401s here regardless of the router guard already having let this
+  // navigation through. Skip the profile load rather than bouncing back to
+  // /login over a call that can never succeed.
+  const authRequired = !isLocalMode && (await authStore.checkServerAuthEnabled());
+  if (authRequired) {
     try {
       await authStore.ensureFresh();
       await authStore.loadProfile();
