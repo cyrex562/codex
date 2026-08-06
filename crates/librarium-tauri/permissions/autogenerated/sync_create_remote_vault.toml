@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sync-create-remote-vault"
+description = "Enables the sync_create_remote_vault command without any pre-configured scope."
+commands.allow = ["sync_create_remote_vault"]
+
+[[permission]]
+identifier = "deny-sync-create-remote-vault"
+description = "Denies the sync_create_remote_vault command without any pre-configured scope."
+commands.deny = ["sync_create_remote_vault"]

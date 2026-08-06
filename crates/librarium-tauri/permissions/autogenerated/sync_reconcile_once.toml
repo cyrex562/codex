@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sync-reconcile-once"
+description = "Enables the sync_reconcile_once command without any pre-configured scope."
+commands.allow = ["sync_reconcile_once"]
+
+[[permission]]
+identifier = "deny-sync-reconcile-once"
+description = "Denies the sync_reconcile_once command without any pre-configured scope."
+commands.deny = ["sync_reconcile_once"]

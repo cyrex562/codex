@@ -13,6 +13,21 @@
     "notification:allow-request-permission",
     "notification:allow-notify",
     "notification:allow-is-permission-granted",
-    "deep-link:default"
+    "deep-link:default",
+    "allow-open-directory-dialog",
+    "allow-notify",
+    "allow-open-external-url",
+    "allow-frontend-log",
+    "allow-frontend-log-path",
+    "allow-sync-add-remote",
+    "allow-sync-map-vault",
+    "allow-sync-list-remotes",
+    "allow-sync-list-remote-vaults",
+    "allow-sync-create-remote-vault",
+    "allow-sync-remove-remote",
+    "allow-sync-unmap-vault",
+    "allow-sync-status",
+    "allow-sync-start",
+    "allow-sync-stop"
   ]
 }

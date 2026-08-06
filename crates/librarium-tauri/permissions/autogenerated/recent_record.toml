@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recent-record"
+description = "Enables the recent_record command without any pre-configured scope."
+commands.allow = ["recent_record"]
+
+[[permission]]
+identifier = "deny-recent-record"
+description = "Denies the recent_record command without any pre-configured scope."
+commands.deny = ["recent_record"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-frontmatter-read"
+description = "Enables the frontmatter_read command without any pre-configured scope."
+commands.allow = ["frontmatter_read"]
+
+[[permission]]
+identifier = "deny-frontmatter-read"
+description = "Denies the frontmatter_read command without any pre-configured scope."
+commands.deny = ["frontmatter_read"]

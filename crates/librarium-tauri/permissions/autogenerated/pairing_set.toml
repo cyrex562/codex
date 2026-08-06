@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pairing-set"
+description = "Enables the pairing_set command without any pre-configured scope."
+commands.allow = ["pairing_set"]
+
+[[permission]]
+identifier = "deny-pairing-set"
+description = "Denies the pairing_set command without any pre-configured scope."
+commands.deny = ["pairing_set"]

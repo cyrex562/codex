@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-frontend-log-path"
+description = "Enables the frontend_log_path command without any pre-configured scope."
+commands.allow = ["frontend_log_path"]
+
+[[permission]]
+identifier = "deny-frontend-log-path"
+description = "Denies the frontend_log_path command without any pre-configured scope."
+commands.deny = ["frontend_log_path"]

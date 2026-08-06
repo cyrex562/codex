@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sync-map-vault"
+description = "Enables the sync_map_vault command without any pre-configured scope."
+commands.allow = ["sync_map_vault"]
+
+[[permission]]
+identifier = "deny-sync-map-vault"
+description = "Denies the sync_map_vault command without any pre-configured scope."
+commands.deny = ["sync_map_vault"]

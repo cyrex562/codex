@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pairing-get"
+description = "Enables the pairing_get command without any pre-configured scope."
+commands.allow = ["pairing_get"]
+
+[[permission]]
+identifier = "deny-pairing-get"
+description = "Denies the pairing_get command without any pre-configured scope."
+commands.deny = ["pairing_get"]

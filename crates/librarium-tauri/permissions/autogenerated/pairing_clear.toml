@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pairing-clear"
+description = "Enables the pairing_clear command without any pre-configured scope."
+commands.allow = ["pairing_clear"]
+
+[[permission]]
+identifier = "deny-pairing-clear"
+description = "Denies the pairing_clear command without any pre-configured scope."
+commands.deny = ["pairing_clear"]

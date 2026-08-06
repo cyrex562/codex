@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sync-remove-remote"
+description = "Enables the sync_remove_remote command without any pre-configured scope."
+commands.allow = ["sync_remove_remote"]
+
+[[permission]]
+identifier = "deny-sync-remove-remote"
+description = "Denies the sync_remove_remote command without any pre-configured scope."
+commands.deny = ["sync_remove_remote"]
