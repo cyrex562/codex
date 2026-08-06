@@ -180,6 +180,7 @@ This repository is a Rust workspace for a self-hosted Obsidian-compatible knowle
 - Search index consistency: `crates/librarium-core/src/search_service.rs` (re-exported as `librarium::services::search_service`)
 - Reindex and entity sync: `crates/librarium-server/src/services/reindex_service.rs`
 - Frontend editor state and tab behavior: `frontend/src/stores`, `frontend/src/components/editor`, `frontend/src/components/tabs`
+- Tauri command ACL: every `#[tauri::command]` reachable via `invoke()` (desktop's `crates/librarium-tauri/src/lib.rs` and `crates/librarium-mobile/src/commands.rs`) must be listed in `crates/librarium-tauri/build.rs`'s `COMMANDS` const *and* have its generated `allow-<kebab-case-name>` permission referenced in `crates/librarium-tauri/capabilities/default.json` (desktop) or `mobile.json` (mobile-only commands). Missing either step means Tauri silently denies every call to that command in release builds ("Command X not allowed by ACL") — this bit the whole `sync_*`/`pairing_*`/local-dispatcher command surface at once before it was caught. `cargo build -p librarium-tauri` fails loudly if a capability references a permission that doesn't exist, but adding a *new* command with no capability entry at all builds cleanly and fails only at runtime — there's no build-time check for that omission, so don't rely on the build succeeding as proof a new command is reachable.
 
 ## Documentation Guardrails
 

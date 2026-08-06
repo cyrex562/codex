@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-render-markdown-in-vault"
+description = "Enables the render_markdown_in_vault command without any pre-configured scope."
+commands.allow = ["render_markdown_in_vault"]
+
+[[permission]]
+identifier = "deny-render-markdown-in-vault"
+description = "Denies the render_markdown_in_vault command without any pre-configured scope."
+commands.deny = ["render_markdown_in_vault"]
