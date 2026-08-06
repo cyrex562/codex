@@ -23,6 +23,10 @@ const obsidianDark = {
         success: '#22c55e',
         warning: '#f59e0b',
         border: '#27272a',      // --border-color (Zinc 800)
+        tag: '#8dd3ff',          // inline #tag accent
+        'inline-code': '#f5d08a', // inline `code` accent — NOT `code`, which
+        // collides with Vuetify's own reserved VCode semantic color and gets
+        // silently overridden by its built-in default.
     },
 };
 
@@ -45,6 +49,8 @@ const obsidianLight = {
         success: '#22c55e',
         warning: '#f59e0b',
         border: '#e5e7eb',
+        tag: '#0369a1',          // inline #tag accent (contrast-tuned for white bg)
+        'inline-code': '#92400e', // inline `code` accent (contrast-tuned for white bg)
     },
 };
 

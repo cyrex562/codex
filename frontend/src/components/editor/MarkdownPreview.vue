@@ -213,7 +213,7 @@ function isExternalUrl(href: string): boolean {
   top: 8px;
   right: 8px;
   border: 1px solid rgb(var(--v-theme-border));
-  background: rgba(10, 10, 10, 0.85);
+  background: rgba(var(--v-theme-surface), 0.92);
   color: rgb(var(--v-theme-on-background));
   border-radius: 6px;
   padding: 2px 8px;

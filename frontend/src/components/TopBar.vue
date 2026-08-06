@@ -54,10 +54,10 @@
           @click="emit('open-plugins')"
         />
         <v-btn
-          icon="mdi-help-circle-outline"
+          :icon="prefsStore.prefs.theme === 'dark' ? 'mdi-white-balance-sunny' : 'mdi-weather-night'"
           size="small"
           density="compact"
-          title="Theme"
+          :title="prefsStore.prefs.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'"
           data-testid="topbar-theme-btn"
           @click="toggleTheme"
         />
