@@ -938,17 +938,17 @@ defineExpose({ applyCommand, callUndo, callRedo, collapseAllFolds, expandAllFold
 }
 
 .markdown-editor.is-formatted-mode :deep(.editor-md-tag) {
-  color: #8dd3ff;
-  background: rgba(141, 211, 255, 0.12);
-  border: 1px solid rgba(141, 211, 255, 0.2);
+  color: rgb(var(--v-theme-tag));
+  background: rgba(var(--v-theme-tag), 0.12);
+  border: 1px solid rgba(var(--v-theme-tag), 0.2);
   border-radius: 0.42em;
   padding: 0.03em 0.3em;
 }
 
 .markdown-editor.is-formatted-mode :deep(.editor-md-inline-code) {
-  color: #f5d08a;
-  background: rgba(245, 208, 138, 0.12);
-  border: 1px solid rgba(245, 208, 138, 0.16);
+  color: rgb(var(--v-theme-inline-code));
+  background: rgba(var(--v-theme-inline-code), 0.12);
+  border: 1px solid rgba(var(--v-theme-inline-code), 0.16);
   border-radius: 0.4em;
   padding: 0.06em 0.32em;
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;

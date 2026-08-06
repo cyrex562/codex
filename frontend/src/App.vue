@@ -55,18 +55,6 @@ onMounted(async () => {
 </script>
 
 <style>
-:root {
-  --bg-primary: #111111;
-  --bg-secondary: #0a0a0a;
-  --bg-tertiary: #2a2a2a;
-  --text-primary: #e5e7eb;
-  --text-secondary: #9ca3af;
-  --border-color: #27272a;
-  --accent-color: #5b83f5;
-  --accent-hover: #5bc0f5;
-  --error-color: #ef4444;
-}
-
 /* Global resets — keep Obsidian feel inside Vuetify */
 html, body {
   overflow: hidden;
@@ -78,8 +66,8 @@ html, body {
 }
 
 body {
-  background: var(--bg-primary);
-  color: var(--text-primary);
+  background: rgb(var(--v-theme-background));
+  color: rgb(var(--v-theme-on-background));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -119,7 +107,7 @@ body {
 }
 
 .text-secondary {
-  color: var(--text-secondary) !important;
+  color: rgb(var(--v-theme-secondary)) !important;
 }
 
 /* Rendered markdown content */
@@ -129,7 +117,7 @@ body {
 }
 .markdown-body p { margin-bottom: 0.8em; }
 .markdown-body code {
-  background: rgba(91, 131, 245, 0.12);
+  background: rgba(var(--v-theme-primary), 0.12);
   border-radius: 3px;
   padding: 0.1em 0.35em;
   font-size: 0.88em;
@@ -139,31 +127,31 @@ body {
   padding: 0;
 }
 .markdown-body pre {
-  background: #0a0a0a;
-  border: 1px solid #27272a;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgb(var(--v-theme-border));
   border-radius: 6px;
   padding: 1em;
   overflow-x: auto;
   margin-bottom: 1em;
 }
 .markdown-body blockquote {
-  border-left: 3px solid #5b83f5;
+  border-left: 3px solid rgb(var(--v-theme-primary));
   margin: 0.5em 0;
   padding: 0.25em 1em;
-  color: #9ca3af;
+  color: rgb(var(--v-theme-secondary));
 }
 .markdown-body a {
-  color: #5b83f5;
+  color: rgb(var(--v-theme-primary));
   text-decoration: none;
 }
 .markdown-body a:hover {
-  color: #5bc0f5;
   text-decoration: underline;
+  filter: brightness(1.15);
 }
 .markdown-body table { border-collapse: collapse; width: 100%; margin-bottom: 1em; }
 .markdown-body th, .markdown-body td {
-  border: 1px solid #27272a;
+  border: 1px solid rgb(var(--v-theme-border));
   padding: 0.5em 0.75em;
 }
-.markdown-body th { background: #1a1a1a; }
+.markdown-body th { background: rgb(var(--v-theme-surface-light)); }
 </style>
