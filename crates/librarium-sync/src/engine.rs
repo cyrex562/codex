@@ -672,6 +672,18 @@ impl VaultSync {
         remote: Option<String>,
         decision: Decision,
     ) -> Result<(), SyncError> {
+        // Set to false when the remote copy we intended to pull has vanished
+        // between when we learned its hash (manifest / change-log entry) and
+        // when we actually downloaded it — a real race, not a bug, especially
+        // under flaky connectivity. In that case the hash we were about to
+        // record as the agreed base was never actually fetched, so persisting
+        // it would wedge every future reconcile pass into repeating the same
+        // 404 forever (see the loops in full_reconcile/pull_changes/
+        // drain_outbox, which now also tolerate a single path failing without
+        // aborting the whole batch — this handles the specific "why does it
+        // 404 on the exact same file forever" case explicitly).
+        let mut persist_base = true;
+
         match decision.action {
             Action::Noop | Action::AdoptBase => {}
             Action::PushUpsert => {
@@ -702,45 +714,64 @@ impl VaultSync {
                 let client = self.client.clone();
                 let vault = self.remote_vault_id.clone();
                 let p = path.to_string();
-                let bytes = with_retry("download", move || {
+                let result = with_retry("download", move || {
                     let client = client.clone();
                     let vault = vault.clone();
                     let p = p.clone();
                     async move { client.download_file_bytes(&vault, &p).await }
                 })
-                .await?;
-                self.write_local(path, &bytes)?;
+                .await;
+                match result {
+                    Ok(bytes) => self.write_local(path, &bytes)?,
+                    Err(SyncError::Client(e)) if is_not_found(&e) => {
+                        warn!(
+                            "sync: pull of {path} 404'd (remote file vanished before download) — \
+                             treating as absent and re-evaluating next pass"
+                        );
+                        self.remote_hashes.remove(path);
+                        persist_base = false;
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             Action::PullDelete => {
                 self.delete_local(path)?;
             }
             Action::Conflict { winner } => {
-                self.apply_conflict(path, local, remote, winner).await?;
+                persist_base = self.apply_conflict(path, local, remote, winner).await?;
             }
         }
 
-        // Persist the agreed base for this path.
-        self.store
-            .set_base_hash(
-                &self.remote_id,
-                &self.local_vault_id,
-                path,
-                decision.new_base.as_deref(),
-            )
-            .await?;
+        // Persist the agreed base for this path, unless a 404 above means we
+        // never actually reached the state `decision.new_base` describes.
+        if persist_base {
+            self.store
+                .set_base_hash(
+                    &self.remote_id,
+                    &self.local_vault_id,
+                    path,
+                    decision.new_base.as_deref(),
+                )
+                .await?;
+        }
         Ok(())
     }
 
     /// Keep-both conflict resolution. The winner takes the canonical path; the
     /// loser's content (if any) is preserved in a `conflict_*` sibling that is
     /// itself queued for the other side, so neither machine loses data.
+    ///
+    /// Returns whether the caller should persist `decision.new_base` for
+    /// `path` — `false` when the remote copy we intended to pull as the
+    /// winner vanished (404) between the reconcile decision and this
+    /// download, mirroring `apply`'s `PullUpsert` handling of the same race.
     async fn apply_conflict(
         &mut self,
         path: &str,
         local: Option<String>,
         _remote: Option<String>,
         winner: ConflictWinner,
-    ) -> Result<(), SyncError> {
+    ) -> Result<bool, SyncError> {
         match winner {
             ConflictWinner::Remote => {
                 // Preserve the local copy (if present) as a conflict sibling and
@@ -768,11 +799,22 @@ impl VaultSync {
                         )
                         .await?;
                 }
-                let remote_bytes = self
+                match self
                     .client
                     .download_file_bytes(&self.remote_vault_id, path)
-                    .await?;
-                self.write_local(path, &remote_bytes)?;
+                    .await
+                {
+                    Ok(remote_bytes) => self.write_local(path, &remote_bytes)?,
+                    Err(e) if is_not_found(&e) => {
+                        warn!(
+                            "sync: conflict-winning pull of {path} 404'd (remote file vanished \
+                             before download) — leaving local as-is and re-evaluating next pass"
+                        );
+                        self.remote_hashes.remove(path);
+                        return Ok(false);
+                    }
+                    Err(e) => return Err(e.into()),
+                }
             }
             ConflictWinner::Local => {
                 // Local edit beat a remote deletion: resurrect it on the remote.
@@ -785,7 +827,7 @@ impl VaultSync {
                 }
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     // ── Local filesystem helpers ────────────────────────────────────────────
@@ -923,6 +965,18 @@ fn is_transient(e: &librarium_client::ClientError) -> bool {
     }
 }
 
+/// True when the remote returned 404 for a file we expected to be there —
+/// the manifest/change-log entry that told us to pull it is stale (the file
+/// was deleted or renamed remotely a moment later, most often under flaky
+/// connectivity). Not `is_transient`: retrying the same request won't help,
+/// the caller needs to treat the file as absent instead.
+fn is_not_found(e: &librarium_client::ClientError) -> bool {
+    matches!(
+        e,
+        librarium_client::ClientError::ApiError { status: 404, .. }
+    )
+}
+
 /// Walk a vault directory and return every syncable file's vault-relative path,
 /// skipping dot-entries (matching the server manifest and watcher).
 fn local_file_paths(vault_path: &Path) -> Vec<String> {
@@ -1001,6 +1055,133 @@ mod tests {
         assert!(conflict_name("README").starts_with("conflict_README_"));
         let n = conflict_name("img.png");
         assert!(n.starts_with("conflict_img_") && n.ends_with(".png"));
+    }
+
+    #[test]
+    fn is_not_found_matches_only_404_api_errors() {
+        let not_found = librarium_client::ClientError::ApiError {
+            status: 404,
+            message: "File not found: x".to_string(),
+        };
+        assert!(is_not_found(&not_found));
+
+        let forbidden = librarium_client::ClientError::ApiError {
+            status: 403,
+            message: "nope".to_string(),
+        };
+        assert!(!is_not_found(&forbidden));
+
+        let server_error = librarium_client::ClientError::Server("boom".to_string());
+        assert!(!is_not_found(&server_error));
+    }
+
+    /// Minimal one-shot-per-connection HTTP mock: accepts a connection, reads
+    /// (and discards) the request, and always replies 404 — just enough to
+    /// drive a real `ClientError::ApiError { status: 404, .. }` through
+    /// `ObsidianClient::download_file_bytes` without standing up a real
+    /// librarium-server.
+    async fn spawn_404_server() -> std::net::SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf).await;
+                    let body =
+                        br#"{"error":"NOT_FOUND","message":"File not found: cursed circuits"}"#;
+                    let response = format!(
+                        "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.write_all(body).await;
+                    let _ = stream.shutdown().await;
+                });
+            }
+        });
+        addr
+    }
+
+    /// The bug this reproduces: a manifest/change-log entry says the remote
+    /// has a newer version of `path`, but by the time the download actually
+    /// happens the remote 404s (deleted/renamed a moment later — exactly what
+    /// flaky connectivity on a train makes likely). Before this fix, that 404
+    /// propagated as a hard error out of `reconcile_path`, which aborted the
+    /// whole pass *and*, in `pull_changes`, left `last_seq` stuck before this
+    /// entry — so every subsequent reconcile re-fetched the same change-log
+    /// page, hit the same file, and failed the same way forever.
+    #[tokio::test]
+    async fn pull_upsert_404_is_absorbed_not_propagated() {
+        let addr = spawn_404_server().await;
+        let vault_dir = tempfile::tempdir().unwrap();
+        let path = "notes/cursed-circuits.md";
+        let local_bytes = b"original local content";
+        let local_abs = vault_dir.path().join(path);
+        std::fs::create_dir_all(local_abs.parent().unwrap()).unwrap();
+        std::fs::write(&local_abs, local_bytes).unwrap();
+        let base_hash = hash_bytes(local_bytes);
+
+        let store = SyncStore::open_in_memory().await.unwrap();
+        store
+            .set_base_hash("r1", "v1", path, Some(&base_hash))
+            .await
+            .unwrap();
+
+        let client = ObsidianClient::for_cloud(format!("http://{addr}")).with_api_key("test-key");
+
+        let (_local_tx, local_rx) = mpsc::unbounded_channel();
+        let mut remote_hashes = HashMap::new();
+        // Simulates a manifest/change-log entry claiming the remote moved on —
+        // this is what's stale once the download itself 404s.
+        remote_hashes.insert(path.to_string(), "some-newer-remote-hash".to_string());
+
+        let mut vault = VaultSync {
+            store: store.clone(),
+            client,
+            remote_id: "r1".to_string(),
+            local_vault_id: "v1".to_string(),
+            local_vault_path: vault_dir.path().to_path_buf(),
+            remote_vault_id: "remote-vault".to_string(),
+            suppressor: Suppressor::new(),
+            local_rx,
+            remote_hashes,
+            last_seq: 0,
+            status: Arc::new(Mutex::new(HashMap::new())),
+            status_key: ("r1".to_string(), "v1".to_string()),
+        };
+
+        // Local unchanged + remote "changed" relative to base is exactly what
+        // reconcile() turns into a PullUpsert — the decision this test needs
+        // to exercise the 404-during-download path.
+        let result = vault.reconcile_path(path).await;
+        assert!(
+            result.is_ok(),
+            "a 404 during pull must not propagate as a hard error: {result:?}"
+        );
+
+        // The stale remote hash must NOT have been adopted as the new base —
+        // it describes content that was never actually fetched.
+        let persisted_base = store.get_base_hash("r1", "v1", path).await.unwrap();
+        assert_eq!(
+            persisted_base.as_deref(),
+            Some(base_hash.as_str()),
+            "base hash must be left untouched, not advanced to the stale remote hash"
+        );
+
+        // The bogus entry must be gone so the next pass re-derives fresh
+        // instead of repeating the same 404 forever.
+        assert!(!vault.remote_hashes.contains_key(path));
+
+        // Local content must be untouched — nothing was actually downloaded.
+        let on_disk = std::fs::read(&local_abs).unwrap();
+        assert_eq!(on_disk, local_bytes);
     }
 
     #[tokio::test]
