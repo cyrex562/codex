@@ -3,6 +3,9 @@
   "identifier": "default",
   "description": "Default capability set for the Librarium desktop app",
   "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
   "permissions": [
     "core:default",
     "dialog:allow-open",
