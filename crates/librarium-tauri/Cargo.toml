@@ -80,6 +80,13 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # resolution).
 dirs = "5"
 
+# Platform secure storage for a sync remote's API key (secrets.rs) — Keychain
+# on macOS, Credential Manager on Windows, Secret Service on Linux, via the
+# `v1` default feature's automatic backend detection. No Android-Keystore
+# feature needed (unlike librarium-mobile's same dependency) since this
+# whole block is already excluded from Android/iOS builds.
+keyring = "4"
+
 # Mobile-only: background reconcile service (#64) — `MobileSyncService` in
 # background_sync.rs. `tauri-plugin-background-service` runs its
 # `BackgroundService::run()` loop inside an Android foreground service

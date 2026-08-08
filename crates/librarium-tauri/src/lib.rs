@@ -54,6 +54,8 @@ mod headless_bridge_stub;
 #[cfg(desktop)]
 mod paths;
 #[cfg(desktop)]
+mod secrets;
+#[cfg(desktop)]
 mod sync_bridge;
 
 use anyhow::Context;
@@ -63,6 +65,7 @@ use tauri::{AppHandle, Manager};
 use {
     librarium::config::AppConfig,
     paths::{create_dirs, resolve_paths},
+    secrets::OsKeyringStore,
     sync_bridge::{RemoteDto, SyncHandle},
     tauri::menu::{Menu, MenuItem, PredefinedMenuItem},
     tauri::tray::{TrayIconBuilder, TrayIconEvent},
@@ -498,7 +501,7 @@ fn run_setup(app: &mut tauri::App) -> anyhow::Result<()> {
     //    resolved from librarium.db.
     let sync_db_path = paths.data_dir.join("sync.db");
     let db_url = format!("sqlite:{}", config.database.path);
-    let sync_handle = SyncHandle::new(sync_db_path, db_url);
+    let sync_handle = SyncHandle::new(sync_db_path, db_url, std::sync::Arc::new(OsKeyringStore));
     app.manage(sync_handle.clone());
 
     let remotes = config.sync.remotes.clone();
