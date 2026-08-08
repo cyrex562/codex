@@ -4,13 +4,13 @@
 //! can be resolved from `librarium.db`) and then held in Tauri managed state so
 //! the `sync_*` commands can drive it.
 
+use crate::secrets::SecretStore;
 use anyhow::Context;
 use librarium::config::SyncRemoteConfig;
 use librarium::db::Database;
 use librarium_sync::{ApiKeyProvider, SyncEngine, VaultStatus};
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
@@ -30,28 +30,31 @@ pub struct SyncHandle {
     /// `sqlite:`-prefixed URL of the embedded server's database, for resolving
     /// local vault ids to filesystem paths.
     db_url: String,
-    /// In-memory API-key cache the engine's [`ApiKeyProvider`] reads from.
-    /// Desktop has no secure-storage integration yet (`config.toml` already
-    /// holds these remotes' keys in plaintext, same as before this existed),
-    /// so this preserves current behavior while satisfying librarium-sync's
-    /// key-provider API — it no longer persists the key into `sync.db` on
-    /// top of `config.toml`, which is a small improvement, not a regression.
-    keys: Arc<StdMutex<HashMap<String, String>>>,
+    /// Durable per-remote API-key storage the engine's [`ApiKeyProvider`]
+    /// reads from — the platform credential store in production
+    /// (`secrets::OsKeyringStore`), an in-memory stand-in in tests. A remote
+    /// added via `add_remote` (the "Add remote" UI dialog) previously only
+    /// ever had its key cached in an in-memory `HashMap`, which vanished on
+    /// every app restart even though the remote's *existence* in `sync.db`
+    /// persisted — leaving a permanently-broken remote behind that needed
+    /// manual `config.toml` surgery to fix. This makes the key durable the
+    /// same way `librarium-mobile`'s pairing key already is.
+    secrets: Arc<dyn SecretStore>,
 }
 
 impl SyncHandle {
-    pub fn new(sync_db_path: PathBuf, db_url: String) -> Self {
+    pub fn new(sync_db_path: PathBuf, db_url: String, secrets: Arc<dyn SecretStore>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(None)),
             sync_db_path,
             db_url,
-            keys: Arc::new(StdMutex::new(HashMap::new())),
+            secrets,
         }
     }
 
     fn key_provider(&self) -> ApiKeyProvider {
-        let keys = self.keys.clone();
-        Arc::new(move |remote_id: &str| keys.lock().ok()?.get(remote_id).cloned())
+        let secrets = self.secrets.clone();
+        Arc::new(move |remote_id: &str| secrets.get(remote_id).ok().flatten())
     }
 
     /// Create the engine (if not already), seed it from `config.toml` remotes,
@@ -67,10 +70,17 @@ impl SyncHandle {
         }
         let engine = guard.as_ref().unwrap().clone();
 
-        // Reconcile the config bootstrap into the durable store.
+        // Reconcile the config bootstrap into the durable store. Persisting
+        // the key here too (not just reading it from config.toml each boot)
+        // means a remote configured this way keeps working even if the
+        // config.toml entry is later removed — matching how a UI-added
+        // remote behaves once its key is in the keyring.
         for remote in remotes {
-            if let Ok(mut keys) = self.keys.lock() {
-                keys.insert(remote.id.clone(), remote.api_key.clone());
+            if let Err(e) = self.secrets.set(&remote.id, &remote.api_key) {
+                warn!(
+                    "sync: failed to persist api key for remote {} to the credential store: {e}",
+                    remote.id
+                );
             }
             engine
                 .add_remote(remote.id.clone(), remote.base_url.clone())
@@ -103,9 +113,7 @@ impl SyncHandle {
 
     pub async fn add_remote(&self, base_url: String, api_key: String) -> anyhow::Result<String> {
         let id = uuid::Uuid::new_v4().to_string();
-        if let Ok(mut keys) = self.keys.lock() {
-            keys.insert(id.clone(), api_key);
-        }
+        self.secrets.set(&id, &api_key)?;
         let engine = self.ensure_engine().await?;
         engine.add_remote(id.clone(), base_url).await?;
         Ok(id)
@@ -168,12 +176,10 @@ impl SyncHandle {
     pub async fn remove_remote(&self, remote_id: String) -> anyhow::Result<()> {
         let engine = self.ensure_engine().await?;
         engine.remove_remote(&remote_id).await?;
-        if let Ok(mut keys) = self.keys.lock() {
-            keys.remove(&remote_id);
-        }
         // Restart so tasks for the removed remote stop running.
         engine.stop();
         engine.start().await?;
+        self.secrets.clear(&remote_id)?;
         Ok(())
     }
 
@@ -227,5 +233,75 @@ impl SyncHandle {
     async fn resolve_vault_path(&self, vault_id: &str) -> Option<String> {
         let db = Database::new(&self.db_url).await.ok()?;
         db.get_vault(vault_id).await.ok().map(|v| v.path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::secrets::InMemorySecretStore;
+
+    fn handle(sync_dir: &tempfile::TempDir, secrets: Arc<dyn SecretStore>) -> SyncHandle {
+        SyncHandle::new(
+            sync_dir.path().join("sync.db"),
+            "sqlite::memory:".to_string(),
+            secrets,
+        )
+    }
+
+    #[tokio::test]
+    async fn add_remote_stores_the_key_in_the_secret_store_not_just_sync_db() {
+        let sync_dir = tempfile::tempdir().unwrap();
+        let secrets = Arc::new(InMemorySecretStore::default());
+        let h = handle(&sync_dir, secrets.clone());
+
+        let id = h
+            .add_remote("http://example.invalid".to_string(), "s3cr3t".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(secrets.get(&id).unwrap(), Some("s3cr3t".to_string()));
+    }
+
+    #[tokio::test]
+    async fn remove_remote_clears_the_stored_key() {
+        let sync_dir = tempfile::tempdir().unwrap();
+        let secrets = Arc::new(InMemorySecretStore::default());
+        let h = handle(&sync_dir, secrets.clone());
+
+        let id = h
+            .add_remote("http://example.invalid".to_string(), "s3cr3t".to_string())
+            .await
+            .unwrap();
+        h.remove_remote(id.clone()).await.unwrap();
+
+        assert_eq!(secrets.get(&id).unwrap(), None);
+    }
+
+    /// The bug this reproduces: a remote added via the "Add remote" UI
+    /// dialog got a durable `sync.db` row but only an in-memory API key, so
+    /// it silently stopped working on the very next app restart with "no api
+    /// key available for remote: <id>" — indistinguishable from a corrupted
+    /// remote short of manually editing config.toml. This also covers the
+    /// config.toml-bootstrap path (`init_and_start`), which has the same
+    /// "durable existence, ephemeral key" split before this fix.
+    #[tokio::test]
+    async fn init_and_start_persists_config_bootstrap_keys_too() {
+        let sync_dir = tempfile::tempdir().unwrap();
+        let secrets = Arc::new(InMemorySecretStore::default());
+        let h = handle(&sync_dir, secrets.clone());
+
+        let remotes = vec![SyncRemoteConfig {
+            id: "cfg-remote".to_string(),
+            base_url: "http://example.invalid".to_string(),
+            api_key: "cfg-key".to_string(),
+            vault_map: Vec::new(),
+        }];
+        h.init_and_start(&remotes).await.unwrap();
+
+        assert_eq!(
+            secrets.get("cfg-remote").unwrap(),
+            Some("cfg-key".to_string())
+        );
     }
 }

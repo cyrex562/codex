@@ -4418,6 +4418,7 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "jni",
+ "keyring",
  "librarium-core",
  "librarium-mobile",
  "librarium-server",
