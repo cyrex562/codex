@@ -723,10 +723,11 @@ impl VaultSync {
                 .await;
                 match result {
                     Ok(bytes) => self.write_local(path, &bytes)?,
-                    Err(SyncError::Client(e)) if is_not_found(&e) => {
+                    Err(SyncError::Client(e)) if is_stale_download_target(&e) => {
                         warn!(
-                            "sync: pull of {path} 404'd (remote file vanished before download) — \
-                             treating as absent and re-evaluating next pass"
+                            "sync: pull of {path} failed ({e}) — remote target vanished or \
+                             changed kind before download — treating as absent and \
+                             re-evaluating next pass"
                         );
                         self.remote_hashes.remove(path);
                         persist_base = false;
@@ -805,10 +806,11 @@ impl VaultSync {
                     .await
                 {
                     Ok(remote_bytes) => self.write_local(path, &remote_bytes)?,
-                    Err(e) if is_not_found(&e) => {
+                    Err(e) if is_stale_download_target(&e) => {
                         warn!(
-                            "sync: conflict-winning pull of {path} 404'd (remote file vanished \
-                             before download) — leaving local as-is and re-evaluating next pass"
+                            "sync: conflict-winning pull of {path} failed ({e}) — remote target \
+                             vanished or changed kind before download — leaving local as-is and \
+                             re-evaluating next pass"
                         );
                         self.remote_hashes.remove(path);
                         return Ok(false);
@@ -965,15 +967,21 @@ fn is_transient(e: &librarium_client::ClientError) -> bool {
     }
 }
 
-/// True when the remote returned 404 for a file we expected to be there —
-/// the manifest/change-log entry that told us to pull it is stale (the file
-/// was deleted or renamed remotely a moment later, most often under flaky
-/// connectivity). Not `is_transient`: retrying the same request won't help,
-/// the caller needs to treat the file as absent instead.
-fn is_not_found(e: &librarium_client::ClientError) -> bool {
+/// True when the remote rejected a download because the manifest/change-log
+/// entry that told us to pull `path` is stale — either the file is gone
+/// entirely (404, e.g. deleted or renamed remotely a moment later, most
+/// often under flaky connectivity), or `path` now names a directory instead
+/// of a file (400 `INVALID_INPUT`, e.g. the file was deleted and replaced by
+/// a same-named folder before this download ran — `GET .../download/...`
+/// has no other way to fail a plain path-only GET besides these two, so 400
+/// is safe to treat this broadly here specifically). Not `is_transient`:
+/// retrying the same request won't help, the caller needs to treat the file
+/// as absent instead.
+fn is_stale_download_target(e: &librarium_client::ClientError) -> bool {
     matches!(
         e,
         librarium_client::ClientError::ApiError { status: 404, .. }
+            | librarium_client::ClientError::ApiError { status: 400, .. }
     )
 }
 
@@ -1058,29 +1066,39 @@ mod tests {
     }
 
     #[test]
-    fn is_not_found_matches_only_404_api_errors() {
+    fn is_stale_download_target_matches_404_and_400_api_errors_only() {
         let not_found = librarium_client::ClientError::ApiError {
             status: 404,
             message: "File not found: x".to_string(),
         };
-        assert!(is_not_found(&not_found));
+        assert!(is_stale_download_target(&not_found));
+
+        let is_a_directory = librarium_client::ClientError::ApiError {
+            status: 400,
+            message: "Cannot download directory as single file. Use zip download instead."
+                .to_string(),
+        };
+        assert!(is_stale_download_target(&is_a_directory));
 
         let forbidden = librarium_client::ClientError::ApiError {
             status: 403,
             message: "nope".to_string(),
         };
-        assert!(!is_not_found(&forbidden));
+        assert!(!is_stale_download_target(&forbidden));
 
         let server_error = librarium_client::ClientError::Server("boom".to_string());
-        assert!(!is_not_found(&server_error));
+        assert!(!is_stale_download_target(&server_error));
     }
 
     /// Minimal one-shot-per-connection HTTP mock: accepts a connection, reads
-    /// (and discards) the request, and always replies 404 — just enough to
-    /// drive a real `ClientError::ApiError { status: 404, .. }` through
+    /// (and discards) the request, and always replies with `status_line`/
+    /// `body` — just enough to drive a real `ClientError::ApiError` through
     /// `ObsidianClient::download_file_bytes` without standing up a real
     /// librarium-server.
-    async fn spawn_404_server() -> std::net::SocketAddr {
+    async fn spawn_mock_server(
+        status_line: &'static str,
+        body: &'static [u8],
+    ) -> std::net::SocketAddr {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpListener;
 
@@ -1094,10 +1112,8 @@ mod tests {
                 tokio::spawn(async move {
                     let mut buf = [0u8; 1024];
                     let _ = stream.read(&mut buf).await;
-                    let body =
-                        br#"{"error":"NOT_FOUND","message":"File not found: cursed circuits"}"#;
                     let response = format!(
-                        "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                         body.len()
                     );
                     let _ = stream.write_all(response.as_bytes()).await;
@@ -1119,7 +1135,11 @@ mod tests {
     /// page, hit the same file, and failed the same way forever.
     #[tokio::test]
     async fn pull_upsert_404_is_absorbed_not_propagated() {
-        let addr = spawn_404_server().await;
+        let addr = spawn_mock_server(
+            "404 Not Found",
+            br#"{"error":"NOT_FOUND","message":"File not found: cursed circuits"}"#,
+        )
+        .await;
         let vault_dir = tempfile::tempdir().unwrap();
         let path = "notes/cursed-circuits.md";
         let local_bytes = b"original local content";
@@ -1180,6 +1200,71 @@ mod tests {
         assert!(!vault.remote_hashes.contains_key(path));
 
         // Local content must be untouched — nothing was actually downloaded.
+        let on_disk = std::fs::read(&local_abs).unwrap();
+        assert_eq!(on_disk, local_bytes);
+    }
+
+    /// A second manifestation of the same race, this time with the deleted
+    /// file replaced by a same-named directory instead of vanishing outright
+    /// — the server correctly 400s "Cannot download directory as single
+    /// file", and that must be absorbed exactly like the 404 case above
+    /// rather than propagated as a hard error.
+    #[tokio::test]
+    async fn pull_upsert_400_directory_target_is_absorbed_not_propagated() {
+        let addr = spawn_mock_server(
+            "400 Bad Request",
+            br#"{"error":"INVALID_INPUT","message":"Invalid input: Cannot download directory as single file. Use zip download instead."}"#,
+        )
+        .await;
+        let vault_dir = tempfile::tempdir().unwrap();
+        let path = "notes/cursed-circuits.md";
+        let local_bytes = b"original local content";
+        let local_abs = vault_dir.path().join(path);
+        std::fs::create_dir_all(local_abs.parent().unwrap()).unwrap();
+        std::fs::write(&local_abs, local_bytes).unwrap();
+        let base_hash = hash_bytes(local_bytes);
+
+        let store = SyncStore::open_in_memory().await.unwrap();
+        store
+            .set_base_hash("r1", "v1", path, Some(&base_hash))
+            .await
+            .unwrap();
+
+        let client = ObsidianClient::for_cloud(format!("http://{addr}")).with_api_key("test-key");
+
+        let (_local_tx, local_rx) = mpsc::unbounded_channel();
+        let mut remote_hashes = HashMap::new();
+        remote_hashes.insert(path.to_string(), "some-newer-remote-hash".to_string());
+
+        let mut vault = VaultSync {
+            store: store.clone(),
+            client,
+            remote_id: "r1".to_string(),
+            local_vault_id: "v1".to_string(),
+            local_vault_path: vault_dir.path().to_path_buf(),
+            remote_vault_id: "remote-vault".to_string(),
+            suppressor: Suppressor::new(),
+            local_rx,
+            remote_hashes,
+            last_seq: 0,
+            status: Arc::new(Mutex::new(HashMap::new())),
+            status_key: ("r1".to_string(), "v1".to_string()),
+        };
+
+        let result = vault.reconcile_path(path).await;
+        assert!(
+            result.is_ok(),
+            "a 400 directory-target during pull must not propagate as a hard error: {result:?}"
+        );
+
+        let persisted_base = store.get_base_hash("r1", "v1", path).await.unwrap();
+        assert_eq!(
+            persisted_base.as_deref(),
+            Some(base_hash.as_str()),
+            "base hash must be left untouched, not advanced to the stale remote hash"
+        );
+        assert!(!vault.remote_hashes.contains_key(path));
+
         let on_disk = std::fs::read(&local_abs).unwrap();
         assert_eq!(on_disk, local_bytes);
     }
