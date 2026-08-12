@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import { apiLogin, apiRefreshToken, apiLogout, apiMe, apiChangePassword, apiVerifyTotpLogin, apiOidcCallback, apiGetHealth } from '@/api/client';
+import { apiLogin, apiRefreshToken, apiLogout, apiMe, apiChangePassword, apiVerifyTotpLogin, apiOidcCallback, apiGetHealth, isSessionInvalid } from '@/api/client';
 import type { LoginResponse, AuthenticatedUserProfile } from '@/api/types';
-import { isTauri } from '@/utils/tauri';
+import { isTauri, authTokenGet, authTokenSet, authTokenClear } from '@/utils/tauri';
 import { getLogger } from '@/utils/logger';
 
 const log = getLogger('auth');
@@ -77,6 +77,10 @@ export const useAuthStore = defineStore('auth', () => {
         localStorage.setItem(ACCESS_TOKEN_KEY, resp.access_token);
         if (persistRefreshTokenLocally) {
             localStorage.setItem(REFRESH_TOKEN_KEY, resp.refresh_token);
+            // Fire-and-forget: mirror to the disk store so a WebView UserData
+            // wipe (uninstall/reinstall, cache clear) can still be recovered
+            // from the portable data_dir on the next boot.
+            void authTokenSet(resp.refresh_token);
         }
         localStorage.setItem(EXPIRES_AT_KEY, String(expiresAt.value));
         localStorage.setItem(PENDING_TOTP_KEY, String(pendingTotp.value));
@@ -135,20 +139,38 @@ export const useAuthStore = defineStore('auth', () => {
             haveBodyToken: persistRefreshTokenLocally && !!refreshToken.value,
             isTauri: persistRefreshTokenLocally,
         });
-        try {
-            const resp = persistRefreshTokenLocally && refreshToken.value
-                ? await apiRefreshToken(refreshToken.value)
-                : await apiRefreshToken();
-            _applyTokens(resp);
-            log.info('refresh success', { expiresInSec: resp.expires_in });
-        } catch (err) {
-            const status = (err as { status?: number })?.status;
-            log.warn('refresh failed', {
-                status,
-                message: (err as Error)?.message ?? String(err),
-            });
-            throw err;
+        // Retry on transient failures. A 401 means the token is truly invalid
+        // (rotated, revoked, wrong secret) — bail immediately so the caller
+        // can log out. Any other throw is treated as transient (loopback
+        // hiccup on wake-from-sleep, brief WebSocket race, GC pause) and
+        // retried with a short backoff; the vast majority of these clear in
+        // well under a second, so a handful of retries is enough.
+        const attempts = 3;
+        let lastErr: unknown = null;
+        for (let i = 0; i < attempts; i++) {
+            try {
+                const resp = persistRefreshTokenLocally && refreshToken.value
+                    ? await apiRefreshToken(refreshToken.value)
+                    : await apiRefreshToken();
+                _applyTokens(resp);
+                log.info('refresh success', { expiresInSec: resp.expires_in, attempt: i + 1 });
+                return;
+            } catch (err) {
+                const status = (err as { status?: number })?.status;
+                log.warn('refresh attempt failed', {
+                    status,
+                    attempt: i + 1,
+                    sessionInvalid: isSessionInvalid(err),
+                    message: (err as Error)?.message ?? String(err),
+                });
+                if (isSessionInvalid(err)) throw err;
+                lastErr = err;
+                if (i < attempts - 1) {
+                    await new Promise((r) => setTimeout(r, 250 * (i + 1)));
+                }
+            }
         }
+        throw lastErr;
     }
 
     async function logout() {
@@ -181,6 +203,9 @@ export const useAuthStore = defineStore('auth', () => {
         localStorage.removeItem(REFRESH_TOKEN_KEY);
         localStorage.removeItem(EXPIRES_AT_KEY);
         localStorage.removeItem(PENDING_TOTP_KEY);
+        // Wipe the disk-backed copy in the same call so a subsequent boot
+        // can't restore the just-revoked token from the durable fallback.
+        void authTokenClear();
     }
 
     async function loadProfile(force = false) {
@@ -253,6 +278,27 @@ export const useAuthStore = defineStore('auth', () => {
         await loadProfile(true);
     }
 
+    // Restore the refresh token from the disk-backed store when localStorage
+    // has none. Runs at app boot (before the router evaluates its first
+    // guard) so a wipe of the WebView UserData folder does not force a
+    // re-login when the portable/installed data_dir is still intact. No-op
+    // on browser deployments and when localStorage already holds a token.
+    async function bootstrapPersistence() {
+        if (!persistRefreshTokenLocally) return;
+        if (refreshToken.value) return;
+        const fromDisk = await authTokenGet();
+        if (!fromDisk) return;
+        refreshToken.value = fromDisk;
+        localStorage.setItem(REFRESH_TOKEN_KEY, fromDisk);
+        // Force the next authenticated request to refresh — the localStorage
+        // access token (if any) predates this restore and is almost
+        // certainly stale. Clearing expiresAt makes isExpired() true
+        // unconditionally.
+        expiresAt.value = 0;
+        localStorage.setItem(EXPIRES_AT_KEY, '0');
+        log.info('bootstrapPersistence restored refresh token from disk');
+    }
+
     // Called by the API client when the server returns 403 TOTP_VERIFICATION_REQUIRED
     // mid-session (e.g. the access token was issued before TOTP verification and the
     // in-memory pendingTotp flag was lost across a page reload).
@@ -283,5 +329,6 @@ export const useAuthStore = defineStore('auth', () => {
         flagPendingTotp,
         serverAuthEnabled,
         checkServerAuthEnabled,
+        bootstrapPersistence,
     };
 });

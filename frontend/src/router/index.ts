@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { useCapabilities } from '@/composables/useCapabilities';
-import { isLocalTransportActive } from '@/api/client';
+import { isLocalTransportActive, isSessionInvalid } from '@/api/client';
 import { getLogger } from '@/utils/logger';
 
 const log = getLogger('router');
@@ -70,11 +70,14 @@ router.beforeEach(async (to) => {
                 await auth.loadProfile();
                 return { path: '/' };
             } catch (err) {
-                log.warn('public-route ensureFresh failed → forcing logout', {
+                log.warn('public-route ensureFresh failed', {
                     to: to.fullPath,
+                    sessionInvalid: isSessionInvalid(err),
                     message: (err as Error)?.message ?? String(err),
                 });
-                await auth.logout();
+                // Transient — leave the session intact and let /login re-render;
+                // a real 401 clears it so the form doesn't look falsely signed in.
+                if (isSessionInvalid(err)) await auth.logout();
                 return true;
             }
         }
@@ -100,12 +103,19 @@ router.beforeEach(async (to) => {
 
         return true;
     } catch (err) {
-        log.warn('guard ensureFresh/loadProfile failed → forcing logout + /login', {
+        // Only wipe state on a real 401. Transient failures let navigation
+        // through; the next authenticated request that actually reaches the
+        // server will drive either recovery or a proper 401-triggered logout.
+        log.warn('guard ensureFresh/loadProfile failed', {
             to: to.fullPath,
+            sessionInvalid: isSessionInvalid(err),
             message: (err as Error)?.message ?? String(err),
         });
-        await auth.logout();
-        return { path: '/login', query: { redirect: to.fullPath } };
+        if (isSessionInvalid(err)) {
+            await auth.logout();
+            return { path: '/login', query: { redirect: to.fullPath } };
+        }
+        return true;
     }
 });
 

@@ -439,6 +439,21 @@ and an `example-plugin` template. Plugin development is documented in
   in the WebView's `localStorage` and sent in the refresh request body — the
   Tauri WebView doesn't reliably persist HttpOnly cookies across restarts, and
   loopback-only + no third-party content makes `localStorage` acceptable.
+  Desktop also mirrors the refresh token to a second, disk-backed copy at
+  `{data_dir}/session.json` (`session_store.rs`, atomic write, `0600` on Unix)
+  so a wipe of the WebView's UserData folder — an uninstall/reinstall of the
+  shell, a runtime reset — doesn't force a re-login as long as the portable
+  data dir survives; the frontend restores from it at boot
+  (`authStore.bootstrapPersistence()`) whenever `localStorage` is empty.
+- **Session-clear contract:** every call site that can throw while checking or
+  refreshing a session (`App.vue`'s mount hook, the router guard,
+  `useWebSocket`'s connect, `MainLayout`'s mount hook) only calls
+  `authStore.logout()` when the server positively said the session is invalid
+  (`isSessionInvalid()` in `api/client.ts` — an `ApiError` with `status === 401`).
+  Any other failure (a loopback hiccup on wake-from-sleep, a brief WebSocket
+  reconnect race) is treated as transient and left alone rather than wiping
+  tokens; `authStore.refresh()` itself retries transient failures 3× with a
+  short backoff before giving up.
 - **Authorization:** per-vault roles — **Owner / Editor / Viewer** — plus groups,
   sharing, and invitations, enforced in `middleware/auth.rs`.
 - **Filesystem safety:** every path is canonicalized and checked for containment

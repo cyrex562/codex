@@ -1,5 +1,6 @@
 import { ref, onUnmounted } from 'vue';
 import type { WsMessage } from '@/api/types';
+import { isSessionInvalid } from '@/api/client';
 import { useFilesStore } from '@/stores/files';
 import { useTabsStore } from '@/stores/tabs';
 import { useVaultsStore } from '@/stores/vaults';
@@ -141,11 +142,18 @@ async function connect() {
     try {
         await authStore.ensureFresh();
     } catch (err) {
-        log.warn('WebSocket connect ensureFresh failed → forcing logout', {
+        // Only clear session state when the server said the session is dead.
+        // Transient failures (loopback hiccup on wake-from-sleep, GC pause)
+        // used to reach this branch and silently log the user out; now we
+        // just skip this connect attempt and let the reconnect timer retry.
+        log.warn('WebSocket connect ensureFresh failed', {
             reconnectAttempts,
+            sessionInvalid: isSessionInvalid(err),
             message: (err as Error)?.message ?? String(err),
         });
-        await authStore.logout();
+        if (isSessionInvalid(err)) {
+            await authStore.logout();
+        }
         connected.value = false;
         return;
     }

@@ -8,6 +8,9 @@
 const COMMANDS: &[&str] = &[
     // Desktop-only
     "open_directory_dialog",
+    "auth_token_get",
+    "auth_token_set",
+    "auth_token_clear",
     // Shared generic commands (desktop + mobile)
     "notify",
     "open_external_url",
