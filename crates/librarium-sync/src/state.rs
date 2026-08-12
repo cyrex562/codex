@@ -119,6 +119,8 @@ impl SyncStore {
         .execute(&self.pool)
         .await?;
 
+        self.drop_legacy_api_key_column().await?;
+
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS sync_vault_map (
@@ -167,6 +169,55 @@ impl SyncStore {
         .execute(&self.pool)
         .await?;
 
+        Ok(())
+    }
+
+    /// Rebuild `sync_remote` without its old `api_key` column, if present.
+    ///
+    /// `api_key` was dropped from the schema (the key now lives only in the
+    /// OS keyring, never on disk) but `CREATE TABLE IF NOT EXISTS` never
+    /// touches a table that already exists — any `sync.db` created before
+    /// that change still physically has `api_key TEXT NOT NULL`, and every
+    /// insert since has omitted it, so `upsert_remote` fails with a NOT NULL
+    /// constraint violation on those older databases. Detect and fix that
+    /// once, here, since SQLite has no `IF NOT EXISTS` form for dropping a
+    /// column.
+    async fn drop_legacy_api_key_column(&self) -> Result<(), SyncError> {
+        let columns = sqlx::query("PRAGMA table_info(sync_remote)")
+            .fetch_all(&self.pool)
+            .await?;
+        let has_api_key = columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "api_key");
+        if !has_api_key {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            r#"
+            CREATE TABLE sync_remote_new (
+                id TEXT PRIMARY KEY NOT NULL,
+                base_url TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1
+            )
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO sync_remote_new (id, base_url, enabled) \
+             SELECT id, base_url, enabled FROM sync_remote",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DROP TABLE sync_remote")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("ALTER TABLE sync_remote_new RENAME TO sync_remote")
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -476,6 +527,61 @@ impl SyncStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn migrate_drops_legacy_api_key_column_and_preserves_data() {
+        // Simulate a sync.db created before api_key was removed from the
+        // schema: a sync_remote table with the old NOT NULL api_key column,
+        // pre-populated with a row, and no other tables yet.
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE sync_remote (
+                id TEXT PRIMARY KEY NOT NULL,
+                base_url TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO sync_remote (id, base_url, api_key, enabled) VALUES (?, ?, ?, ?)")
+            .bind("r1")
+            .bind("https://example.com")
+            .bind("legacy-key-value")
+            .bind(1i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let store = SyncStore { pool };
+        store.migrate().await.unwrap();
+
+        // Pre-existing remote survived the rebuild, minus its api_key column.
+        let remotes = store.list_remotes().await.unwrap();
+        assert_eq!(remotes.len(), 1);
+        assert_eq!(remotes[0].id, "r1");
+        assert_eq!(remotes[0].base_url, "https://example.com");
+        assert!(remotes[0].enabled);
+
+        // The insert that previously failed with a NOT NULL constraint
+        // violation on a legacy database now succeeds.
+        store
+            .upsert_remote(&RemoteRecord {
+                id: "r2".to_string(),
+                base_url: "https://example.org".to_string(),
+                enabled: true,
+            })
+            .await
+            .unwrap();
+        assert_eq!(store.list_remotes().await.unwrap().len(), 2);
+    }
 
     #[tokio::test]
     async fn base_hash_missing_and_tombstone_both_none() {
