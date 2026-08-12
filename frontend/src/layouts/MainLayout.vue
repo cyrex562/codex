@@ -116,7 +116,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { ApiError } from '@/api/client';
+import { ApiError, isSessionInvalid } from '@/api/client';
 import { getLogger } from '@/utils/logger';
 
 const log = getLogger('mainLayout');
@@ -233,15 +233,21 @@ onMounted(async () => {
       await authStore.ensureFresh();
       await authStore.loadProfile();
     } catch (err) {
-      log.warn('MainLayout mount ensureFresh/loadProfile failed → logout + /login', {
+      // Only redirect to /login on a real 401. On transient network errors,
+      // continue mounting the layout — the tokens are still valid and
+      // subsequent requests will retry naturally.
+      log.warn('MainLayout mount ensureFresh/loadProfile failed', {
+        sessionInvalid: isSessionInvalid(err),
         message: (err as Error)?.message ?? String(err),
       });
-      await authStore.logout();
-      await router.replace({
-        path: '/login',
-        query: { redirect: router.currentRoute.value.fullPath || '/' },
-      });
-      return;
+      if (isSessionInvalid(err)) {
+        await authStore.logout();
+        await router.replace({
+          path: '/login',
+          query: { redirect: router.currentRoute.value.fullPath || '/' },
+        });
+        return;
+      }
     }
   }
 

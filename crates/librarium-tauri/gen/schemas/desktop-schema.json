@@ -177,6 +177,24 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the auth_token_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-auth-token-clear",
+          "markdownDescription": "Enables the auth_token_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the auth_token_get command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-auth-token-get",
+          "markdownDescription": "Enables the auth_token_get command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the auth_token_set command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-auth-token-set",
+          "markdownDescription": "Enables the auth_token_set command without any pre-configured scope."
+        },
+        {
           "description": "Enables the backlinks command without any pre-configured scope.",
           "type": "string",
           "const": "allow-backlinks",
@@ -505,6 +523,24 @@
           "type": "string",
           "const": "allow-write-binary-file",
           "markdownDescription": "Enables the write_binary_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the auth_token_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-auth-token-clear",
+          "markdownDescription": "Denies the auth_token_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the auth_token_get command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-auth-token-get",
+          "markdownDescription": "Denies the auth_token_get command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the auth_token_set command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-auth-token-set",
+          "markdownDescription": "Denies the auth_token_set command without any pre-configured scope."
         },
         {
           "description": "Denies the backlinks command without any pre-configured scope.",

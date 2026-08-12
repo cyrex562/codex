@@ -4,6 +4,7 @@ import App from './App.vue';
 import router from './router';
 import { vuetify } from './plugins/vuetify';
 import { getLogger } from './utils/logger';
+import { useAuthStore } from './stores/auth';
 
 const bootLog = getLogger('boot');
 bootLog.info('frontend bundle loaded', {
@@ -43,7 +44,18 @@ app.config.errorHandler = (err, _instance, info) => {
 };
 
 app.use(createPinia());
-app.use(router);
-app.use(vuetify);
 
-app.mount('#app');
+async function boot() {
+    // Restore the desktop-durable refresh token (if any) before the router
+    // evaluates its first navigation guard — otherwise the guard would see
+    // an unauthenticated state, redirect to /login, and the restored token
+    // would never get exercised. Browser deployments no-op through this.
+    await useAuthStore().bootstrapPersistence();
+
+    app.use(router);
+    app.use(vuetify);
+
+    app.mount('#app');
+}
+
+void boot();

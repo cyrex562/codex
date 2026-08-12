@@ -56,6 +56,8 @@ mod paths;
 #[cfg(desktop)]
 mod secrets;
 #[cfg(desktop)]
+mod session_store;
+#[cfg(desktop)]
 mod sync_bridge;
 
 use anyhow::Context;
@@ -66,6 +68,7 @@ use {
     librarium::config::AppConfig,
     paths::{create_dirs, resolve_paths},
     secrets::OsKeyringStore,
+    session_store::SessionStore,
     sync_bridge::{RemoteDto, SyncHandle},
     tauri::menu::{Menu, MenuItem, PredefinedMenuItem},
     tauri::tray::{TrayIconBuilder, TrayIconEvent},
@@ -180,6 +183,37 @@ fn frontend_log(log: tauri::State<'_, FrontendLog>, record: LogRecord) -> Result
 #[tauri::command]
 fn frontend_log_path(log: tauri::State<'_, FrontendLog>) -> String {
     log.path_str()
+}
+
+// ── Durable refresh-token store (desktop-only: no server-auth flow exists on
+// the mobile local transport at all — see router/index.ts's own comment on
+// why it bypasses the whole token lifecycle) ─────────────────────────────────
+
+/// Read the persisted refresh token, if any.
+///
+/// The frontend calls this on boot when WebView localStorage is empty; a
+/// missing/empty file returns `None` so the caller falls through to /login.
+#[cfg(desktop)]
+#[tauri::command]
+fn auth_token_get(store: tauri::State<'_, SessionStore>) -> Result<Option<String>, String> {
+    store.get().map_err(|e| e.to_string())
+}
+
+/// Mirror the current refresh token to disk. Called after every successful
+/// login/refresh so the disk copy stays in lockstep with WebView localStorage.
+#[cfg(desktop)]
+#[tauri::command]
+fn auth_token_set(store: tauri::State<'_, SessionStore>, token: String) -> Result<(), String> {
+    store.set(token).map_err(|e| e.to_string())
+}
+
+/// Wipe the disk copy on logout. Called from the auth store's `logout()`
+/// alongside the localStorage clear so a subsequent boot cannot restore a
+/// revoked token from the durable fallback.
+#[cfg(desktop)]
+#[tauri::command]
+fn auth_token_clear(store: tauri::State<'_, SessionStore>) -> Result<(), String> {
+    store.clear().map_err(|e| e.to_string())
 }
 
 // ── Sync commands (desktop-only: librarium.db-resolved vault paths) ─────────
@@ -317,6 +351,9 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool {
         write_binary_file,
         frontend_log,
         frontend_log_path,
+        auth_token_get,
+        auth_token_set,
+        auth_token_clear,
         sync_add_remote,
         sync_map_vault,
         sync_list_remotes,
@@ -436,6 +473,12 @@ fn run_setup(app: &mut tauri::App) -> anyhow::Result<()> {
             warn!("Failed to initialise frontend log: {e:#}");
         }
     }
+
+    // Register the durable refresh-token store. The frontend queries this on
+    // boot when its WebView localStorage is empty, so a wipe of the WebView
+    // UserData folder does not force the user to log in again as long as the
+    // portable/installed data_dir survives.
+    app.manage(SessionStore::new(paths.data_dir.clone()));
 
     // Pin the search index (and its incremental-indexing manifest) to a stable
     // absolute path under the data dir. Without this it defaults to a

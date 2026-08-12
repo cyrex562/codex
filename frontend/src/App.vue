@@ -7,6 +7,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { isSessionInvalid } from '@/api/client';
 import { usePreferencesStore } from '@/stores/preferences';
 import { useAuthStore } from '@/stores/auth';
 import { getLogger } from '@/utils/logger';
@@ -39,15 +40,22 @@ onMounted(async () => {
       await authStore.ensureFresh();
       await authStore.loadProfile();
     } catch (err) {
-      log.warn('App mount ensureFresh/loadProfile failed → logout + /login', {
+      // Only kick to /login on a real 401. A transient loopback failure at
+      // boot must not wipe tokens — downstream flows will retry, and if the
+      // session really is dead the next authenticated request's 401 handler
+      // will clear state properly.
+      log.warn('App mount ensureFresh/loadProfile failed', {
+        sessionInvalid: isSessionInvalid(err),
         message: (err as Error)?.message ?? String(err),
       });
-      await authStore.logout();
-      if (router.currentRoute.value.path !== '/login') {
-        await router.replace({
-          path: '/login',
-          query: { redirect: router.currentRoute.value.fullPath || '/' },
-        });
+      if (isSessionInvalid(err)) {
+        await authStore.logout();
+        if (router.currentRoute.value.path !== '/login') {
+          await router.replace({
+            path: '/login',
+            query: { redirect: router.currentRoute.value.fullPath || '/' },
+          });
+        }
       }
     }
   }
