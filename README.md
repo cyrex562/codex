@@ -85,6 +85,15 @@ and it never touches your database or overwrites an existing config. This is
 the local counterpart to `cargo xtask deploy`, which manages a *remote* target
 over SSH from a separate machine instead.
 
+If the box was instead set up via `cargo xtask deploy` against a
+`targets.toml` entry with `deployment = "docker"` (its `app_dir`, e.g.
+`/opt/librarium`, is where that install actually lives — not
+`~/.local/bin`), point `update` at that same target definition instead:
+`cargo xtask update --target <name>` pulls, rebuilds the Docker image, and
+runs `docker compose up -d --build` directly in `app_dir`, in place — the
+exact same layout and compose file `deploy` manages remotely, just run
+locally instead of over SSH.
+
 ### Desktop app
 
 ```bash
