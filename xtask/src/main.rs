@@ -6,6 +6,7 @@
 //!   cargo xtask build-desktop --debug   # faster, unoptimized build
 //!   cargo xtask build-frontend          # just (re)build the Vue SPA
 //!   cargo xtask run-desktop [--debug]   # build + launch the desktop app
+//!   cargo xtask build-installer         # build a distributable installer (NSIS on Windows)
 //!   cargo xtask deploy [TARGET] [...]   # deploy the server to a remote target
 //!   cargo xtask status [TARGET]         # check a target's health/version
 //!   cargo xtask logs   [TARGET]         # stream a target's logs
@@ -44,6 +45,10 @@ fn main() {
             build_frontend();
             run_desktop(release);
         }
+        "build-installer" => {
+            build_frontend();
+            build_installer();
+        }
         // Ops commands: forward verbatim (including the command name and any
         // target/flags) to the deployment CLI.
         "deploy" | "status" | "logs" | "doctor" | "targets" => librarium_cli(&args),
@@ -63,6 +68,11 @@ fn help() {
          \n    cargo xtask build-desktop [--debug]   Build the desktop app (frontend + Tauri)\
          \n    cargo xtask run-desktop   [--debug]   Build then launch the desktop app\
          \n    cargo xtask build-frontend            Build only the Vue SPA into target/frontend\
+         \n    cargo xtask build-installer           Build a distributable installer (NSIS on Windows)\
+         \n                                          Re-running the installer over an existing install\
+         \n                                          upgrades it in place (Tauri/NSIS default behavior) —\
+         \n                                          no uninstall step needed after a code change.\
+         \n                                          Needs the Tauri CLI: cargo install tauri-cli --version '^2' --locked\
          \n  Deploy / observe (via scripts/librarium.py; needs: pip install -r scripts/requirements.txt):\
          \n    cargo xtask deploy [TARGET] [flags]   Deploy the server to a remote target\
          \n    cargo xtask status [TARGET]           Show a target's running version/health\
@@ -117,6 +127,62 @@ fn build_desktop(release: bool) {
          (cargo install tauri-cli && cargo tauri build) which emits an NSIS \
          installer on Windows."
     );
+}
+
+/// Build a distributable installer via the Tauri CLI — an NSIS `.exe` on
+/// Windows (`cargo tauri build --bundles nsis`, matching exactly what
+/// `.github/workflows/release.yml`'s `desktop-windows` job runs), or the
+/// platform's default bundle(s) elsewhere (`cargo tauri build` with no
+/// `--bundles` filter lets Tauri pick whichever of `tauri.conf.json`'s
+/// `bundle.targets` apply to the host OS — e.g. deb+appimage on Linux, dmg
+/// on macOS).
+///
+/// Tauri's NSIS installer is idempotent by design: running the same
+/// installer again over an already-installed copy detects it (via the
+/// registry uninstall entry it wrote) and upgrades in place — replaces the
+/// binary, keeps user data untouched. That's the whole point of this
+/// command: build once after each code change, re-run the resulting
+/// installer to patch the installed copy, no custom update logic needed.
+fn build_installer() {
+    let root = repo_root();
+    let tauri_dir = root.join("crates").join("librarium-tauri");
+
+    if !has_tauri_cli() {
+        eprintln!(
+            "✗ Tauri CLI not found. Install it first:\n\
+             \n    cargo install tauri-cli --version '^2' --locked\n"
+        );
+        exit(1);
+    }
+
+    let mut args = vec!["tauri", "build"];
+    if cfg!(windows) {
+        args.push("--bundles");
+        args.push("nsis");
+    }
+    eprintln!("→ cargo {} (in crates/librarium-tauri)", args.join(" "));
+    run(
+        Command::new("cargo").args(&args).current_dir(&tauri_dir),
+        "cargo tauri build",
+    );
+
+    let bundle_dir = root.join("target").join("release").join("bundle");
+    println!("\n✓ Installer built under {}", bundle_dir.display());
+    if cfg!(windows) {
+        println!(
+            "  Look under bundle\\nsis\\ for the .exe setup file. Re-run it any time to\n\
+             \x20 upgrade an existing install in place — no need to uninstall first."
+        );
+    }
+}
+
+/// Whether `cargo tauri` (the Tauri CLI subcommand) is available.
+fn has_tauri_cli() -> bool {
+    Command::new("cargo")
+        .args(["tauri", "--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn run_desktop(release: bool) {
