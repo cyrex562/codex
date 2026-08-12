@@ -97,10 +97,18 @@ cargo xtask run-desktop              # build, then launch it directly
 ```
 
 This produces a runnable binary, not an installer — good for local testing
-without installing anything. For a distributable installer (NSIS `.exe`
-setup), use `cargo tauri build` instead (needs `cargo install tauri-cli`
-first) — that's what `.github/workflows/release.yml` produces for tagged
-releases, or you can run it yourself the same way on your own machine.
+without installing anything.
+
+For a distributable, re-runnable installer (NSIS `.exe` setup on Windows),
+use `cargo xtask build-installer` instead (needs `cargo install tauri-cli
+--version '^2' --locked` first — same CLI `.github/workflows/release.yml`
+uses to build tagged releases). The resulting installer lands under
+`target\release\bundle\nsis\`. Tauri's NSIS installer is idempotent by
+design: re-running it over an existing install detects it and upgrades in
+place (replaces the binary, keeps your vaults/config untouched) — so the
+day-to-day loop after pulling new code is just
+`cargo xtask build-installer` followed by running the installer it
+produces, no need to uninstall first.
 
 `cargo xtask` has other subcommands too — run `cargo xtask help` (or see
 `xtask/src/main.rs`'s module doc) for `build-frontend` and the
