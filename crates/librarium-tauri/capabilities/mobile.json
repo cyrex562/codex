@@ -8,6 +8,7 @@
     "background-service:default",
     "allow-notify",
     "allow-open-external-url",
+    "allow-write-binary-file",
     "allow-frontend-log",
     "allow-frontend-log-path",
     "allow-vault-list",

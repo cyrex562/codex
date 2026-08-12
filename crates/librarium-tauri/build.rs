@@ -11,6 +11,7 @@ const COMMANDS: &[&str] = &[
     // Shared generic commands (desktop + mobile)
     "notify",
     "open_external_url",
+    "write_binary_file",
     "frontend_log",
     "frontend_log_path",
     // Sync bridge commands (desktop's sync_bridge.rs and librarium-mobile's
