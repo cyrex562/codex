@@ -20,6 +20,7 @@
     "allow-open-directory-dialog",
     "allow-notify",
     "allow-open-external-url",
+    "allow-write-binary-file",
     "allow-frontend-log",
     "allow-frontend-log-path",
     "allow-sync-add-remote",

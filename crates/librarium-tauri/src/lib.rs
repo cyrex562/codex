@@ -145,6 +145,21 @@ fn is_allowed_external_url(url: &str) -> bool {
         .any(|prefix| url.starts_with(prefix))
 }
 
+/// Write base64-encoded bytes to an absolute path.
+///
+/// Used by the frontend's feedback-bundle export: `path` always comes back
+/// from the user's own native save-dialog selection (`saveFileDialog` in
+/// `tauri.ts`), the same trust boundary as any other app's "Save As" — no
+/// general-purpose filesystem plugin is needed just for this one write.
+#[tauri::command]
+fn write_binary_file(path: String, data_base64: String) -> Result<(), String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&data_base64)
+        .map_err(|e| format!("invalid base64: {e}"))?;
+    std::fs::write(&path, bytes).map_err(|e| format!("write failed: {e}"))
+}
+
 // ── Frontend logging ─────────────────────────────────────────────────────────
 
 /// Append a single record to the rotating frontend log at
@@ -299,6 +314,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool {
         open_directory_dialog,
         notify,
         open_external_url,
+        write_binary_file,
         frontend_log,
         frontend_log_path,
         sync_add_remote,
@@ -325,6 +341,7 @@ fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool {
 const GENERIC_COMMAND_NAMES: &[&str] = &[
     "notify",
     "open_external_url",
+    "write_binary_file",
     "frontend_log",
     "frontend_log_path",
 ];
@@ -339,7 +356,13 @@ const GENERIC_COMMAND_NAMES: &[&str] = &[
 // unresolved.
 #[cfg(mobile)]
 fn generic_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool {
-    tauri::generate_handler![notify, open_external_url, frontend_log, frontend_log_path]
+    tauri::generate_handler![
+        notify,
+        open_external_url,
+        write_binary_file,
+        frontend_log,
+        frontend_log_path
+    ]
 }
 
 #[cfg(mobile)]
@@ -878,6 +901,38 @@ mod tests {
                 "expected {url} to be rejected"
             );
         }
+    }
+
+    // ── write_binary_file ──────────────────────────────────────────────────
+
+    #[test]
+    fn write_binary_file_decodes_base64_and_writes_bytes() {
+        use base64::Engine;
+        let dir = std::env::temp_dir().join(format!(
+            "librarium-write-binary-file-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bundle.zip");
+
+        let data = b"not really a zip, just some bytes\x00\x01\x02";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(data);
+
+        write_binary_file(path.to_string_lossy().to_string(), encoded).unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), data);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn write_binary_file_rejects_invalid_base64() {
+        let path = std::env::temp_dir().join(format!(
+            "librarium-write-binary-file-invalid-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let result = write_binary_file(path.to_string_lossy().to_string(), "not-base64!!".to_string());
+        assert!(result.is_err());
+        assert!(!path.exists());
     }
 
     #[test]

@@ -43,6 +43,11 @@ librarium-core = { path = "../librarium-core" }
 # Open URLs in the OS default browser (used by open_external_url command)
 open = "5"
 
+# Decode the base64-encoded feedback-bundle bytes handed to write_binary_file
+# (the frontend can't pass a raw Uint8Array over invoke() without a much
+# bigger JSON-array payload).
+base64 = "0.22"
+
 # Utilities
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

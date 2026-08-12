@@ -381,7 +381,25 @@ The desktop app is a thin native shell, not a reimplementation:
 6. Opens a WebView at the local server URL.
 
 Native capabilities exposed to the frontend (via Tauri commands / optional
-`@tauri-apps/*` packages): folder picker dialog and desktop notifications.
+`@tauri-apps/*` packages): folder picker dialog, desktop notifications, and
+writing base64-encoded bytes to a path the user already chose via the native
+save dialog (`write_binary_file` — used by the in-app feedback exporter below;
+the path always comes from the user's own dialog selection, so no
+general-purpose filesystem plugin is needed).
+
+### In-app feedback capture
+
+The top bar's feedback button (`FeedbackModal.vue`, backed by
+`composables/useFeedback.ts`) bundles a free-text report with diagnostic
+context — the active vault/open tabs/panes, the last 500 entries from the
+frontend logger's ring buffer, and app/browser environment info — plus an
+optional DOM screenshot (`html2canvas`, capturing the app's own rendered UI,
+not a true OS-level screen capture) into a zip (`jszip`) named
+`librarium-feedback-<timestamp>.zip`. Entirely client-side: nothing is ever
+sent to a server. On desktop the zip is written straight to disk via the
+native save dialog + `write_binary_file`; in a plain browser it's a normal
+download. The resulting file is meant to be attached/pasted into an AI coding
+assistant by hand.
 
 ---
 

@@ -501,6 +501,12 @@
           "markdownDescription": "Enables the vault_list command without any pre-configured scope."
         },
         {
+          "description": "Enables the write_binary_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-write-binary-file",
+          "markdownDescription": "Enables the write_binary_file command without any pre-configured scope."
+        },
+        {
           "description": "Denies the backlinks command without any pre-configured scope.",
           "type": "string",
           "const": "deny-backlinks",
@@ -823,6 +829,12 @@
           "type": "string",
           "const": "deny-vault-list",
           "markdownDescription": "Denies the vault_list command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the write_binary_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-write-binary-file",
+          "markdownDescription": "Denies the write_binary_file command without any pre-configured scope."
         },
         {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",

@@ -71,6 +71,15 @@
         />
       </template>
 
+      <v-btn
+        icon="mdi-message-alert-outline"
+        size="small"
+        density="compact"
+        title="Send feedback"
+        data-testid="topbar-feedback-btn"
+        @click="openFeedback"
+      />
+
       <v-menu>
         <template #activator="{ props }">
           <v-btn
@@ -135,6 +144,7 @@
   </v-app-bar>
 
   <SettingsModal v-model="showSettings" :initial-tab="settingsInitialTab" />
+  <FeedbackModal v-model="showFeedback" :screenshot="feedbackScreenshot" />
 </template>
 
 <script setup lang="ts">
@@ -147,8 +157,10 @@ import { useAuthStore } from '@/stores/auth';
 import { useWebSocket } from '@/composables/useWebSocket';
 import { useMobile } from '@/composables/useMobile';
 import { useCapabilities } from '@/composables/useCapabilities';
+import { captureScreenshot } from '@/composables/useFeedback';
 import SettingsModal from '@/components/settings/SettingsModal.vue';
 import SyncStatusChip from '@/components/sync/SyncStatusChip.vue';
+import FeedbackModal from '@/components/FeedbackModal.vue';
 
 const emit = defineEmits<{
   'open-search': [];
@@ -171,10 +183,19 @@ const username = computed(() => authStore.profile?.username ?? 'Account');
 const hasActiveVault = computed(() => !!vaultsStore.activeVaultId);
 const showSettings = ref(false);
 const settingsInitialTab = ref<string | undefined>(undefined);
+const showFeedback = ref(false);
+const feedbackScreenshot = ref<Blob | null>(null);
 
 function openSettings() {
   settingsInitialTab.value = undefined;
   showSettings.value = true;
+}
+
+async function openFeedback() {
+  // Capture before the modal opens so the screenshot shows the app, not the
+  // feedback dialog covering it.
+  feedbackScreenshot.value = await captureScreenshot();
+  showFeedback.value = true;
 }
 
 function openOfflineSync() {
