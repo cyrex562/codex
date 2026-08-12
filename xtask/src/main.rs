@@ -11,12 +11,18 @@
 //!   cargo xtask status [TARGET]         # check a target's health/version
 //!   cargo xtask logs   [TARGET]         # stream a target's logs
 //!   cargo xtask doctor [TARGET]         # preflight a target
+//!   cargo xtask update [...]            # idempotently update a *local* checkout in place
 //!
-//! The build commands are self-contained. The deploy/status/logs/doctor
+//! The build commands are self-contained. The deploy/status/logs/doctor/update
 //! commands are thin pass-throughs to `scripts/librarium.py`, so this crate is
 //! the single entry point for the whole build→deploy→observe loop (build
 //! commands need Node+Rust; the ops commands additionally need Python 3 with the
 //! script's deps installed).
+//!
+//! `deploy` manages a *remote* target over SSH from a separate machine.
+//! `update` is its local counterpart: run it ON the box hosting the server
+//! after `git clone`ing this repo there — it pulls, rebuilds, reinstalls, and
+//! restarts the systemd service in one idempotent step.
 //!
 //! The desktop app embeds the server, which embeds the Vue SPA from
 //! `target/frontend/` via rust-embed — so the frontend MUST be built before the
@@ -51,7 +57,9 @@ fn main() {
         }
         // Ops commands: forward verbatim (including the command name and any
         // target/flags) to the deployment CLI.
-        "deploy" | "status" | "logs" | "doctor" | "targets" => librarium_cli(&args),
+        "deploy" | "status" | "logs" | "doctor" | "targets" | "update" | "local-install" => {
+            librarium_cli(&args)
+        }
         "help" | "-h" | "--help" => help(),
         other => {
             eprintln!("unknown command: {other}\n");
@@ -74,11 +82,19 @@ fn help() {
          \n                                          no uninstall step needed after a code change.\
          \n                                          Needs the Tauri CLI: cargo install tauri-cli --version '^2' --locked\
          \n  Deploy / observe (via scripts/librarium.py; needs: pip install -r scripts/requirements.txt):\
-         \n    cargo xtask deploy [TARGET] [flags]   Deploy the server to a remote target\
+         \n    cargo xtask deploy [TARGET] [flags]   Deploy the server to a remote target over SSH\
          \n    cargo xtask status [TARGET]           Show a target's running version/health\
          \n    cargo xtask logs   [TARGET]           Stream a target's logs\
          \n    cargo xtask doctor [TARGET]           Preflight a target\
          \n    cargo xtask targets                   List configured deploy targets\
+         \n    cargo xtask local-install [flags]     Build + install the server locally (this box)\
+         \n    cargo xtask update [flags]            Idempotently update a local checkout in place:\
+         \n                                          git pull, rebuild, reinstall, restart the\
+         \n                                          systemd service if one's installed. Run this ON\
+         \n                                          the box hosting the server after `git clone`ing\
+         \n                                          this repo there — the local counterpart to\
+         \n                                          `deploy`. Pass -h after any of these for details,\
+         \n                                          e.g. `cargo xtask update -h`.\
          \n\nBuild profile defaults to release; pass --debug for a faster, unoptimized build.\
          \nTARGET names come from targets.toml (omit to be prompted)."
     );

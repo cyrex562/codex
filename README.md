@@ -72,6 +72,19 @@ On first run with auth enabled, Librarium bootstraps an admin account and writes
 the generated credentials next to the database, then forces a password change at
 first login. See the [Deployment guide](docs/archive/DEPLOYMENT.md).
 
+**Running the server on its own box (a VM, a home server)?** Clone the repo
+there and install with `cargo xtask local-install` (or the equivalent
+`python scripts/librarium.py local-install`) — builds the binary and installs
+it to `~/.local/bin`, writing a starter `config.toml` to `~/.config/librarium`
+without touching one that's already there. To keep it current afterward, run
+`cargo xtask update` on that same box any time: it pulls the latest commits
+(refusing outright if the working tree is dirty, never discarding local
+changes), rebuilds, reinstalls, and restarts the systemd service if you've set
+one up (`deploy/systemd/librarium.service.template`) — safe to rerun anytime,
+and it never touches your database or overwrites an existing config. This is
+the local counterpart to `cargo xtask deploy`, which manages a *remote* target
+over SSH from a separate machine instead.
+
 ### Desktop app
 
 ```bash
@@ -111,8 +124,10 @@ day-to-day loop after pulling new code is just
 produces, no need to uninstall first.
 
 `cargo xtask` has other subcommands too — run `cargo xtask help` (or see
-`xtask/src/main.rs`'s module doc) for `build-frontend` and the
-deploy/status/logs/doctor commands used for managing a remote server.
+`xtask/src/main.rs`'s module doc) for `build-frontend`, `deploy`/`status`/
+`logs`/`doctor` for managing a *remote* server target over SSH, and
+`local-install`/`update` for installing/updating the server locally on the
+box that's running it (see [Quick start](#quick-start) above).
 
 ### Android app
 

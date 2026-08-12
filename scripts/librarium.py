@@ -161,6 +161,15 @@ class DeployResult:
 
 
 @dataclass
+class UpdateResult:
+    pulled: bool  # True only if git pull actually fast-forwarded to a new commit
+    binary_installed: bool
+    config_preserved: bool
+    service_restarted: bool
+    healthcheck_ok: bool | None  # None when skipped (no port could be determined)
+
+
+@dataclass
 class RemoteDataSnapshot:
     db_present: bool
     user_count: int | None
@@ -1533,6 +1542,18 @@ def _default_config_dir() -> Path:
     return Path(xdg) / "librarium" if xdg else Path.home() / ".config" / "librarium"
 
 
+def _configured_port(config_path: Path, fallback: int) -> int:
+    """Read `[server].port` from an installed config.toml, if present and parseable."""
+    if not config_path.exists():
+        return fallback
+    try:
+        with config_path.open("rb") as f:
+            data = tomllib.load(f)
+        return int(data.get("server", {}).get("port", fallback))
+    except Exception:
+        return fallback
+
+
 def local_install(
     *,
     build_first: bool,
@@ -1637,6 +1658,121 @@ def local_install(
 
     if install_dir not in [Path(p) for p in os.environ.get("PATH", "").split(os.pathsep)]:
         warn(f"{install_dir} is not on your PATH. Add it with:\n  export PATH=\"{install_dir}:$PATH\"")
+
+
+def update(
+    *,
+    install_dir: Path,
+    config_dir: Path,
+    with_desktop: bool,
+    port: int,
+    service_name: str,
+    pull: bool,
+    build: bool,
+    restart: bool,
+    release: bool,
+) -> UpdateResult:
+    """Idempotent in-place update: git pull, rebuild, reinstall, restart.
+
+    The local counterpart to `deploy_to_target`/`deploy_to_docker_target`
+    (which manage a *remote* target over SSH from a separate machine) — this
+    runs directly on the box hosting the server, after a `git clone` and an
+    initial `local_install`. Safe to rerun any time: nothing new to pull is a
+    harmless no-op for the git/config/restart steps. The rebuild step is NOT
+    a fast no-op, though, even when nothing changed — `build_server()`
+    unconditionally `cargo clean`s `librarium-server` first (needed to force
+    a fresh embed of the frontend assets; incremental builds can miss that
+    they changed) before every build, so budget for a real compile each time
+    unless you pass `build=False` to skip rebuilding entirely (e.g. you know
+    nothing changed and just want to reinstall/restart from the last build).
+    The systemd restart step is skipped cleanly when no service is installed.
+    """
+    pulled = False
+    if pull:
+        if not (REPO_ROOT / ".git").exists():
+            warn(f"{REPO_ROOT} is not a git checkout — skipping git pull")
+        else:
+            step("Checking for local changes")
+            status = run_cmd(["git", "status", "--porcelain"], cwd=REPO_ROOT, capture=True)
+            if status.stdout.strip():
+                raise LibrariumError(
+                    "Working tree has uncommitted changes — refusing to git pull "
+                    "(never risk discarding local edits). Commit or stash them "
+                    "first, or rerun with --no-pull."
+                )
+            before = run_cmd(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture=True).stdout.strip()
+            step("Pulling latest changes")
+            try:
+                run_cmd(["git", "pull", "--ff-only"], cwd=REPO_ROOT)
+            except LibrariumError as e:
+                raise LibrariumError(
+                    f"git pull --ff-only failed: {e}\nThe local branch has likely "
+                    "diverged from its upstream — resolve manually (rebase/reset), "
+                    "then rerun, or rerun with --no-pull to skip this step."
+                )
+            after = run_cmd(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture=True).stdout.strip()
+            pulled = before != after
+            ok(f"Pulled to {after[:12]}" if pulled else "Already up to date")
+    else:
+        info("Skipping git pull (--no-pull)")
+
+    config_existed_before = (config_dir / "config.toml").exists()
+    if not build and not (install_dir / BIN_NAME).exists() and not (DIST_DIR / "manifest.json").exists():
+        raise LibrariumError(
+            "--no-build passed but nothing has ever been built (no installed "
+            f"binary at {install_dir / BIN_NAME}, no {DIST_DIR / 'manifest.json'}) "
+            "— drop --no-build for the first run."
+        )
+    local_install(
+        build_first=build,
+        release=release,
+        install_dir=install_dir,
+        config_dir=config_dir,
+        with_desktop=with_desktop,
+        admin_password=None,
+        port=port,
+    )
+
+    service_restarted = False
+    if restart:
+        step("Restarting service")
+        if shutil.which("systemctl") is None:
+            info("systemctl not found — skipping service restart")
+        else:
+            probe = run_cmd(["systemctl", "cat", service_name], capture=True, check=False)
+            if probe.returncode != 0:
+                info(
+                    f"No systemd service '{service_name}' installed — skipping restart "
+                    "(see deploy/systemd/librarium.service.template to set one up)"
+                )
+            else:
+                run_cmd(["sudo", "systemctl", "restart", service_name])
+                ok(f"Restarted {service_name}")
+                service_restarted = True
+    else:
+        info("Skipping service restart (--no-restart)")
+
+    healthcheck_ok = None
+    if service_restarted:
+        effective_port = _configured_port(config_dir / "config.toml", port)
+        dummy_target = DeploymentTarget(
+            name="local",
+            ssh_host="",
+            ssh_user="",
+            ssh_port=22,
+            ip_address="127.0.0.1",
+            http_port=effective_port,
+            app_dir=str(install_dir),
+        )
+        healthcheck_ok = healthcheck(dummy_target)
+
+    return UpdateResult(
+        pulled=pulled,
+        binary_installed=True,
+        config_preserved=config_existed_before,
+        service_restarted=service_restarted,
+        healthcheck_ok=healthcheck_ok,
+    )
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -1773,6 +1909,103 @@ def local_install_cmd(
             admin_password=admin_password,
             port=port,
         )
+    except LibrariumError as e:
+        fail(str(e))
+        raise SystemExit(1)
+
+
+@cli.command("update")
+@click.option("--install-dir", type=click.Path(path_type=Path), default=None, metavar="DIR",
+              help="Directory the binary is installed in (default: ~/.local/bin)")
+@click.option("--config-dir", type=click.Path(path_type=Path), default=None, metavar="DIR",
+              help="Directory config.toml lives in (default: ~/.config/librarium)")
+@click.option("--with-desktop/--no-desktop", default=False, show_default=True,
+              help="Also rebuild and reinstall the desktop client binary")
+@click.option("--release/--debug", default=True, show_default=True, help="Cargo profile")
+@click.option("--port", default=8080, show_default=True, metavar="PORT",
+              help="Health-check port; ignored once config.toml already sets one")
+@click.option("--service-name", default=SERVICE_NAME, show_default=True, metavar="NAME",
+              help="systemd service to restart after installing, if present")
+@click.option("--build/--no-build", default=True, show_default=True,
+              help="Rebuild from source. --no-build reinstalls/restarts from the last build")
+@click.option("--no-pull", is_flag=True, help="Skip git pull (rebuild/reinstall + restart only)")
+@click.option("--no-restart", is_flag=True, help="Skip restarting the systemd service even if present")
+def update_cmd(
+    install_dir: Path | None,
+    config_dir: Path | None,
+    with_desktop: bool,
+    release: bool,
+    port: int,
+    service_name: str,
+    build: bool,
+    no_pull: bool,
+    no_restart: bool,
+) -> None:
+    """Update a local Librarium checkout in place: pull, rebuild, reinstall, restart.
+
+    The idempotent "I cloned the repo onto this VM — now keep it current"
+    counterpart to `deploy` (which manages a *remote* target over SSH from a
+    separate machine). Run this ON the box hosting the server, after `git
+    clone` and an initial `local-install`. Safe to rerun any time: nothing new
+    to pull is a harmless no-op for the git/config/restart steps.
+
+    The rebuild step is NOT fast even when nothing changed — the server build
+    always does a clean rebuild to force a fresh embed of the frontend assets
+    (incremental builds can miss that they changed), so budget for a real
+    compile on every run unless you pass --no-build (e.g. you know nothing
+    changed and just want to reinstall/restart from the last build).
+
+    Never overwrites an existing config.toml or touches the database.
+    Refuses to `git pull` over uncommitted local changes rather than risk
+    losing them — commit/stash first, or pass --no-pull. Restarting the
+    service requires passwordless sudo for systemctl (or running as root).
+
+    Examples:
+
+    \b
+      # One-shot: pull + rebuild + reinstall + restart the systemd service:
+      python scripts/librarium.py update
+
+    \b
+      # Just restart the service from what's already built, no git/rebuild:
+      python scripts/librarium.py update --no-pull --no-build
+    """
+    effective_install_dir = install_dir or _default_install_dir()
+    effective_config_dir = config_dir or _default_config_dir()
+    try:
+        result = update(
+            install_dir=effective_install_dir,
+            config_dir=effective_config_dir,
+            with_desktop=with_desktop,
+            port=port,
+            service_name=service_name,
+            pull=not no_pull,
+            build=build,
+            restart=not no_restart,
+            release=release,
+        )
+
+        table = Table(title="Update summary", box=box.SIMPLE_HEAVY)
+        table.add_column("Step")
+        table.add_column("Result")
+        rows = [
+            ("Pulled new commits", "yes" if result.pulled else "already up to date"),
+            ("Binary reinstalled", "yes" if result.binary_installed else "no"),
+            ("Config preserved", "yes" if result.config_preserved else "created fresh"),
+            ("Service restarted", "yes" if result.service_restarted else "skipped"),
+            (
+                "Health check",
+                "n/a" if result.healthcheck_ok is None
+                else ("yes" if result.healthcheck_ok else "FAILED"),
+            ),
+        ]
+        for label, value in rows:
+            color = "red" if value == "FAILED" else "green"
+            table.add_row(label, f"[{color}]{value}[/{color}]")
+        console.print(table)
+
+        if result.healthcheck_ok is False:
+            raise SystemExit(1)
     except LibrariumError as e:
         fail(str(e))
         raise SystemExit(1)
