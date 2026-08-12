@@ -49,6 +49,8 @@
       <v-btn v-bind="btn" icon="mdi-format-list-bulleted" title="Bulleted list" @mousedown.prevent="emit('command', 'bulleted_list')" />
       <v-btn v-bind="btn" icon="mdi-format-list-numbered" title="Numbered list" @mousedown.prevent="emit('command', 'numbered_list')" />
       <v-btn v-bind="btn" icon="mdi-format-list-checks" title="Task list" @mousedown.prevent="emit('command', 'task_list')" />
+      <v-btn v-bind="btn" icon="mdi-format-indent-decrease" title="Decrease indent (Shift+Tab)" @mousedown.prevent="emit('command', 'outdent')" />
+      <v-btn v-bind="btn" icon="mdi-format-indent-increase" title="Increase indent (Tab)" @mousedown.prevent="emit('command', 'indent')" />
 
       <div class="toolbar-sep" />
 

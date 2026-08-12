@@ -17,6 +17,16 @@ describe('applyMarkdownToolbarCommand', () => {
         expect(res.content).toBe('# Old heading');
     });
 
+    it('applying a heading strips leading indentation — headings always start at column 1', () => {
+        const res = applyMarkdownToolbarCommand('  ## Old heading', 0, 0, 'heading_1');
+        expect(res.content).toBe('# Old heading');
+    });
+
+    it('applying a heading strips leading indentation on a plain (non-heading) indented line', () => {
+        const res = applyMarkdownToolbarCommand('   plain text', 0, 0, 'heading_2');
+        expect(res.content).toBe('## plain text');
+    });
+
     it('applies list markers to multiline selection', () => {
         const content = 'alpha\nbeta';
         const res = applyMarkdownToolbarCommand(content, 0, content.length, 'bulleted_list');
@@ -61,5 +71,18 @@ describe('applyMarkdownToolbarCommand', () => {
     it('inserts table on a new line when cursor is mid-text', () => {
         const res = applyMarkdownToolbarCommand('hello world', 5, 5, 'table');
         expect(res.content).toContain('\n| Column 1 | Column 2 | Column 3 |');
+    });
+
+    it('the indent/outdent commands delegate to applyLineIndent', () => {
+        const indented = applyMarkdownToolbarCommand('hello', 0, 0, 'indent');
+        expect(indented.content).toBe('  hello');
+
+        const outdented = applyMarkdownToolbarCommand('  hello', 0, 0, 'outdent');
+        expect(outdented.content).toBe('hello');
+    });
+
+    it('outdent is a harmless no-op (unchanged content) when there is nothing to dedent', () => {
+        const res = applyMarkdownToolbarCommand('hello', 2, 2, 'outdent');
+        expect(res.content).toBe('hello');
     });
 });

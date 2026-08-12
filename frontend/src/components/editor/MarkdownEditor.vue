@@ -10,6 +10,8 @@ import { useUndoRedo } from '@/composables/useUndoRedo';
 import { renderFormattedMarkdown, highlightPlainText } from '@/utils/highlight';
 import { applyMarkdownToolbarCommand, type MarkdownToolbarCommand } from '@/editor/markdown-toolbar';
 import { applyListIndent } from '@/editor/list-indent';
+import { applyLineIndent } from '@/editor/line-indent';
+import { applyHeadingSpaceDedent, applyHeadingEnter } from '@/editor/heading-behavior';
 import { ApiError } from '@/api/client';
 import { useVaultsStore } from '@/stores/vaults';
 import { useFilesStore } from '@/stores/files';
@@ -30,13 +32,18 @@ const emit = defineEmits<{ update: [value: string] }>();
 const editorEl = ref<HTMLElement | null>(null);
 let jar: any = null;
 let ignoreNextChange = false;
+let isEditorFocused = false;
 let availableFoldStarts = new Set<number>();
 let collapsedFoldStarts = new Set<number>();
 const vaultsStore = useVaultsStore();
 const filesStore = useFilesStore();
 const tabsStore = useTabsStore();
 
-const { recordChange, undo, redo } = useUndoRedo(props.tabId) as any;
+// Bug: this previously passed props.tabId (a UUID string) as the initial
+// *content* — the first undo past the first edit would replace the whole
+// document with the tab id. useUndoRedo(initialContent, ...) wants the
+// actual starting text.
+const { recordChange, undo, redo, reset: resetUndoRedo } = useUndoRedo(props.content) as any;
 
 function currentNoteFoldKey(): string {
   return props.filePath ? `path:${props.filePath.toLowerCase()}` : `tab:${props.tabId}`;
@@ -76,6 +83,12 @@ function rerenderWithoutChangingContent() {
   if (!editorEl.value) return;
   const { start, end } = getSelectionOffsets(editorEl.value);
   highlightForCurrentMode(editorEl.value);
+  // Restore synchronously (closes the race with CodeJar's own ~30ms
+  // debounced highlight/save/restore cycle, which otherwise can snapshot a
+  // collapsed (editor, 0) selection right after highlightForCurrentMode
+  // replaces the DOM — see setSelectionOffsets' doc comment) and again next
+  // frame as a safety net.
+  setSelectionOffsets(editorEl.value, start, end);
   requestAnimationFrame(() => {
     if (!editorEl.value) return;
     setSelectionOffsets(editorEl.value, start, end);
@@ -132,29 +145,61 @@ onMounted(async () => {
 
   editorEl.value.addEventListener('keydown', onKeydown, true);
   editorEl.value.addEventListener('click', onEditorClick, true);
+  editorEl.value.addEventListener('focus', onEditorFocus);
+  editorEl.value.addEventListener('blur', onEditorBlur);
 });
 
 onUnmounted(() => {
   editorEl.value?.removeEventListener('keydown', onKeydown, true);
   editorEl.value?.removeEventListener('click', onEditorClick, true);
+  editorEl.value?.removeEventListener('focus', onEditorFocus);
+  editorEl.value?.removeEventListener('blur', onEditorBlur);
   jar = null;
 });
 
-// Sync external content changes (e.g. WS reload) without double-emitting
+function onEditorFocus() {
+  isEditorFocused = true;
+}
+
+function onEditorBlur() {
+  isEditorFocused = false;
+}
+
+// Sync external content changes (e.g. WS reload) without double-emitting.
+// Preserves the caret when the editor is focused — this previously had no
+// cursor handling at all, which is one of the ways the caret could snap back
+// to the top of the document mid-edit: whenever the server round-tripped
+// content that differed even slightly from the live buffer (frontmatter
+// re-serialization, newline normalization, ...), jar.updateCode() wiped every
+// text node with nothing restoring the selection afterward.
 watch(() => props.content, (newVal) => {
-  if (!jar) return;
+  if (!jar || !editorEl.value) return;
   if (jar.toString() !== newVal) {
     ignoreNextChange = true;
-    jar.updateCode(newVal);
+    if (isEditorFocused) {
+      const { start, end } = getSelectionOffsets(editorEl.value);
+      jar.updateCode(newVal);
+      restoreSelection(Math.min(start, newVal.length), Math.min(end, newVal.length));
+    } else {
+      jar.updateCode(newVal);
+    }
   }
 });
 
 watch(() => props.mode, () => {
-  if (!jar) return;
-  jar.updateCode(jar.toString());
+  if (!jar || !editorEl.value) return;
+  const { start, end } = getSelectionOffsets(editorEl.value);
+  const code = jar.toString();
+  jar.updateCode(code);
+  restoreSelection(Math.min(start, code.length), Math.min(end, code.length));
 });
 
 watch(() => [props.tabId, props.filePath], () => {
+  // Undo/redo history is per-document. MarkdownEditor is a single component
+  // instance reused across every tab switch (never remounted per-tab), so
+  // without this an undo after switching notes could silently replace the
+  // currently open note's content with a *different* note's history.
+  resetUndoRedo(props.content);
   availableFoldStarts = new Set();
   loadFoldStateForCurrentNote();
   rerenderWithoutChangingContent();
@@ -165,10 +210,12 @@ function onKeydown(e: KeyboardEvent) {
     e.preventDefault();
     e.stopImmediatePropagation();
     const prev = undo();
-    if (prev != null && prev !== jar?.toString()) {
+    if (prev != null && prev !== jar?.toString() && editorEl.value) {
+      const { start, end } = getSelectionOffsets(editorEl.value);
       ignoreNextChange = true;
       jar?.updateCode(prev);
       emit('update', prev);
+      restoreSelection(Math.min(start, prev.length), Math.min(end, prev.length));
     }
     return;
   }
@@ -177,10 +224,12 @@ function onKeydown(e: KeyboardEvent) {
     e.preventDefault();
     e.stopImmediatePropagation();
     const next = redo();
-    if (next != null && next !== jar?.toString()) {
+    if (next != null && next !== jar?.toString() && editorEl.value) {
+      const { start, end } = getSelectionOffsets(editorEl.value);
       ignoreNextChange = true;
       jar?.updateCode(next);
       emit('update', next);
+      restoreSelection(Math.min(start, next.length), Math.min(end, next.length));
     }
     return;
   }
@@ -188,12 +237,18 @@ function onKeydown(e: KeyboardEvent) {
   // Automatic List Management
   if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
     if (handleTableEnter(e)) return;
+    if (handleHeadingEnterKey(e)) return;
     if (handleListEnter(e)) return;
+  }
+
+  if (e.key === ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (handleHeadingSpaceKey(e)) return;
   }
 
   if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (handleTableTab(e, e.shiftKey)) return;
     if (handleListTab(e, e.shiftKey)) return;
+    if (e.shiftKey && handleGenericDedent(e)) return;
   }
 }
 
@@ -284,12 +339,7 @@ function handleTableEnter(e: KeyboardEvent): boolean {
   ignoreNextChange = true;
   jar.updateCode(newContent);
   emit('update', newContent);
-
-  requestAnimationFrame(() => {
-    if (!editorEl.value) return;
-    setSelectionOffsets(editorEl.value, nextSel.start, nextSel.end);
-    editorEl.value.focus();
-  });
+  restoreSelection(nextSel.start, nextSel.end);
 
   return true;
 }
@@ -310,13 +360,7 @@ function handleTableTab(e: KeyboardEvent, reverse: boolean): boolean {
   const colCount = Math.max(1, tableColumnCount(line));
   const currentCol = currentTableColumnIndex(line, cursorInLine);
 
-  const jumpTo = (absStart: number, absEnd: number) => {
-    requestAnimationFrame(() => {
-      if (!editorEl.value) return;
-      setSelectionOffsets(editorEl.value, absStart, absEnd);
-      editorEl.value.focus();
-    });
-  };
+  const jumpTo = (absStart: number, absEnd: number) => restoreSelection(absStart, absEnd);
 
   if (reverse) {
     if (currentCol > 0) {
@@ -466,11 +510,7 @@ function handleListEnter(e: KeyboardEvent): boolean {
   ignoreNextChange = true;
   jar.updateCode(newContent);
   emit('update', newContent);
-  requestAnimationFrame(() => {
-    if (!editorEl.value) return;
-    setSelectionOffsets(editorEl.value, newCursor, newCursor);
-    editorEl.value.focus();
-  });
+  restoreSelection(newCursor, newCursor);
   return true;
 }
 
@@ -503,11 +543,85 @@ function handleListTab(e: KeyboardEvent, dedent: boolean): boolean {
   ignoreNextChange = true;
   jar.updateCode(result.content);
   emit('update', result.content);
-  requestAnimationFrame(() => {
-    if (!editorEl.value) return;
-    setSelectionOffsets(editorEl.value, result.cursor, result.cursor);
-    editorEl.value.focus();
-  });
+  restoreSelection(result.cursor, result.cursor);
+  return true;
+}
+
+// Shift-Tab on any line handleListTab didn't already own (i.e. not a list
+// item) — dedents the current line, or every line touched by a selection.
+// Reached only for Shift-Tab (see onKeydown): plain Tab keeps its existing
+// behavior on non-list lines (CodeJar's default insert-at-caret), which
+// wasn't reported broken.
+function handleGenericDedent(e: KeyboardEvent): boolean {
+  if (!jar || !editorEl.value) return false;
+  const content = jar.toString() as string;
+  const { start, end } = getSelectionOffsets(editorEl.value);
+  const result = applyLineIndent(content, start, end, 'outdent');
+  if (!result) {
+    // Nothing to dedent (no leading whitespace anywhere in range) — absorb
+    // the event anyway rather than falling through to CodeJar's own
+    // caret-position-based Shift-Tab, which deletes characters before the
+    // caret regardless of the line's actual indentation and is unreliable
+    // inside formatted-mode's contenteditable="false" spans.
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    return true;
+  }
+
+  e.preventDefault();
+  e.stopImmediatePropagation();
+
+  recordChange(result.content);
+  ignoreNextChange = true;
+  jar.updateCode(result.content);
+  emit('update', result.content);
+  restoreSelection(result.selectionStart, result.selectionEnd);
+  return true;
+}
+
+// Enter on a heading line starts the new line at column 1 — never inherits
+// the heading's indentation the way CodeJar's default newline handling
+// otherwise would (it carries the current line's leading whitespace onto the
+// new line).
+function handleHeadingEnterKey(e: KeyboardEvent): boolean {
+  if (!jar || !editorEl.value) return false;
+  const content = jar.toString() as string;
+  const { start, end } = getSelectionOffsets(editorEl.value);
+  if (start !== end) return false;
+
+  const result = applyHeadingEnter(content, start);
+  if (!result) return false;
+
+  e.preventDefault();
+  e.stopImmediatePropagation();
+
+  recordChange(result.content);
+  ignoreNextChange = true;
+  jar.updateCode(result.content);
+  emit('update', result.content);
+  restoreSelection(result.cursor, result.cursor);
+  return true;
+}
+
+// Typing the space that completes "#"/"##"/... on an indented line
+// auto-dedents that line back to column 1 — headings never start indented.
+function handleHeadingSpaceKey(e: KeyboardEvent): boolean {
+  if (!jar || !editorEl.value) return false;
+  const content = jar.toString() as string;
+  const { start, end } = getSelectionOffsets(editorEl.value);
+  if (start !== end) return false;
+
+  const result = applyHeadingSpaceDedent(content, start);
+  if (!result) return false;
+
+  e.preventDefault();
+  e.stopImmediatePropagation();
+
+  recordChange(result.content);
+  ignoreNextChange = true;
+  jar.updateCode(result.content);
+  emit('update', result.content);
+  restoreSelection(result.cursor, result.cursor);
   return true;
 }
 
@@ -639,11 +753,7 @@ async function extractSelectionToNote() {
   emit('update', nextContent);
 
   const cursor = start + replacement.length;
-  requestAnimationFrame(() => {
-    if (!editorEl.value) return;
-    setSelectionOffsets(editorEl.value, cursor, cursor);
-    editorEl.value.focus();
-  });
+  restoreSelection(cursor, cursor);
 
   tabsStore.openTab(tabsStore.activePaneId, targetPath, fileName);
   if (noteExists) {
@@ -666,12 +776,7 @@ async function applyCommand(command: MarkdownToolbarCommand) {
   ignoreNextChange = true;
   jar.updateCode(result.content);
   emit('update', result.content);
-
-  requestAnimationFrame(() => {
-    if (!editorEl.value) return;
-    setSelectionOffsets(editorEl.value, result.selectionStart, result.selectionEnd);
-    editorEl.value.focus();
-  });
+  restoreSelection(result.selectionStart, result.selectionEnd);
 }
 
 function getSelectionOffsets(root: HTMLElement): { start: number; end: number } {
@@ -705,6 +810,17 @@ function setSelectionOffsets(root: HTMLElement, start: number, end: number) {
   const selection = window.getSelection();
   if (!selection) return;
 
+  // Clamp to the actual available text length first. An out-of-range offset
+  // (content shifted slightly between measuring and restoring — e.g. a
+  // stale offset from before an external update) used to fall all the way
+  // through to the root.focus() fallback below, which drops the caret at
+  // the very start of the document — this is the "cursor randomly jumps to
+  // the top" bug. Clamping means that fallback is now only ever reached for
+  // a genuinely empty document, where focus-at-start is correct.
+  const totalLength = root.textContent?.length ?? 0;
+  const clampedStart = Math.max(0, Math.min(start, totalLength));
+  const clampedEnd = Math.max(clampedStart, Math.min(end, totalLength));
+
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let currentOffset = 0;
   let startNode: Text | null = null;
@@ -716,14 +832,14 @@ function setSelectionOffsets(root: HTMLElement, start: number, end: number) {
     const node = walker.currentNode as Text;
     const nextOffset = currentOffset + node.textContent!.length;
 
-    if (!startNode && start <= nextOffset) {
+    if (!startNode && clampedStart <= nextOffset) {
       startNode = node;
-      startNodeOffset = Math.max(0, start - currentOffset);
+      startNodeOffset = Math.max(0, clampedStart - currentOffset);
     }
 
-    if (!endNode && end <= nextOffset) {
+    if (!endNode && clampedEnd <= nextOffset) {
       endNode = node;
-      endNodeOffset = Math.max(0, end - currentOffset);
+      endNodeOffset = Math.max(0, clampedEnd - currentOffset);
       break;
     }
 
@@ -742,23 +858,53 @@ function setSelectionOffsets(root: HTMLElement, start: number, end: number) {
   selection.addRange(range);
 }
 
+// Restore the caret synchronously — closes the race with CodeJar's own
+// ~30ms debounced highlight/save/restore cycle (see setSelectionOffsets'
+// doc comment) outright, since 0ms is always ahead of a 30ms debounce; no
+// rAF wait is needed for that. Also re-applies once more next frame as a
+// safety net for anything that still moves the caret between here and then
+// (CodeJar's own restore, a fold re-render, ...) — but ONLY if the caret is
+// still exactly where we just put it. Without that guard, fast typing right
+// after a handler-triggered mutation (e.g. typing the rest of a heading
+// right after the auto-dedent-on-space rewrite) could race the rAF: it
+// fires with the *stale* pre-typing position captured in its closure and
+// snaps the caret backward mid-word, splitting whatever was typed in
+// between. Confirmed via browser testing — this exact scenario corrupted
+// "New Heading" into "w HeadingNe" before this guard was added.
+function restoreSelection(start: number, end: number = start) {
+  if (!editorEl.value) return;
+  setSelectionOffsets(editorEl.value, start, end);
+  editorEl.value.focus();
+  requestAnimationFrame(() => {
+    if (!editorEl.value) return;
+    const current = getSelectionOffsets(editorEl.value);
+    if (current.start !== start || current.end !== end) return;
+    setSelectionOffsets(editorEl.value, start, end);
+    editorEl.value.focus();
+  });
+}
+
 // ── Exposed API for EditorPane toolbar ───────────────────────────────────────
 
 function callUndo() {
   const prev = undo();
-  if (prev != null && prev !== jar?.toString()) {
+  if (prev != null && prev !== jar?.toString() && editorEl.value) {
+    const { start, end } = getSelectionOffsets(editorEl.value);
     ignoreNextChange = true;
     jar?.updateCode(prev);
     emit('update', prev);
+    restoreSelection(Math.min(start, prev.length), Math.min(end, prev.length));
   }
 }
 
 function callRedo() {
   const next = redo();
-  if (next != null && next !== jar?.toString()) {
+  if (next != null && next !== jar?.toString() && editorEl.value) {
+    const { start, end } = getSelectionOffsets(editorEl.value);
     ignoreNextChange = true;
     jar?.updateCode(next);
     emit('update', next);
+    restoreSelection(Math.min(start, next.length), Math.min(end, next.length));
   }
 }
 

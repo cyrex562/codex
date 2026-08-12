@@ -1,3 +1,5 @@
+import { applyLineIndent } from './line-indent';
+
 export type MarkdownToolbarCommand =
     | 'bold'
     | 'italic'
@@ -20,6 +22,8 @@ export type MarkdownToolbarCommand =
     | 'code_block'
     | 'horizontal_rule'
     | 'table'
+    | 'indent'
+    | 'outdent'
     | 'extract_to_note';
 
 export interface MarkdownCommandResult {
@@ -153,7 +157,10 @@ function applyHeading(content: string, start: number, level: 1 | 2 | 3): Markdow
     const lineEndCandidate = content.indexOf('\n', start);
     const lineEnd = lineEndCandidate === -1 ? content.length : lineEndCandidate;
     const line = content.slice(lineStart, lineEnd);
-    const stripped = line.replace(/^#{1,6}\s+/, '');
+    // Headings always start at column 1 — strip both any existing heading
+    // marker and any leading indentation (matches the auto-dedent applied
+    // when typing "#"/"##"/... followed by a space).
+    const stripped = line.replace(/^\s*#{1,6}\s+/, '').replace(/^\s+/, '');
     const prefix = '#'.repeat(level) + ' ';
     const replacement = `${prefix}${stripped}`;
     const nextContent = `${content.slice(0, lineStart)}${replacement}${content.slice(lineEnd)}`;
@@ -255,6 +262,16 @@ export function applyMarkdownToolbarCommand(
             return insertAtCursor(content, start, end, '\n---\n');
         case 'table':
             return insertTable(content, start, end);
+        case 'indent': {
+            const result = applyLineIndent(content, start, end, 'indent');
+            if (!result) return { content, selectionStart: start, selectionEnd: end };
+            return result;
+        }
+        case 'outdent': {
+            const result = applyLineIndent(content, start, end, 'outdent');
+            if (!result) return { content, selectionStart: start, selectionEnd: end };
+            return result;
+        }
         default:
             return { content, selectionStart: start, selectionEnd: end };
     }
