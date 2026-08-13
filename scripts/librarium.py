@@ -647,8 +647,12 @@ def _remote_readlink(target: DeploymentTarget, path: str) -> str:
     return r.stdout.strip()
 
 
-def _remote_compose_command(target: DeploymentTarget, args: str, *, capture: bool = False) -> subprocess.CompletedProcess[str]:
-    compose_script = textwrap.dedent(f"""
+def _compose_invocation_script(target: DeploymentTarget, args: str) -> str:
+    """The shell script that picks a working `docker compose`/`docker-compose`
+    invocation (with a passwordless-sudo fallback) and runs it in `app_dir`.
+    Shared by the SSH-based remote path and the local (on-box) update path —
+    same detection logic either way, just a different execution transport."""
+    return textwrap.dedent(f"""
         set -euo pipefail
         cd {shell_quote(target.app_dir)}
         if docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
@@ -660,11 +664,18 @@ def _remote_compose_command(target: DeploymentTarget, args: str, *, capture: boo
         elif command -v docker-compose >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1 && sudo -n docker-compose version >/dev/null 2>&1; then
             sudo docker-compose {args}
         else
-            echo "docker compose is not available to {target.ssh_user}; install Docker Compose or allow passwordless sudo for docker" >&2
+            echo "docker compose is not available; install Docker Compose or allow passwordless sudo for docker" >&2
             exit 1
         fi
     """).strip()
-    return ssh_cmd(target, compose_script, capture=capture)
+
+
+def _remote_compose_command(target: DeploymentTarget, args: str, *, capture: bool = False) -> subprocess.CompletedProcess[str]:
+    return ssh_cmd(target, _compose_invocation_script(target, args), capture=capture)
+
+
+def _local_compose_command(target: DeploymentTarget, args: str, *, capture: bool = False) -> subprocess.CompletedProcess[str]:
+    return run_cmd(["bash", "-c", _compose_invocation_script(target, args)], capture=capture)
 
 
 def create_remote_backup(
@@ -903,9 +914,11 @@ def restore_remote_backup(target: DeploymentTarget, backup_path: str, *, reason:
     ok("Backup restored")
 
 
-def ensure_docker_compose_file(target: DeploymentTarget) -> bool:
-    step("Ensuring Docker Compose config")
-    compose = textwrap.dedent(f"""
+def _compose_yaml(target: DeploymentTarget) -> str:
+    """Docker Compose config for `target`. Shared by the SSH-based remote
+    deploy path and the local (on-box) update path so the two can never
+    silently drift apart."""
+    return textwrap.dedent(f"""
         services:
           librarium:
             build:
@@ -935,6 +948,11 @@ def ensure_docker_compose_file(target: DeploymentTarget) -> bool:
               retries: 3
     """).strip() + "\n"
 
+
+def ensure_docker_compose_file(target: DeploymentTarget) -> bool:
+    step("Ensuring Docker Compose config")
+    compose = _compose_yaml(target)
+
     remote_path = f"{target.app_dir}/docker-compose.yml"
     local_hash = hashlib.sha256(compose.encode()).hexdigest()
     if _remote_sha(target, remote_path) == local_hash:
@@ -951,6 +969,18 @@ def ensure_docker_compose_file(target: DeploymentTarget) -> bool:
     finally:
         tmp.unlink(missing_ok=True)
     ok("Docker Compose config updated")
+    return True
+
+
+def _local_ensure_docker_compose_file(target: DeploymentTarget) -> bool:
+    step("Ensuring Docker Compose config")
+    compose = _compose_yaml(target)
+    path = Path(target.app_dir) / "docker-compose.yml"
+    if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == hashlib.sha256(compose.encode()).hexdigest():
+        info("Docker Compose config already up to date")
+        return False
+    path.write_text(compose, encoding="utf-8")
+    ok(f"Docker Compose config written → {path}")
     return True
 
 
@@ -978,6 +1008,46 @@ def upload_source_release(target: DeploymentTarget) -> str:
         archive.unlink(missing_ok=True)
     ok(f"Source release uploaded: {release_dir}")
     return release_dir
+
+
+def _local_release_from_repo(target: DeploymentTarget) -> str:
+    """Local (on-box) equivalent of `upload_source_release` — snapshot the
+    just-pulled REPO_ROOT into a new timestamped release dir under
+    `releases/` and activate it via the `current` symlink, without an SSH/SCP
+    round trip. Goes through the same tar-then-extract path as the remote
+    version (rather than a direct copy) so both share `_create_source_archive`'s
+    exclude list (`.git`, `target`, `node_modules`, ...) instead of maintaining
+    it twice."""
+    step("Building release snapshot")
+    build_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    release_dir = Path(target.releases_dir) / f"source-{build_id}"
+    release_dir.mkdir(parents=True, exist_ok=False)
+    archive = Path(target.tmp_dir) / f"source-{build_id}.tar.gz"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    _create_source_archive(archive)
+    try:
+        with tarfile.open(archive) as arc:
+            # `filter="data"` (safe extraction) needs Python 3.12+; older
+            # interpreters extract without it — the archive is our own
+            # just-created snapshot of this repo, not untrusted input.
+            try:
+                arc.extractall(release_dir, filter="data")
+            except TypeError:
+                arc.extractall(release_dir)
+    finally:
+        archive.unlink(missing_ok=True)
+
+    current_link = Path(target.current_dir)
+    if current_link.is_symlink() or current_link.exists():
+        if current_link.is_dir() and not current_link.is_symlink():
+            raise LibrariumError(
+                f"{current_link} exists and is a real directory, not a symlink "
+                "— refusing to remove it. Move it aside manually and rerun."
+            )
+        current_link.unlink()
+    current_link.symlink_to(release_dir, target_is_directory=True)
+    ok(f"Release activated: {release_dir}")
+    return str(release_dir)
 
 
 def upload_release(target: DeploymentTarget, artifacts: BuildArtifacts) -> bool:
@@ -1072,6 +1142,34 @@ def ensure_remote_config(target: DeploymentTarget) -> tuple[bool, bool, str | No
     config_text = _render_config(target, bootstrap_user=username, bootstrap_pass=password)
     _upload_config(target, config_text)
     ok(f"Config created at {target.remote_config_path}")
+    _print_admin_credentials(username, password, title="Generated admin credentials")
+    return True, False, username, password
+
+
+def _local_ensure_config(target: DeploymentTarget) -> tuple[bool, bool, str | None, str | None]:
+    """Local (on-box) equivalent of `ensure_remote_config` — same preserve/patch
+    logic, direct filesystem access instead of SSH+SCP."""
+    path = Path(target.remote_config_path)
+    if path.exists():
+        updated, changed, gen_user, gen_pass = _patch_bootstrap_creds(path.read_text(encoding="utf-8"))
+        if not changed:
+            info(f"Config exists at {path} — preserving")
+            return False, False, None, None
+        step("Updating config bootstrap credentials")
+        path.write_text(updated, encoding="utf-8")
+        ok(f"Config updated at {path}")
+        if gen_user and gen_pass:
+            _print_admin_credentials(gen_user, gen_pass, title="Generated admin credentials")
+        elif gen_user:
+            info(f"Bootstrap admin username set to {gen_user!r}")
+        return False, True, gen_user, gen_pass
+
+    step("Creating config")
+    username, password = _generate_credentials()
+    config_text = _render_config(target, bootstrap_user=username, bootstrap_pass=password)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(config_text, encoding="utf-8")
+    ok(f"Config created at {path}")
     _print_admin_credentials(username, password, title="Generated admin credentials")
     return True, False, username, password
 
@@ -1499,23 +1597,46 @@ def _ensure_docker() -> None:
 
 def _create_source_archive(archive_path: Path) -> None:
     exclude_roots = {".git", "target", "dist", "logs", "test-results"}
-    exclude_sub = {"frontend/node_modules", "frontend/test-results", "frontend/logs"}
+    exclude_sub = {
+        "frontend/node_modules", "frontend/test-results", "frontend/logs",
+        # The Android Gradle project scaffold (`cargo tauri android init`
+        # output) — multiple GB of Gradle wrapper/SDK-adjacent files, not
+        # part of the Cargo build graph and never referenced by the server
+        # Dockerfile. Including it made every deploy's source archive (this
+        # function backs both the remote docker-deploy upload and the local
+        # docker-update snapshot) needlessly multi-GB.
+        "crates/librarium-tauri/gen",
+    }
     with tarfile.open(archive_path, "w:gz") as arc:
-        for path in REPO_ROOT.rglob("*"):
-            rel = path.relative_to(REPO_ROOT)
-            rel_posix = rel.as_posix()
-            if not rel_posix:
-                continue
-            if rel.parts[0] in exclude_roots:
-                continue
-            if any(rel_posix == s or rel_posix.startswith(f"{s}/") for s in exclude_sub):
-                continue
-            # recursive=False is essential: rglob already yields every path, so we
-            # add each entry individually. Without it, adding a directory (e.g.
-            # `frontend`) would recursively pull in excluded subtrees like
-            # node_modules before the loop can skip them — bloating the archive
-            # to hundreds of MB.
-            arc.add(path, arcname=rel_posix, recursive=False)
+        # os.walk with topdown=True + pruning dirnames in place, NOT
+        # Path.rglob: rglob has no way to skip descending into a directory
+        # it's about to yield, so it would still walk the entire contents of
+        # `target/` (a multi-GB, tens-of-thousands-of-file Rust build dir)
+        # before each of those paths got discarded by the exclude check below
+        # — turning this into a multi-minute stall. Pruning during the walk
+        # skips descending into excluded directories entirely.
+        for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
+            rel_dir = Path(dirpath).relative_to(REPO_ROOT)
+            rel_dir_posix = rel_dir.as_posix()
+            if rel_dir_posix == ".":
+                rel_dir_posix = ""
+
+            def _excluded(rel_posix: str) -> bool:
+                first = rel_posix.split("/", 1)[0]
+                if first in exclude_roots:
+                    return True
+                return any(rel_posix == s or rel_posix.startswith(f"{s}/") for s in exclude_sub)
+
+            dirnames[:] = [
+                d for d in dirnames
+                if not _excluded(f"{rel_dir_posix}/{d}" if rel_dir_posix else d)
+            ]
+
+            for fname in filenames:
+                rel_posix = f"{rel_dir_posix}/{fname}" if rel_dir_posix else fname
+                if _excluded(rel_posix):
+                    continue
+                arc.add(Path(dirpath) / fname, arcname=rel_posix, recursive=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1660,6 +1781,82 @@ def local_install(
         warn(f"{install_dir} is not on your PATH. Add it with:\n  export PATH=\"{install_dir}:$PATH\"")
 
 
+def _git_pull_in_place(pull: bool) -> bool:
+    """Shared by `update()` and `update_docker()`: `git pull --ff-only` in
+    REPO_ROOT, refusing outright (never silently stashing) over uncommitted
+    changes. Returns whether HEAD actually moved. No-ops (with a warning) if
+    REPO_ROOT isn't a git checkout at all, and is a no-op with a plain info
+    message when `pull=False`."""
+    if not pull:
+        info("Skipping git pull (--no-pull)")
+        return False
+    if not (REPO_ROOT / ".git").exists():
+        warn(f"{REPO_ROOT} is not a git checkout — skipping git pull")
+        return False
+
+    step("Checking for local changes")
+    status = run_cmd(["git", "status", "--porcelain"], cwd=REPO_ROOT, capture=True)
+    if status.stdout.strip():
+        raise LibrariumError(
+            "Working tree has uncommitted changes — refusing to git pull "
+            "(never risk discarding local edits). Commit or stash them "
+            "first, or rerun with --no-pull."
+        )
+    before = run_cmd(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture=True).stdout.strip()
+    step("Pulling latest changes")
+    try:
+        run_cmd(["git", "pull", "--ff-only"], cwd=REPO_ROOT)
+    except LibrariumError as e:
+        raise LibrariumError(
+            f"git pull --ff-only failed: {e}\nThe local branch has likely "
+            "diverged from its upstream — resolve manually (rebase/reset), "
+            "then rerun, or rerun with --no-pull to skip this step."
+        )
+    after = run_cmd(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture=True).stdout.strip()
+    pulled = before != after
+    ok(f"Pulled to {after[:12]}" if pulled else "Already up to date")
+    return pulled
+
+
+def update_docker(target: DeploymentTarget, *, pull: bool) -> UpdateResult:
+    """Local (on-box) counterpart to `deploy_to_docker_target` for a target
+    whose `deployment` is `"docker"` — same `app_dir` layout
+    (`releases/`, `shared/`, `current` symlink, `docker-compose.yml`) and the
+    same never-touch-an-existing-config contract, but everything happens as
+    direct filesystem/subprocess calls instead of over SSH, since this runs
+    directly on the box the target describes. Reuses `target`'s own
+    `http_port`/`app_dir` from `targets.toml` rather than requiring them to
+    be re-specified, so this box's *remote*-deploy definition and its local
+    update path can never drift apart.
+    """
+    pulled = _git_pull_in_place(pull)
+
+    app_dir = Path(target.app_dir)
+    step("Ensuring local layout")
+    for d in (Path(target.releases_dir), Path(target.shared_dir), Path(target.tmp_dir)):
+        d.mkdir(parents=True, exist_ok=True)
+    ok(f"Layout ready under {app_dir}")
+
+    _local_ensure_docker_compose_file(target)
+    config_created, _config_updated, gen_user, gen_pass = _local_ensure_config(target)
+
+    _local_release_from_repo(target)
+
+    step("Running docker compose up -d --build")
+    _local_compose_command(target, "up -d --build librarium")
+    ok("Docker Compose deployment running")
+
+    healthcheck_ok = healthcheck(target)
+
+    return UpdateResult(
+        pulled=pulled,
+        binary_installed=True,  # image rebuilt + release activated
+        config_preserved=not config_created,
+        service_restarted=True,  # "docker compose up" ran unconditionally
+        healthcheck_ok=healthcheck_ok,
+    )
+
+
 def update(
     *,
     install_dir: Path,
@@ -1687,34 +1884,7 @@ def update(
     nothing changed and just want to reinstall/restart from the last build).
     The systemd restart step is skipped cleanly when no service is installed.
     """
-    pulled = False
-    if pull:
-        if not (REPO_ROOT / ".git").exists():
-            warn(f"{REPO_ROOT} is not a git checkout — skipping git pull")
-        else:
-            step("Checking for local changes")
-            status = run_cmd(["git", "status", "--porcelain"], cwd=REPO_ROOT, capture=True)
-            if status.stdout.strip():
-                raise LibrariumError(
-                    "Working tree has uncommitted changes — refusing to git pull "
-                    "(never risk discarding local edits). Commit or stash them "
-                    "first, or rerun with --no-pull."
-                )
-            before = run_cmd(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture=True).stdout.strip()
-            step("Pulling latest changes")
-            try:
-                run_cmd(["git", "pull", "--ff-only"], cwd=REPO_ROOT)
-            except LibrariumError as e:
-                raise LibrariumError(
-                    f"git pull --ff-only failed: {e}\nThe local branch has likely "
-                    "diverged from its upstream — resolve manually (rebase/reset), "
-                    "then rerun, or rerun with --no-pull to skip this step."
-                )
-            after = run_cmd(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture=True).stdout.strip()
-            pulled = before != after
-            ok(f"Pulled to {after[:12]}" if pulled else "Already up to date")
-    else:
-        info("Skipping git pull (--no-pull)")
+    pulled = _git_pull_in_place(pull)
 
     config_existed_before = (config_dir / "config.toml").exists()
     if not build and not (install_dir / BIN_NAME).exists() and not (DIST_DIR / "manifest.json").exists():
@@ -1915,22 +2085,34 @@ def local_install_cmd(
 
 
 @cli.command("update")
+@click.option("--target", "target_name", metavar="TARGET", default=None,
+              help="A name from targets.toml describing THIS box (app_dir, port, deployment "
+                   "mode). Required for a target with deployment=\"docker\" — its app_dir "
+                   "(e.g. /opt/librarium) is where the running install actually lives, which "
+                   "is almost certainly NOT --install-dir/--config-dir's ~/.local/bin default. "
+                   "Without --target, update always uses the bare-binary + systemd model below.")
+@click.option("--targets-file", type=click.Path(path_type=Path), default=TARGETS_FILE, show_default=True)
 @click.option("--install-dir", type=click.Path(path_type=Path), default=None, metavar="DIR",
-              help="Directory the binary is installed in (default: ~/.local/bin)")
+              help="Directory the binary is installed in (default: ~/.local/bin). Ignored with --target.")
 @click.option("--config-dir", type=click.Path(path_type=Path), default=None, metavar="DIR",
-              help="Directory config.toml lives in (default: ~/.config/librarium)")
+              help="Directory config.toml lives in (default: ~/.config/librarium). Ignored with --target.")
 @click.option("--with-desktop/--no-desktop", default=False, show_default=True,
-              help="Also rebuild and reinstall the desktop client binary")
-@click.option("--release/--debug", default=True, show_default=True, help="Cargo profile")
+              help="Also rebuild and reinstall the desktop client binary. Ignored with --target.")
+@click.option("--release/--debug", default=True, show_default=True,
+              help="Cargo profile. Ignored with --target.")
 @click.option("--port", default=8080, show_default=True, metavar="PORT",
-              help="Health-check port; ignored once config.toml already sets one")
+              help="Health-check port; ignored once config.toml already sets one, and ignored "
+                   "entirely with --target (uses the target's own http_port).")
 @click.option("--service-name", default=SERVICE_NAME, show_default=True, metavar="NAME",
-              help="systemd service to restart after installing, if present")
+              help="systemd service to restart after installing, if present. Ignored with --target.")
 @click.option("--build/--no-build", default=True, show_default=True,
-              help="Rebuild from source. --no-build reinstalls/restarts from the last build")
+              help="Rebuild from source. --no-build reinstalls/restarts from the last build. "
+                   "Ignored with --target (a docker-deployment target always rebuilds the image).")
 @click.option("--no-pull", is_flag=True, help="Skip git pull (rebuild/reinstall + restart only)")
-@click.option("--no-restart", is_flag=True, help="Skip restarting the systemd service even if present")
+@click.option("--no-restart", is_flag=True, help="Skip restarting the systemd service even if present. Ignored with --target.")
 def update_cmd(
+    target_name: str | None,
+    targets_file: Path,
     install_dir: Path | None,
     config_dir: Path | None,
     with_desktop: bool,
@@ -1949,41 +2131,81 @@ def update_cmd(
     clone` and an initial `local-install`. Safe to rerun any time: nothing new
     to pull is a harmless no-op for the git/config/restart steps.
 
-    The rebuild step is NOT fast even when nothing changed — the server build
-    always does a clean rebuild to force a fresh embed of the frontend assets
-    (incremental builds can miss that they changed), so budget for a real
-    compile on every run unless you pass --no-build (e.g. you know nothing
-    changed and just want to reinstall/restart from the last build).
+    Two modes:
+
+    \b
+    1. No --target (default): bare-binary + systemd. Installs to
+       ~/.local/bin / ~/.config/librarium (or --install-dir/--config-dir),
+       restarts a systemd service if one's installed. The rebuild step is NOT
+       fast even when nothing changed — the server build always does a clean
+       rebuild to force a fresh embed of the frontend assets (incremental
+       builds can miss that they changed) — pass --no-build to skip
+       rebuilding when you know nothing changed.
+    \b
+    2. --target NAME: this box IS a target from targets.toml (the same file
+       `deploy` reads to manage it remotely over SSH). For a target with
+       deployment="docker" (the common case — see targets.toml's own
+       app_dir, e.g. /opt/librarium), this rebuilds and activates a new
+       release under that target's app_dir/releases and runs
+       `docker compose up -d --build` directly, in place — the local
+       counterpart to `deploy_to_docker_target`, using the exact same
+       app_dir/port/compose-file conventions so the two can never drift
+       apart. A target with deployment="systemd" isn't supported here yet —
+       use `deploy` from a separate machine for those, or omit --target for
+       a standalone (non-targets.toml-tracked) local install.
 
     Never overwrites an existing config.toml or touches the database.
     Refuses to `git pull` over uncommitted local changes rather than risk
-    losing them — commit/stash first, or pass --no-pull. Restarting the
-    service requires passwordless sudo for systemctl (or running as root).
+    losing them — commit/stash first, or pass --no-pull. Restarting a
+    systemd service or running docker/docker compose may require
+    passwordless sudo (or running as root).
 
     Examples:
 
     \b
-      # One-shot: pull + rebuild + reinstall + restart the systemd service:
+      # Standalone bare-binary install, one-shot pull + rebuild + reinstall + restart:
       python scripts/librarium.py update
 
     \b
       # Just restart the service from what's already built, no git/rebuild:
       python scripts/librarium.py update --no-pull --no-build
+
+    \b
+      # This box IS the "librarium-01" docker-compose target from targets.toml:
+      python scripts/librarium.py update --target librarium-01
     """
-    effective_install_dir = install_dir or _default_install_dir()
-    effective_config_dir = config_dir or _default_config_dir()
     try:
-        result = update(
-            install_dir=effective_install_dir,
-            config_dir=effective_config_dir,
-            with_desktop=with_desktop,
-            port=port,
-            service_name=service_name,
-            pull=not no_pull,
-            build=build,
-            restart=not no_restart,
-            release=release,
-        )
+        if target_name:
+            targets = load_targets(targets_file)
+            target = pick_target(target_name, targets)
+            if any([install_dir, config_dir, with_desktop, not release, port != 8080,
+                    service_name != SERVICE_NAME, not build, no_restart]):
+                warn("--target ignores --install-dir/--config-dir/--with-desktop/--release/"
+                     "--debug/--port/--service-name/--build/--no-build/--no-restart — it uses "
+                     f"'{target.name}''s own definition from {targets_file} instead")
+            if target.deployment == "docker":
+                result = update_docker(target, pull=not no_pull)
+            else:
+                raise LibrariumError(
+                    f"--target '{target.name}' has deployment=\"{target.deployment}\", which "
+                    "update doesn't support yet (only \"docker\"). Use `deploy` from a separate "
+                    "machine to manage a systemd-deployment target, or omit --target for a "
+                    "standalone local install on this box."
+                )
+        else:
+            effective_install_dir = install_dir or _default_install_dir()
+            effective_config_dir = config_dir or _default_config_dir()
+            result = update(
+                install_dir=effective_install_dir,
+                config_dir=effective_config_dir,
+                with_desktop=with_desktop,
+                port=port,
+                service_name=service_name,
+                pull=not no_pull,
+                build=build,
+                restart=not no_restart,
+                release=release,
+            )
 
         table = Table(title="Update summary", box=box.SIMPLE_HEAVY)
         table.add_column("Step")
