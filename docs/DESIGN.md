@@ -9,7 +9,7 @@
 > [`docs/archive/`](archive/). Treat archived files as background, not as a
 > description of the current system.
 
-**Version:** 0.102.0
+**Version:** 0.102.1
 
 ---
 
@@ -219,6 +219,15 @@ ships as a single self-contained executable.
 The frontend's `api/` types are hand-mirrored from the backend's JSON shapes
 (`models/` + `librarium-types`). **Changing one side's payload without the other
 is a breaking change** — keep them in lockstep.
+
+### Build/version display
+
+Settings → About (`AboutPanel.vue`) shows the running server's version, short
+git commit hash, and build date by calling the pre-existing, unauthenticated
+`GET /api/version` (`version.rs` — all three fields embedded at compile time
+via `librarium-server/build.rs`'s `git rev-parse --short HEAD`). Keeping that
+version current is `cargo xtask bump-version`'s job — see CLAUDE.md's
+"Documentation & versioning" section.
 
 ### Capability set (Route C thin mobile client)
 

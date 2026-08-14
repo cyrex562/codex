@@ -16,6 +16,7 @@
         <v-tab value="api-keys">API Keys</v-tab>
         <v-tab v-if="isTauri()" value="sync">Sync</v-tab>
         <v-tab v-if="isLocalMode" value="offline-sync">Offline Sync</v-tab>
+        <v-tab value="about">About</v-tab>
       </v-tabs>
 
       <v-divider />
@@ -30,6 +31,9 @@
           </v-tabs-window-item>
           <v-tabs-window-item v-if="isLocalMode" value="offline-sync">
             <OfflineSyncPanel @close="close" />
+          </v-tabs-window-item>
+          <v-tabs-window-item value="about">
+            <AboutPanel />
           </v-tabs-window-item>
         </v-tabs-window>
       </v-card-text>
@@ -47,6 +51,7 @@ import { ref, watch } from 'vue';
 import ApiKeysPanel from '@/components/settings/ApiKeysPanel.vue';
 import SyncSettingsPanel from '@/components/settings/sync/SyncSettingsPanel.vue';
 import OfflineSyncPanel from '@/components/settings/sync/OfflineSyncPanel.vue';
+import AboutPanel from '@/components/settings/AboutPanel.vue';
 import { isTauri } from '@/utils/tauri';
 import { useMobile } from '@/composables/useMobile';
 import { useCapabilities } from '@/composables/useCapabilities';
