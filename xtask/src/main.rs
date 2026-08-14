@@ -12,12 +12,17 @@
 //!   cargo xtask logs   [TARGET]         # stream a target's logs
 //!   cargo xtask doctor [TARGET]         # preflight a target
 //!   cargo xtask update [...]            # idempotently update a *local* checkout in place
+//!   cargo xtask bump-version [kind]      # bump the app version everywhere it's recorded
 //!
 //! The build commands are self-contained. The deploy/status/logs/doctor/update
 //! commands are thin pass-throughs to `scripts/librarium.py`, so this crate is
 //! the single entry point for the whole build→deploy→observe loop (build
 //! commands need Node+Rust; the ops commands additionally need Python 3 with the
 //! script's deps installed).
+//!
+//! `bump-version` should run before every push to a PR or main (see
+//! CLAUDE.md's "Documentation & versioning" section) — it's how the version
+//! shown in the app's Settings → About panel actually increments.
 //!
 //! `deploy` manages a *remote* target over SSH from a separate machine.
 //! `update` is its local counterpart: run it ON the box hosting the server
@@ -55,6 +60,7 @@ fn main() {
             build_frontend();
             build_installer();
         }
+        "bump-version" => bump_version(&args),
         // Ops commands: forward verbatim (including the command name and any
         // target/flags) to the deployment CLI.
         "deploy" | "status" | "logs" | "doctor" | "targets" | "update" | "local-install" => {
@@ -81,6 +87,12 @@ fn help() {
          \n                                          upgrades it in place (Tauri/NSIS default behavior) —\
          \n                                          no uninstall step needed after a code change.\
          \n                                          Needs the Tauri CLI: cargo install tauri-cli --version '^2' --locked\
+         \n    cargo xtask bump-version [kind]       Bump the app version everywhere it's recorded\
+         \n                                          (default kind: patch; also accepts minor, major).\
+         \n                                          Run this before every push to a PR or main —\
+         \n                                          it's how the version shown in the app's\
+         \n                                          Settings -> About panel increments. Does not\
+         \n                                          commit; review `git diff` and commit yourself.\
          \n  Deploy / observe (via scripts/librarium.py; needs: pip install -r scripts/requirements.txt):\
          \n    cargo xtask deploy [TARGET] [flags]   Deploy the server to a remote target over SSH\
          \n    cargo xtask status [TARGET]           Show a target's running version/health\
@@ -243,6 +255,174 @@ fn python_exe() -> &'static str {
     }
     // Neither found; return the common default so `run` surfaces a clear error.
     "python3"
+}
+
+// ── bump-version ─────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+enum BumpKind {
+    Major,
+    Minor,
+    Patch,
+}
+
+/// Every crate whose `Cargo.toml` `version` is meant to track the app
+/// version (per CLAUDE.md's "Documentation & versioning" section).
+const VERSIONED_CARGO_TOMLS: &[&str] = &[
+    "crates/librarium-server/Cargo.toml",
+    "crates/librarium-tauri/Cargo.toml",
+    "crates/librarium-core/Cargo.toml",
+    "crates/librarium-types/Cargo.toml",
+    "crates/librarium-client/Cargo.toml",
+    "crates/librarium-mobile/Cargo.toml",
+    "crates/librarium-sync/Cargo.toml",
+];
+
+fn bump_version(args: &[String]) {
+    let kind = match args.get(1).map(String::as_str) {
+        Some("major") => BumpKind::Major,
+        Some("minor") => BumpKind::Minor,
+        Some("patch") | None => BumpKind::Patch,
+        Some(other) => {
+            eprintln!("unknown bump kind '{other}' (expected patch, minor, or major)");
+            exit(2);
+        }
+    };
+
+    let root = repo_root();
+    let canonical = root.join(VERSIONED_CARGO_TOMLS[0]);
+    let old_version = read_cargo_toml_version(&canonical);
+    let new_version = bump_semver(&old_version, kind);
+
+    eprintln!("→ bumping version {old_version} → {new_version}");
+
+    let mut touched = Vec::new();
+
+    for rel in VERSIONED_CARGO_TOMLS {
+        let path = root.join(rel);
+        replace_first(
+            &path,
+            &format!("version = \"{old_version}\""),
+            &format!("version = \"{new_version}\""),
+        );
+        touched.push((*rel).to_string());
+    }
+
+    for rel in ["frontend/package.json", "crates/librarium-tauri/tauri.conf.json"] {
+        let path = root.join(rel);
+        replace_first(
+            &path,
+            &format!("\"version\": \"{old_version}\""),
+            &format!("\"version\": \"{new_version}\""),
+        );
+        touched.push(rel.to_string());
+    }
+
+    for (rel, old_snippet, new_snippet) in [
+        (
+            "README.md",
+            format!("**Version {old_version}**"),
+            format!("**Version {new_version}**"),
+        ),
+        (
+            "docs/DESIGN.md",
+            format!("**Version:** {old_version}"),
+            format!("**Version:** {new_version}"),
+        ),
+        (
+            "CLAUDE.md",
+            format!("Current version: **{old_version}**"),
+            format!("Current version: **{new_version}**"),
+        ),
+    ] {
+        let path = root.join(rel);
+        replace_first(&path, &old_snippet, &new_snippet);
+        touched.push(rel.to_string());
+    }
+
+    eprintln!("→ npm install --package-lock-only (refresh frontend/package-lock.json)");
+    npm(&root.join("frontend"), &["install", "--package-lock-only"]);
+
+    eprintln!("→ cargo check --workspace -q (refresh Cargo.lock)");
+    run(
+        Command::new("cargo")
+            .args(["check", "--workspace", "-q"])
+            .current_dir(&root),
+        "cargo check",
+    );
+
+    println!(
+        "\n✓ Bumped {old_version} → {new_version} across {} files (+ Cargo.lock, package-lock.json):",
+        touched.len()
+    );
+    for t in &touched {
+        println!("    {t}");
+    }
+    println!("\nDoes not commit — review the diff (`git diff`) and commit it yourself.");
+}
+
+fn bump_semver(version: &str, kind: BumpKind) -> String {
+    let parts: Vec<u64> = version
+        .split('.')
+        .map(|p| {
+            p.parse().unwrap_or_else(|_| {
+                eprintln!("✗ expected a numeric version component, got {version:?}");
+                exit(1);
+            })
+        })
+        .collect();
+    let (major, minor, patch) = match parts.as_slice() {
+        [a, b, c] => (*a, *b, *c),
+        _ => {
+            eprintln!("✗ expected a MAJOR.MINOR.PATCH version, got {version:?}");
+            exit(1);
+        }
+    };
+    match kind {
+        BumpKind::Major => format!("{}.0.0", major + 1),
+        BumpKind::Minor => format!("{major}.{}.0", minor + 1),
+        BumpKind::Patch => format!("{major}.{minor}.{}", patch + 1),
+    }
+}
+
+/// Read the `[package]` table's own `version = "..."` line — the first line
+/// in the file that starts with `version = "`, which for a crate's own
+/// Cargo.toml is always this field (dependency version constraints use a
+/// different syntax, and always appear later in the file, after `[package]`).
+fn read_cargo_toml_version(path: &Path) -> String {
+    let content = std::fs::read_to_string(path).unwrap_or_else(|e| {
+        eprintln!("✗ could not read {}: {e}", path.display());
+        exit(1);
+    });
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("version = \"") {
+            if let Some(end) = rest.find('"') {
+                return rest[..end].to_string();
+            }
+        }
+    }
+    eprintln!("✗ no `version = \"...\"` line found in {}", path.display());
+    exit(1);
+}
+
+/// Replace the first occurrence of `needle` with `replacement` in the file at
+/// `path`. Fails loudly (rather than silently no-op-ing) if `needle` isn't
+/// found — a bump-version run should never report success while quietly
+/// skipping a file that was supposed to be updated.
+fn replace_first(path: &Path, needle: &str, replacement: &str) {
+    let content = std::fs::read_to_string(path).unwrap_or_else(|e| {
+        eprintln!("✗ could not read {}: {e}", path.display());
+        exit(1);
+    });
+    if !content.contains(needle) {
+        eprintln!("✗ expected to find {needle:?} in {}", path.display());
+        exit(1);
+    }
+    let new_content = content.replacen(needle, replacement, 1);
+    std::fs::write(path, new_content).unwrap_or_else(|e| {
+        eprintln!("✗ could not write {}: {e}", path.display());
+        exit(1);
+    });
 }
 
 /// Invoke npm portably. On Windows `npm` is a `.cmd` shim that `Command` won't

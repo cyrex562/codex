@@ -316,6 +316,17 @@ export interface HealthStatus {
 export const apiGetHealth = (): Promise<HealthStatus> =>
     request('/api/health');
 
+// ── Version ──────────────────────────────────────────────────────────────────
+
+export interface VersionInfo {
+    version: string;
+    git_hash: string;
+    build_date: string;
+}
+
+export const apiGetVersion = (): Promise<VersionInfo> =>
+    request('/api/version');
+
 // ── Vaults ───────────────────────────────────────────────────────────────────
 
 export const apiListVaults = (): Promise<Vault[]> =>
