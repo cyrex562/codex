@@ -4386,7 +4386,7 @@ dependencies = [
 
 [[package]]
 name = "librarium-sync"
-version = "0.1.0"
+version = "0.102.1"
 dependencies = [
  "anyhow",
  "chrono",

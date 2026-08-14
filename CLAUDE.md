@@ -44,9 +44,8 @@ Update `README.md` too when the overview or quick start is affected. When a
 section of `docs/DESIGN.md` is fully superseded, move the long-form detail to
 `docs/archive/` and leave a short pointer.
 
-**Version bumps** must stay in sync across all of: `crates/*/Cargo.toml`
-(except `librarium-sync`, independently versioned), `frontend/package.json`,
-and `crates/librarium-tauri/tauri.conf.json`. The `/api/version` endpoint
+**Version bumps** must stay in sync across all of: `crates/*/Cargo.toml`,
+`frontend/package.json`, and `crates/librarium-tauri/tauri.conf.json`. The `/api/version` endpoint
 reads `CARGO_PKG_VERSION`, so the crate versions feed it directly, and the
 frontend's Settings → About panel displays it. Current version: **0.102.1**.
 

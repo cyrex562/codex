@@ -268,10 +268,6 @@ enum BumpKind {
 
 /// Every crate whose `Cargo.toml` `version` is meant to track the app
 /// version (per CLAUDE.md's "Documentation & versioning" section).
-/// `librarium-sync`'s Cargo.toml is deliberately excluded: it's currently
-/// independently versioned (0.1.0, not in step with the app version) —
-/// bringing it in line is a separate decision, not something this command
-/// should silently do as a side effect.
 const VERSIONED_CARGO_TOMLS: &[&str] = &[
     "crates/librarium-server/Cargo.toml",
     "crates/librarium-tauri/Cargo.toml",
@@ -279,6 +275,7 @@ const VERSIONED_CARGO_TOMLS: &[&str] = &[
     "crates/librarium-types/Cargo.toml",
     "crates/librarium-client/Cargo.toml",
     "crates/librarium-mobile/Cargo.toml",
+    "crates/librarium-sync/Cargo.toml",
 ];
 
 fn bump_version(args: &[String]) {
@@ -361,10 +358,7 @@ fn bump_version(args: &[String]) {
     for t in &touched {
         println!("    {t}");
     }
-    println!(
-        "\nDoes not commit — review the diff (`git diff`) and commit it yourself.\n\
-         crates/librarium-sync/Cargo.toml was left untouched (independently versioned)."
-    );
+    println!("\nDoes not commit — review the diff (`git diff`) and commit it yourself.");
 }
 
 fn bump_semver(version: &str, kind: BumpKind) -> String {
