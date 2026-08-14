@@ -105,6 +105,7 @@ const prefsStore = usePreferencesStore();
 const editingName = ref(false);
 const nameDraft = ref('');
 const renameError = ref('');
+const isCommitting = ref(false);
 
 const fileName = computed(() => {
   const idx = props.filePath.lastIndexOf('/');
@@ -122,29 +123,43 @@ function cancelEditName() {
 }
 
 async function commitName() {
+  // Re-entrancy guard: the field is wired to both @keyup.enter and @blur so
+  // clicking away still commits. Pressing Enter sets editingName to false
+  // below *before* the rename call resolves, which unmounts this focused
+  // <v-text-field> on the next render — unmounting a focused element fires a
+  // native blur, re-entering commitName a second time while the first
+  // await is still pending. Without this guard that second call re-sends
+  // the identical rename request; whichever one lands second finds the
+  // source already gone and surfaces a spurious "Source not found" error
+  // even though the rename itself succeeded.
+  if (isCommitting.value) return;
+
   const trimmed = nameDraft.value.trim();
   if (!trimmed || trimmed === fileName.value) {
     editingName.value = false;
     return;
   }
+  isCommitting.value = true;
   editingName.value = false;
 
-  const vaultId = vaultsStore.activeVaultId;
-  if (!vaultId) return;
-
-  const dir = props.filePath.includes('/')
-    ? props.filePath.substring(0, props.filePath.lastIndexOf('/') + 1)
-    : '';
-  const oldPath = props.filePath;
-  const newPath = dir + trimmed;
-
   try {
+    const vaultId = vaultsStore.activeVaultId;
+    if (!vaultId) return;
+
+    const dir = props.filePath.includes('/')
+      ? props.filePath.substring(0, props.filePath.lastIndexOf('/') + 1)
+      : '';
+    const oldPath = props.filePath;
+    const newPath = dir + trimmed;
+
     const resolvedNewPath = await filesStore.renameFile(vaultId, oldPath, newPath);
     tabsStore.remapTabPaths(oldPath, resolvedNewPath);
     prefsStore.remapPathIcon(oldPath, resolvedNewPath);
     await prefsStore.save();
   } catch (e: any) {
     renameError.value = e?.message ?? 'Rename failed.';
+  } finally {
+    isCommitting.value = false;
   }
 }
 
